@@ -1,0 +1,16 @@
+(library
+ (name miou_solo5_net)
+ (public_name miou-solo5-net)
+ (libraries
+  lru
+  mirage-crypto-rng
+  utcp
+  duration
+  hxd.core
+  hxd.string
+  fmt
+  ipaddr
+  macaddr
+  bin
+  slice.bstr
+  miou-solo5))
