@@ -251,12 +251,7 @@ module TCPv4 = struct
                     t.flow msg);
               raise Closed_by_peer
           | Ok () ->
-              let cs = Cstruct.shift cs bytes_sent in
-              if Cstruct.length cs > 0 then
-                write t (Cstruct.shift cs bytes_sent)
-              else
-                Logs.debug ~src:t.src (fun m ->
-                    m "fully write the given string to peer"))
+              write t (Cstruct.shift cs bytes_sent))
 
   let write t ?(off = 0) ?len str =
     let len =
@@ -324,7 +319,10 @@ module TCPv4 = struct
                       "transmit the new incoming TCPv4 connection to the \
                        handler");
                 ignore (Miou.Computation.try_return c flow)
-            | Pending q -> Queue.push flow q
+            | Pending q ->
+                if Queue.length q < 1024 then Queue.push flow q
+                  (* TODO(dinosaure): we only accept 1024 pending established connections.
+                     We should respond to the client if we reach this limit. *)
             | exception Not_found ->
                 let q = Queue.create () in
                 Queue.push flow q;

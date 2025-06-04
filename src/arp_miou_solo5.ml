@@ -60,8 +60,24 @@ type entry =
   | Dynamic of Macaddr.t * int
   | Pending of w * int
 
+module V = struct
+  type t = unit
+
+  let weight (_ : t) = 1
+end
+
+module K = struct
+  include Ipaddr.V4
+
+  let equal a b = Ipaddr.V4.compare a b = 0
+  let hash = Hashtbl.hash
+end
+
+module Cache = Lru.M.Make (K) (V)
+
 type t = {
     cache: (Ipaddr.V4.t, entry) Hashtbl.t
+  ; dynamic: Cache.t
   ; macaddr: Macaddr.t
   ; ipaddr: Ipaddr.V4.t
   ; timeout: int
@@ -74,14 +90,38 @@ type t = {
   ; queue: string Ethernet.packet Queue.t
 }
 
+module M = struct
+  (* NOTE(dinosaure): here the idea is to remove dynamic bindings
+     when we want to add a new entry. By this way, we ensure that
+     we are not spoof by arbitrary IP addresses. *)
+  let replace t ipaddr entry =
+    Hashtbl.replace t.cache ipaddr entry;
+    begin
+      match entry with
+      | Dynamic _ -> Cache.add ipaddr () t.dynamic
+      | _ -> Cache.remove ipaddr t.dynamic
+    end;
+    while Cache.weight t.dynamic > Cache.capacity t.dynamic do
+      match Cache.lru t.dynamic with
+      | Some (ipaddr', ()) ->
+          Hashtbl.remove t.cache ipaddr';
+          Cache.remove ipaddr' t.dynamic
+      | None -> ()
+    done
+
+  let find t ipaddr =
+    Cache.promote ipaddr t.dynamic;
+    Hashtbl.find t.cache ipaddr
+end
+
 let alias t ipaddr =
   let () =
-    match Hashtbl.find t.cache ipaddr with
+    match M.find t ipaddr with
     | exception Not_found -> ()
     | Pending (c, _) -> ignore (Miou.Computation.try_return c t.macaddr)
     | _ -> ()
   in
-  Hashtbl.replace t.cache ipaddr (Static (t.macaddr, true));
+  M.replace t ipaddr (Static (t.macaddr, true));
   let pkt =
     {
       Packet.operation= Packet.Request
@@ -148,6 +188,7 @@ let tick t =
   in
   let outs, to_remove, timeouts = Hashtbl.fold fn t.cache ([], [], []) in
   List.iter (Hashtbl.remove t.cache) to_remove;
+  List.iter (fun k -> Cache.remove k t.dynamic) to_remove;
   List.iter (write t) outs;
   List.iter timeout timeouts;
   t.epoch <- t.epoch + 1
@@ -159,7 +200,7 @@ let handle_request t arp =
   Logs.debug ~src:t.src (fun m ->
       m "%a:%a: who has %a?" Macaddr.pp src_mac Ipaddr.V4.pp src Ipaddr.V4.pp
         dst);
-  match Hashtbl.find t.cache dst with
+  match M.find t dst with
   | exception Not_found -> ()
   | Static (macaddr, true) -> write t (reply arp macaddr)
   | _ -> ()
@@ -169,7 +210,7 @@ let handle_reply t src macaddr =
   Logs.debug ~src:t.src (fun m ->
       m "handle ARPv4 reply packet from %a:%a" Macaddr.pp macaddr Ipaddr.V4.pp
         src);
-  match Hashtbl.find t.cache src with
+  match M.find t src with
   | exception Not_found -> ()
   | Static (_, adv) ->
       if adv && Macaddr.compare macaddr mac0 == 0 then
@@ -181,12 +222,12 @@ let handle_reply t src macaddr =
         Logs.debug ~src:t.src (fun m ->
             m "set %a from %a to %a" Ipaddr.V4.pp src Macaddr.pp macaddr'
               Macaddr.pp macaddr);
-      Hashtbl.replace t.cache src entry
+      M.replace t src entry
   | Pending (c, _) ->
       Logs.debug ~src:t.src (fun m ->
           m "%a is-at %a" Ipaddr.V4.pp src Macaddr.pp macaddr);
       ignore (Miou.Computation.try_return c macaddr);
-      Hashtbl.replace t.cache src entry
+      M.replace t src entry
 
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
@@ -214,11 +255,11 @@ let pp_error ppf = function
   | `Exn exn -> Fmt.pf ppf "Unexpected exception: %s" (Printexc.to_string exn)
 
 let query t ipaddr =
-  match Hashtbl.find t.cache ipaddr with
+  match M.find t ipaddr with
   | exception Not_found ->
       let w = Miou.Computation.create () in
       let pending = Pending (w, t.epoch + t.retries) in
-      Hashtbl.replace t.cache ipaddr pending;
+      M.replace t ipaddr pending;
       write t (request t ipaddr);
       Miou.Computation.await w |> Result.map_error to_error
   | Pending (w, _) -> Miou.Computation.await w |> Result.map_error to_error
@@ -234,7 +275,8 @@ let add_ip t ipaddr =
       Hashtbl.iter
         (fun _ -> function Pending (w, _) -> clear w | _ -> ())
         t.cache;
-      Hashtbl.clear t.cache;
+      Hashtbl.reset t.cache;
+      (* TODO(dinosaure): reset the dynamic cache *)
       write t (alias t ipaddr)
   | _ -> write t (alias t ipaddr)
 
@@ -243,12 +285,13 @@ let set_ips t = function
       Hashtbl.iter
         (fun _ -> function Pending (w, _) -> clear w | _ -> ())
         t.cache;
-      Hashtbl.clear t.cache
+      Hashtbl.reset t.cache (* TODO(dinosaure): reset the dynamic cache. *)
   | ipaddr :: rest ->
       Hashtbl.iter
         (fun _ -> function Pending (w, _) -> clear w | _ -> ())
         t.cache;
-      Hashtbl.clear t.cache;
+      Hashtbl.reset t.cache;
+      (* TODO(dinosaure): reset the dynamic cache. *)
       write t (alias t ipaddr);
       List.iter (add_ip t) rest
 
@@ -308,6 +351,7 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?src ?ipaddr
   let t =
     {
       cache
+    ; dynamic= Cache.create 0x10
     ; macaddr
     ; ipaddr
     ; timeout
