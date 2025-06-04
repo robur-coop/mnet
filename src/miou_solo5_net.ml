@@ -250,8 +250,7 @@ module TCPv4 = struct
                   m "%a error from condition while sending: %s" Utcp.pp_flow
                     t.flow msg);
               raise Closed_by_peer
-          | Ok () ->
-              write t (Cstruct.shift cs bytes_sent))
+          | Ok () -> write t (Cstruct.shift cs bytes_sent))
 
   let write t ?(off = 0) ?len str =
     let len =
