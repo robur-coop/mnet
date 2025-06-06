@@ -40,6 +40,7 @@ module Buffer = struct
     let off = t.off + t.len in
     let bstr = t.bstr in
     if Bstr.length bstr == t.len then begin
+      (* TODO(dinosaure): we probably can add a limit here. *)
       t.bstr <- Bstr.create (2 * Bstr.length bstr);
       Bstr.blit bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len
     end;
@@ -88,7 +89,6 @@ module TCPv4 = struct
   type state = {
       mutable tcp: w Utcp.state
     ; ipv4: IPv4.t
-    ; udpv4: UDPv4.state
     ; queue: Utcp.output Queue.t
     ; mutex: Miou.Mutex.t
     ; condition: Miou.Condition.t
@@ -250,7 +250,9 @@ module TCPv4 = struct
                   m "%a error from condition while sending: %s" Utcp.pp_flow
                     t.flow msg);
               raise Closed_by_peer
-          | Ok () -> write t (Cstruct.shift cs bytes_sent))
+          | Ok () ->
+              let cs = Cstruct.shift cs bytes_sent in
+              if Cstruct.length cs > 0 then write t cs)
 
   let write t ?(off = 0) ?len str =
     let len =
@@ -414,9 +416,8 @@ module TCPv4 = struct
     let mutex = Miou.Mutex.create () in
     let condition = Miou.Condition.create () in
     let accept = Hashtbl.create 0x10 in
-    let udpv4 = UDPv4.create ipv4 in
     let state =
-      { tcp; ipv4; udpv4; queue= Queue.create (); mutex; condition; accept }
+      { tcp; ipv4; queue= Queue.create (); mutex; condition; accept }
     in
     let prm = Miou.async (fun () -> daemon state 0) in
     (prm, state)
@@ -445,8 +446,6 @@ module TCPv4 = struct
         Logs.err ~src (fun m ->
             m "%a error established connection: %s" Utcp.pp_flow flow msg);
         raise Connection_refused
-
-  let udpv4 { udpv4; _ } = udpv4
 end
 
 let pp_error ppf = function
@@ -502,7 +501,7 @@ let ipv4_handler icmpv4 udpv4 tcpv4 =
     | 17 -> UDPv4.handler udpv4 pkt
     | _ -> ()
 
-type tcpv4 = {
+type stackv4 = {
     ethernet_daemon: Ethernet.daemon
   ; arpv4_daemon: ARPv4.daemon
   ; icmpv4: ICMPv4.daemon
@@ -516,7 +515,7 @@ let kill t =
   ARPv4.kill t.arpv4_daemon;
   Ethernet.kill t.ethernet_daemon
 
-let tcpv4 ~name ?gateway cidr =
+let stackv4 ~name ?gateway cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
@@ -532,14 +531,15 @@ let tcpv4 ~name ?gateway cidr =
       let icmpv4 = ICMPv4.handler ipv4 in
       Logs.debug (fun m -> m "✓ ICMPv4 daemon launched");
       let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 in
-      let udpv4 = TCPv4.udpv4 tcpv4 in
+      let udpv4 = UDPv4.create ipv4 in
       Logs.debug (fun m -> m "✓ TCPv4 daemon launched");
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udpv4 tcpv4);
       let fn = ethernet_handler arpv4 ipv4 in
       Ethernet.set_handler eth fn;
-      Ok
-        ( { ethernet_daemon= daemon; arpv4_daemon; udpv4; icmpv4; tcpv4_daemon }
-        , tcpv4 )
+      let stackv4 =
+        { ethernet_daemon= daemon; arpv4_daemon; udpv4; icmpv4; tcpv4_daemon }
+      in
+      Ok (stackv4, tcpv4, udpv4)
     in
     let mac = Macaddr.of_octets_exn (cfg.Miou_solo5.Net.mac :> string) in
     match connect mac with
