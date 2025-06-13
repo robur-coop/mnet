@@ -79,8 +79,8 @@ let fill state ~peer ~pkt payload =
       List.iter fn waiters;
       Hashtbl.remove state.readers pkt.Packet.dst_port
 (* TODO(dinosaure): we need to check that [Miou.Computation.try_return] does not
-         re-schedule. If it's the case, it's safe to [Hashtbl.remove]. Otherwise, we must
-         aggregate everything into a list, remove and apply our [fn] to the list. *)
+   re-schedule. If it's the case, it's safe to [Hashtbl.remove]. Otherwise, we must
+   aggregate everything into a list, remove and apply our [fn] to the list. *)
 
 let handler state (pkt, payload) =
   let peer = pkt.IPv4.src in
@@ -98,16 +98,31 @@ let recvfrom state ?src:_ ~port ?(off = 0) ?len buf =
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "UDPv4.recvfrom: out of bounds";
   let waiter = { buf; dst_off= off; len; waiter= Miou.Computation.create () } in
+  (* NOTE(dinosaure): [finally] is required if we would like to cancel the
+     task which perform this function. In that case, we must clean-up our
+     internal [state.readers] to be sure that we don't have a memory-leak. *)
+  let finally () =
+    Log.debug (fun m -> m "clean-up the new waiter for *:%d" port);
+    let waiters = Hashtbl.find_opt state.readers port in
+    let waiters = Option.value ~default:[] waiters in
+    match List.filter (( != ) waiter) waiters with
+    | [] ->
+        Log.debug (fun m -> m "no more waiters for *:%d" port);
+        Hashtbl.remove state.readers port
+    | waiters -> Hashtbl.replace state.readers port waiters
+  in
   match Hashtbl.find state.readers port with
   | exception Not_found ->
       Hashtbl.add state.readers port [ waiter ];
       Log.debug (fun m -> m "Add a new reader on *:%d" port);
       Log.debug (fun m ->
           m "@[<hov>%a@]" Fmt.(Dump.hashtbl int pp_reader) state.readers);
+      Fun.protect ~finally @@ fun () ->
       let { length; peer; port } = Miou.Computation.await_exn waiter.waiter in
       (length, (peer, port))
   | waiters ->
       Hashtbl.replace state.readers port (waiter :: waiters);
+      Fun.protect ~finally @@ fun () ->
       let { length; peer; port } = Miou.Computation.await_exn waiter.waiter in
       (length, (peer, port))
 

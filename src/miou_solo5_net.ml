@@ -40,7 +40,7 @@ module Buffer = struct
     let off = t.off + t.len in
     let bstr = t.bstr in
     if Bstr.length bstr == t.len then begin
-      (* TODO(dinosaure): we probably can add a limit here. *)
+      (* TODO(dinosaure): we probably should add a limit here. *)
       t.bstr <- Bstr.create (2 * Bstr.length bstr);
       Bstr.blit bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len
     end;
@@ -64,6 +64,8 @@ module Notify = struct
     }
 
   let signal value t =
+    (* NOTE(dinosaure): we use only one core into an unikernel.
+       So we are sure that we have the exclusivity of the memory. *)
     (* Miou.Mutex.protect t.mutex @@ fun () -> *)
     Queue.push value t.queue;
     Miou.Condition.signal t.condition
