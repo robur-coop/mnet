@@ -387,6 +387,7 @@ module TCPv4 = struct
 
   type listen = Listen of int [@@unboxed]
 
+  (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
   let accept state (Listen port) =
     match Hashtbl.find state.accept port with
     | exception Not_found ->

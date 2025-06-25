@@ -62,11 +62,8 @@ type waiter = {
 type state = { readers: (int, waiter list) Hashtbl.t; ipv4: IPv4.t }
 
 let create ipv4 = { readers= Hashtbl.create 0x7ff; ipv4 }
-let pp_reader ppf _ = Fmt.pf ppf "#reader"
 
 let fill state ~peer ~pkt payload =
-  Log.debug (fun m ->
-      m "@[<hov>%a@]" Fmt.(Dump.hashtbl int pp_reader) state.readers);
   match Hashtbl.find state.readers pkt.Packet.dst_port with
   | exception Not_found -> ()
   | waiters ->
@@ -115,8 +112,6 @@ let recvfrom state ?src:_ ~port ?(off = 0) ?len buf =
   | exception Not_found ->
       Hashtbl.add state.readers port [ waiter ];
       Log.debug (fun m -> m "Add a new reader on *:%d" port);
-      Log.debug (fun m ->
-          m "@[<hov>%a@]" Fmt.(Dump.hashtbl int pp_reader) state.readers);
       Fun.protect ~finally @@ fun () ->
       let { length; peer; port } = Miou.Computation.await_exn waiter.waiter in
       (length, (peer, port))
