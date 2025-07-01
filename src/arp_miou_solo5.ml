@@ -178,12 +178,13 @@ let tick t =
   let epoch = t.epoch in
   let fn k v (pkts, to_remove, timeouts) =
     match v with
-    | Dynamic (_, tick) when tick == epoch -> (pkts, k :: to_remove, timeouts)
-    | Dynamic (_, tick) when tick == epoch + 1 ->
+    | Dynamic (_, tick) when tick <= epoch -> (pkts, k :: to_remove, timeouts)
+    | Dynamic (_, tick) when tick <= epoch + 1 ->
         (request t k :: pkts, to_remove, timeouts)
-    | Pending (w, retry) when retry == epoch ->
-        (pkts, k :: to_remove, w :: timeouts)
-    | Pending _ -> (request t k :: pkts, to_remove, timeouts)
+    | Pending (w, retry) ->
+        if retry <= t.epoch
+        then (pkts, k :: to_remove, w :: timeouts)
+        else (request t k :: pkts, to_remove, timeouts)
     | _ -> (pkts, to_remove, timeouts)
   in
   let outs, to_remove, timeouts = Hashtbl.fold fn t.cache ([], [], []) in
