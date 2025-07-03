@@ -1,6 +1,31 @@
 module Ethernet = Ethernet_miou_solo5
 module ARPv4 = Arp_miou_solo5
 
+module Flag : sig
+  type t = DF | MF
+end
+
+module Packet : sig
+  type partial = Partial
+  type complete = { checksum: int; length: int }
+  type error = [ `Invalid_IPv4_packet | `Invalid_checksum ]
+
+  type 'a packet = {
+      src: Ipaddr.V4.t
+    ; dst: Ipaddr.V4.t
+    ; uid: int
+    ; flags: Flag.t list
+    ; off: int
+    ; ttl: int
+    ; protocol: int
+    ; checksum_and_length: 'a
+    ; opt: Slice_bstr.t
+  }
+
+  val decode :
+    Slice_bstr.t -> (complete packet * Slice_bstr.t, [> error ]) result
+end
+
 type t
 
 type packet = { src: Ipaddr.V4.t; dst: Ipaddr.V4.t; protocol: int; uid: int }

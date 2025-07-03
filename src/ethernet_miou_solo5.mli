@@ -1,9 +1,21 @@
+module Packet : sig
+  type protocol = ARPv4 | IPv4 | IPv6
+  type t = { src: Macaddr.t; dst: Macaddr.t; protocol: protocol option }
+
+  val decode :
+       Bstr.t
+    -> len:int
+    -> (t * Slice_bstr.t, [> `Invalid_ethernet_packet ]) result
+
+  val encode_into : t -> ?off:int -> Bstr.t -> unit
+end
+
 type t
 type daemon
 
 val mac : t -> Macaddr.t
 
-type protocol = ARPv4 | IPv4 | IPv6
+type protocol = Packet.protocol = ARPv4 | IPv4 | IPv6
 
 type 'a packet = {
     src: Macaddr.t option

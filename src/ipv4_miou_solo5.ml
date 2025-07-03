@@ -30,6 +30,7 @@ end
 module Packet = struct
   type partial = Partial
   type complete = { checksum: int; length: int }
+  type error = [ `Invalid_IPv4_packet | `Invalid_checksum ]
 
   type 'a packet = {
       src: Ipaddr.V4.t
