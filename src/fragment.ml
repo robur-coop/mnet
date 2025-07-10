@@ -1,4 +1,4 @@
-let src = Logs.Src.create "fragment"
+let src = Logs.Src.create "miou-solo5-net.fragment"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 

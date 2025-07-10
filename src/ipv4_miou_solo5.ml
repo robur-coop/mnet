@@ -1,4 +1,4 @@
-let src = Logs.Src.create "ipv4-miou-solo5"
+let src = Logs.Src.create "miou-solo5-net.ipv4"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
@@ -124,7 +124,7 @@ end
 module Cache = Lru.M.Make (Key) (Value)
 
 module Fragments = struct
-  let src = Logs.Src.create "fragments"
+  let src = Logs.Src.create "miou-solo5-net.fragments"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 

@@ -1,3 +1,6 @@
+let src = Logs.Src.create "miou-solo5-net"
+
+module Log = (val Logs.src_log src : Logs.LOG)
 module Ethernet = Ethernet_miou_solo5
 module ARPv4 = Arp_miou_solo5
 module IPv4 = Ipv4_miou_solo5
@@ -82,7 +85,7 @@ end
    only have IPv4 implementation. We should handle easily the IPv6 at this
    layer I think. *)
 module TCPv4 = struct
-  let src = Logs.Src.create "tcpv4"
+  let src = Logs.Src.create "miou-solo5-net.tcpv4"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -523,19 +526,19 @@ let stackv4 ~name ?gateway cidr =
     let connect mac =
       let ( let* ) = Result.bind in
       let* daemon, eth = Ethernet.create ~mtu:cfg.Miou_solo5.Net.mtu mac net in
-      Logs.debug (fun m ->
+      Log.debug (fun m ->
           m "✓ ethernet plugged (%a)" Macaddr.pp (Ethernet.mac eth));
       let* arpv4_daemon, arpv4 =
         ARPv4.create ~ipaddr:(Ipaddr.V4.Prefix.address cidr) eth
       in
-      Logs.debug (fun m -> m "✓ ARPv4 daemon launched");
+      Log.debug (fun m -> m "✓ ARPv4 daemon launched");
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
-      Logs.debug (fun m -> m "✓ IPv4 stack created");
+      Log.debug (fun m -> m "✓ IPv4 stack created");
       let icmpv4 = ICMPv4.handler ipv4 in
-      Logs.debug (fun m -> m "✓ ICMPv4 daemon launched");
+      Log.debug (fun m -> m "✓ ICMPv4 daemon launched");
       let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 in
       let udpv4 = UDPv4.create ipv4 in
-      Logs.debug (fun m -> m "✓ TCPv4 daemon launched");
+      Log.debug (fun m -> m "✓ TCPv4 daemon launched");
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udpv4 tcpv4);
       let fn = ethernet_handler arpv4 ipv4 in
       Ethernet.set_handler eth fn;
