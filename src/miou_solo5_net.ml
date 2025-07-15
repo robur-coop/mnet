@@ -154,7 +154,7 @@ module TCPv4 = struct
     in
     go data; Filled
 
-  let read_into t =
+  let rec read_into t =
     match Utcp.recv t.state.tcp (now ()) t.flow with
     | Ok (tcp, data, c, segs) ->
         t.state.tcp <- tcp;
@@ -172,7 +172,7 @@ module TCPv4 = struct
                   Logs.debug ~src:t.src (fun m ->
                       m "recv new packet (%d byte(s)) (second)"
                         (Cstruct.length data));
-                  if Cstruct.length data == 0 then Eof else fill t data
+                  if Cstruct.length data == 0 then read_into t else fill t data
               | Error `Not_found -> Refused
               | Error `Eof -> Eof
               | Error (`Msg msg) ->
@@ -301,15 +301,17 @@ module TCPv4 = struct
       match payload with
       | IPv4.Slice slice ->
           let { Slice.buf; off; len } = slice in
-          let bstr = Bstr.copy buf in
-          Cstruct.of_bigarray ~off ~len bstr
+          (* let bstr = Bstr.copy buf in *)
+          Cstruct.of_bigarray ~off ~len buf
       | IPv4.String str -> Cstruct.of_string str
     in
+    Log.debug (fun m ->
+        m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
     let tcp, ev, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
     state.tcp <- tcp;
-    let none = ()
-    and some = function
-      | `Established (flow, None) ->
+    begin
+      match ev with
+      | Some (`Established (flow, None)) ->
           let (_, src_port), (ipaddr, port) = Utcp.peers flow in
           Log.debug (fun m ->
               m "established connection with %a:%d" Ipaddr.pp ipaddr port);
@@ -334,20 +336,20 @@ module TCPv4 = struct
                 Queue.push flow q;
                 Hashtbl.add state.accept src_port (Pending q)
           end
-      | `Established (flow, Some c) ->
+      | Some (`Established (flow, Some c)) ->
           Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow);
           Notify.signal _ok c
-      | `Drop (flow, c, cs) ->
+      | Some (`Drop (flow, c, cs)) ->
           Log.debug (fun m -> m "drop (%a)" Utcp.pp_flow flow);
           List.iter (Notify.signal _eof) cs;
           Option.iter (Notify.signal _ok) c
-      | `Signal (flow, cs) ->
+      | Some (`Signal (flow, cs)) ->
           Log.debug (fun m ->
               m "signal (%a)(%d)" Utcp.pp_flow flow (List.length cs));
           List.iter (Notify.signal _ok) cs
-    in
-    Option.fold ~none ~some ev;
-    Logs.debug (fun m -> m "%d segment(s) produced" (List.length segs));
+      | None -> ()
+    end;
+    Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
     List.iter (fun out -> Queue.push out state.queue) segs
 
   let rec transfer state acc =

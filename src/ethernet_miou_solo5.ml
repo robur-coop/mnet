@@ -80,7 +80,11 @@ let write_directly_into t (packet : (Bstr.t -> int) packet) =
         (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus)));
   Miou_solo5.Net.write_bigstring t.net ~off:0 ~len:(14 + plus) t.bstr_oc
 
+let of_interest t dst =
+  Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
+
 let rec daemon t =
+  Logs.debug ~src:t.src (fun m -> m "Waiting for a new packet");
   let len = Miou_solo5.Net.read_bigstring t.net t.bstr_ic in
   begin
     match Packet.decode t.bstr_ic ~len with
@@ -89,22 +93,15 @@ let rec daemon t =
         Logs.err ~src:t.src (fun m -> m "Invalid Ethernet packet");
         Logs.err ~src:t.src (fun m ->
             m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
-    | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) ->
-        let packet = { src= Some src; dst; protocol; payload } in
-        if Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
-        then
-          try t.handler packet
-          with exn ->
-            Logs.err ~src:t.src (fun m ->
-                m "Unexpected exception from the user's handler: %s"
-                  (Printexc.to_string exn))
-        else begin
-          let payload = Slice_bstr.to_string payload in
-          Logs.debug ~src:t.src (fun m ->
-              m "Ignore (%a -> %a):" Macaddr.pp src Macaddr.pp dst);
-          Logs.debug ~src:t.src (fun m ->
-              m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) payload)
-        end
+    | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) -> begin
+        try
+          if of_interest t dst then
+            t.handler { src= Some src; dst; protocol; payload }
+        with exn ->
+          Logs.err ~src:t.src (fun m ->
+              m "Unexpected exception from the user's handler: %s"
+                (Printexc.to_string exn))
+      end
     | Ok _ -> ()
   end;
   daemon t
