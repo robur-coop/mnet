@@ -1,4 +1,4 @@
-let src = Logs.Src.create "udpv4"
+let src = Logs.Src.create "miou-solo5-net.udpv4"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
