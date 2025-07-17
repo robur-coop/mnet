@@ -140,59 +140,51 @@ module TCPv4 = struct
   type result = Filled | Eof | Refused
 
   let fill t data =
-    let rec go data =
-      let { Cstruct.buffer; off; len } = data in
+    let into_buffer buffer src_off len dst ~off:dst_off ~len:_ =
+      Bstr.blit buffer ~src_off dst ~dst_off ~len;
+      len
+    in
+    let rec one ({ Cstruct.buffer; off; len } as cs) =
       if len > 0 then begin
         let len = Int.min len (Buffer.available t.buffer) in
-        let fn dst ~off:dst_off ~len:_ =
-          Bstr.blit buffer ~src_off:off dst ~dst_off ~len;
-          len
-        in
+        let fn = into_buffer buffer off len in
         let _ = Buffer.put t.buffer ~fn in
-        go (Cstruct.shift data len)
+        one (Cstruct.shift cs len)
       end
     in
-    go data; Filled
+    let rec go = function [] -> Filled | x :: r -> one x; go r in
+    go data
 
   let rec read_into t =
     match Utcp.recv t.state.tcp (now ()) t.flow with
-    | Ok (tcp, data, c, segs) ->
+    | Ok (tcp, [], c, segs) -> begin
+        match Notify.await c with
+        | Ok () -> begin
+            match Utcp.recv t.state.tcp (now ()) t.flow with
+            | Ok (tcp, [], _c, segs) -> Eof
+            | Ok (tcp, data, _c, segs) ->
+                t.state.tcp <- tcp;
+                List.iter (write_ip t.state.ipv4) segs;
+                fill t data
+            | Error `Not_found -> Refused
+            | Error `Eof -> Eof
+            | Error (`Msg msg) ->
+                Logs.err ~src:t.src (fun m ->
+                    m "%a error while read (second recv): %s" Utcp.pp_flow
+                      t.flow msg);
+                Refused
+          end
+        | Error `Eof -> Eof
+        | Error (`Msg msg) ->
+            Logs.err ~src:t.src (fun m ->
+                m "%a error from computation while recv: %s" Utcp.pp_flow t.flow
+                  msg);
+            Refused
+      end
+    | Ok (tcp, data, _c, segs) ->
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
-        Logs.debug ~src:t.src (fun m ->
-            m "recv new packet (%d byte(s))" (Cstruct.length data));
-        if Cstruct.length data == 0 then (
-          match Notify.await c with
-          | Ok () -> begin
-              match Utcp.recv t.state.tcp (now ()) t.flow with
-              | Ok (tcp, data, _c, segs) ->
-                  t.state.tcp <- tcp;
-                  List.iter (write_ip t.state.ipv4) segs;
-                  Logs.debug ~src:t.src (fun m ->
-                      m "recv new packet (%d byte(s)) (second)"
-                        (Cstruct.length data));
-                  (* NOTE(dinosaure): the mirage μTCP layer returns [Eof] if the
-                     returned data is an empty [Cstruct.t]. However, if we don't
-                     try to continue/redo [Utcp.recv], we actually miss some
-                     bytes. Here is the main diff between the mirage μTCP layer
-                     and the miou solo5 layer.
-                     TODO(dinosaure): we must verify that with Hannes. *)
-                  if Cstruct.length data == 0 then read_into t else fill t data
-              | Error `Not_found -> Refused
-              | Error `Eof -> Eof
-              | Error (`Msg msg) ->
-                  Logs.err ~src:t.src (fun m ->
-                      m "%a error while read (second recv): %s" Utcp.pp_flow
-                        t.flow msg);
-                  Refused
-            end
-          | Error `Eof -> Eof
-          | Error (`Msg msg) ->
-              Logs.err ~src:t.src (fun m ->
-                  m "%a error from computation while recv: %s" Utcp.pp_flow
-                    t.flow msg);
-              Refused)
-        else fill t data
+        fill t data
     | Error `Eof -> Eof
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
