@@ -166,12 +166,17 @@ module TCPv4 = struct
           | Ok () -> begin
               match Utcp.recv t.state.tcp (now ()) t.flow with
               | Ok (tcp, data, _c, segs) ->
-                  (* TODO(dinosaure): assert (c == _c)? *)
                   t.state.tcp <- tcp;
                   List.iter (write_ip t.state.ipv4) segs;
                   Logs.debug ~src:t.src (fun m ->
                       m "recv new packet (%d byte(s)) (second)"
                         (Cstruct.length data));
+                  (* NOTE(dinosaure): the mirage μTCP layer returns [Eof] if the
+                     returned data is an empty [Cstruct.t]. However, if we don't
+                     try to continue/redo [Utcp.recv], we actually miss some
+                     bytes. Here is the main diff between the mirage μTCP layer
+                     and the miou solo5 layer.
+                     TODO(dinosaure): we must verify that with Hannes. *)
                   if Cstruct.length data == 0 then read_into t else fill t data
               | Error `Not_found -> Refused
               | Error `Eof -> Eof
@@ -296,13 +301,18 @@ module TCPv4 = struct
        RE-NOTE(dinosaure): the viewer can say that we also do the copy for
        ARPv4 and ICMPv4 but they are not a part of our "happy-path". What we
        want to improve is the TCP/IP stack. ARPv4 & ICMPv4 are just side
-       protocols. *)
+       protocols.
+
+       RE-NOTE(dinosaure): [mirage-netif-{solo5,unikraft}] allocates a
+       [Cstruct.t] for every Ethernet frames. We must reproduce this because
+       μTCP takes the ownership on them (and pass them to the user). This is the
+       main diff with the underlying layer (IPv4) which is based on one unique
+       and global bigarray (see [Ethernet.bstr_ic]). *)
     let cs =
       match payload with
       | IPv4.Slice slice ->
           let { Slice.buf; off; len } = slice in
-          (* let bstr = Bstr.copy buf in *)
-          Cstruct.of_bigarray ~off ~len buf
+          Cstruct.of_bigarray ~off ~len (Bstr.copy buf)
       | IPv4.String str -> Cstruct.of_string str
     in
     Log.debug (fun m ->
@@ -329,8 +339,10 @@ module TCPv4 = struct
                 ignore (Miou.Computation.try_return c flow)
             | Pending q ->
                 if Queue.length q < 1024 then Queue.push flow q
-                  (* TODO(dinosaure): we only accept 1024 pending established connections.
-                     We should respond to the client if we reach this limit. *)
+                  (* TODO(dinosaure): we only accept 1024 pending established
+                     connections. We should respond to the client if we reach
+                     this limit.
+                     XXX(hannes): not convinced by this hard limit. *)
             | exception Not_found ->
                 let q = Queue.create () in
                 Queue.push flow q;
