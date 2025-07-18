@@ -50,6 +50,14 @@ module Buffer = struct
     let n = fn t.bstr ~off ~len:(Bstr.length t.bstr - off) in
     t.len <- t.len + n;
     n
+
+  let flush t =
+    let cs = Cstruct.create t.len in
+    let src = Cstruct.of_bigarray t.bstr ~off:t.off ~len:t.len in
+    Cstruct.blit src 0 cs 0 t.len;
+    t.off <- 0;
+    t.len <- 0;
+    cs
 end
 
 module Notify = struct
@@ -137,67 +145,68 @@ module TCPv4 = struct
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
     | _ -> failwith "IPv6 not implemented"
 
-  type result = Filled | Eof | Refused
+  type result = Eof | Refused
 
-  let fill t data =
-    let into_buffer buffer src_off len dst ~off:dst_off ~len:_ =
-      Bstr.blit buffer ~src_off dst ~dst_off ~len;
-      len
-    in
-    let rec one ({ Cstruct.buffer; off; len } as cs) =
+  let fill t =
+    let rec one ({ Cstruct.buffer; off= src_off; len } as cs) =
       if len > 0 then begin
+        let into_buffer dst ~off:dst_off ~len:_ =
+          Bstr.blit buffer ~src_off dst ~dst_off ~len;
+          len
+        in
         let len = Int.min len (Buffer.available t.buffer) in
-        let fn = into_buffer buffer off len in
-        let _ = Buffer.put t.buffer ~fn in
+        let _ = Buffer.put t.buffer ~fn:into_buffer in
         one (Cstruct.shift cs len)
       end
     in
-    let rec go = function [] -> Filled | x :: r -> one x; go r in
-    go data
+    List.iter one
 
-  let rec read_into t =
+  let rec get t =
     match Utcp.recv t.state.tcp (now ()) t.flow with
     | Ok (tcp, [], c, segs) -> begin
+        t.state.tcp <- tcp;
+        List.iter (write_ip t.state.ipv4) segs;
         match Notify.await c with
         | Ok () -> begin
             match Utcp.recv t.state.tcp (now ()) t.flow with
-            | Ok (tcp, [], _c, segs) -> Eof
+            | Ok (tcp, [], _c, segs) ->
+                t.state.tcp <- tcp;
+                List.iter (write_ip t.state.ipv4) segs;
+                get t
             | Ok (tcp, data, _c, segs) ->
                 t.state.tcp <- tcp;
                 List.iter (write_ip t.state.ipv4) segs;
-                fill t data
-            | Error `Not_found -> Refused
-            | Error `Eof -> Eof
+                Ok data
+            | Error `Not_found -> Error Refused
+            | Error `Eof -> Error Eof
             | Error (`Msg msg) ->
                 Logs.err ~src:t.src (fun m ->
                     m "%a error while read (second recv): %s" Utcp.pp_flow
                       t.flow msg);
-                Refused
+                Error Refused
           end
-        | Error `Eof -> Eof
+        | Error `Eof -> Error Eof
         | Error (`Msg msg) ->
             Logs.err ~src:t.src (fun m ->
                 m "%a error from computation while recv: %s" Utcp.pp_flow t.flow
                   msg);
-            Refused
+            Error Refused
       end
     | Ok (tcp, data, _c, segs) ->
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
-        fill t data
-    | Error `Eof -> Eof
+        Ok data
+    | Error `Eof -> Error Eof
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
             m "%a error while read: %s" Utcp.pp_flow t.flow msg);
-        Refused
-    | Error `Not_found -> Refused
+        Error Refused
+    | Error `Not_found -> Error Refused
 
   let read t ?off:(dst_off = 0) ?len buf =
-    if t.closed then 0
-    else
-      let len =
-        match len with Some len -> len | None -> Bytes.length buf - dst_off
-      in
+    if not t.closed then begin
+      let default = Bytes.length buf - dst_off in
+      let len = Option.value ~default len in
       let fn bstr ~off:src_off ~len:src_len =
         let len = Int.min src_len len in
         Bstr.blit_to_bytes bstr ~src_off buf ~dst_off ~len;
@@ -205,15 +214,26 @@ module TCPv4 = struct
       in
       if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
       else
-        match read_into t with
-        | Filled -> Buffer.get t.buffer ~fn
-        | Eof ->
-            Logs.debug ~src:t.src (fun m -> m "End-of-transmision received");
-            0
-        | Refused ->
-            Logs.err ~src:t.src (fun m -> m "Connection refused");
+        match get t with
+        | Ok data -> fill t data; Buffer.get t.buffer ~fn
+        | Error Eof -> 0
+        | Error Refused ->
             t.closed <- true;
             0
+    end
+    else 0
+
+  let get t =
+    match get t with
+    | Ok css as value ->
+        if Buffer.length t.buffer <= 0 then value
+        else
+          let pre = Buffer.flush t.buffer in
+          Ok (pre :: css)
+    | Error Eof -> Error `Eof
+    | Error Refused ->
+        t.closed <- true;
+        Error `Refused
 
   let rec really_read t off len buf =
     let len' = read t ~off ~len buf in
