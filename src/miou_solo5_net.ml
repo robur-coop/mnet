@@ -52,12 +52,11 @@ module Buffer = struct
     n
 
   let flush t =
-    let cs = Cstruct.create t.len in
-    let src = Cstruct.of_bigarray t.bstr ~off:t.off ~len:t.len in
-    Cstruct.blit src 0 cs 0 t.len;
+    let buf = Bytes.create t.len in
+    Bstr.blit_to_bytes t.bstr ~src_off:t.off buf ~dst_off:0 ~len:t.len;
     t.off <- 0;
     t.len <- 0;
-    cs
+    Bytes.unsafe_to_string buf
 end
 
 module Notify = struct
@@ -148,18 +147,18 @@ module TCPv4 = struct
   type result = Eof | Refused
 
   let fill t =
-    let rec one ({ Cstruct.buffer; off= src_off; len } as cs) =
-      if len > 0 then begin
+    let rec one str str_off str_len =
+      if str_len > 0 then begin
+        let len = Int.min str_len (Buffer.available t.buffer) in
         let into_buffer dst ~off:dst_off ~len:_ =
-          Bstr.blit buffer ~src_off dst ~dst_off ~len;
+          Bstr.blit_from_string str ~src_off:str_off dst ~dst_off ~len;
           len
         in
-        let len = Int.min len (Buffer.available t.buffer) in
         let _ = Buffer.put t.buffer ~fn:into_buffer in
-        one (Cstruct.shift cs len)
+        one str (str_off + len) (str_len - len)
       end
     in
-    List.iter one
+    List.iter (fun str -> one str 0 (String.length str))
 
   let rec get t =
     match Utcp.recv t.state.tcp (now ()) t.flow with
@@ -252,18 +251,18 @@ module TCPv4 = struct
      internal buffer associated to our flow to avoid allocation-per-writing. The
      only viable solution seems to modify μTCP to use strings instead of
      [Cstruct.t]... *)
-  let rec write t cs =
-    match Utcp.send t.state.tcp (now ()) t.flow cs with
+  let rec write t str off len =
+    match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with
     | Error `Not_found -> raise Connection_refused
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
             m "%a error while write: %s" Utcp.pp_flow t.flow msg);
         raise Closed_by_peer
-    | Ok (tcp, bytes_sent, c, segs) -> (
+    | Ok (tcp, bytes_sent, c, segs) -> begin
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
         Logs.debug ~src:t.src (fun m -> m "write %d byte(s)" bytes_sent);
-        if bytes_sent < Cstruct.length cs then
+        if bytes_sent < len then
           let result = Notify.await c in
           match result with
           | Error `Eof -> raise Closed_by_peer
@@ -273,14 +272,14 @@ module TCPv4 = struct
                     t.flow msg);
               raise Closed_by_peer
           | Ok () ->
-              let cs = Cstruct.shift cs bytes_sent in
-              if Cstruct.length cs > 0 then write t cs)
+              if len - bytes_sent > 0 then
+                write t str (off + bytes_sent) (len - bytes_sent)
+      end
 
   let write t ?(off = 0) ?len str =
-    let len =
-      match len with Some len -> len | None -> String.length str - off
-    in
-    write t (Cstruct.of_string ~off ~len str)
+    let default = String.length str - off in
+    let len = Option.value ~default len in
+    write t str off len
 
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
@@ -324,7 +323,7 @@ module TCPv4 = struct
       match payload with
       | IPv4.Slice slice ->
           let { Slice.buf; off; len } = slice in
-          Cstruct.of_bigarray ~off ~len (Bstr.copy buf)
+          Cstruct.of_bigarray ~off ~len buf
       | IPv4.String str -> Cstruct.of_string str
     in
     Log.debug (fun m ->

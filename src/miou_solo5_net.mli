@@ -20,7 +20,7 @@ module TCPv4 : sig
   val connect : state -> Ipaddr.V4.t * int -> flow
   (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
-  val get : flow -> (Cstruct.t list, [> `Eof | `Refused ]) result
+  val get : flow -> (string list, [> `Eof | `Refused ]) result
 
   val read : flow -> ?off:int -> ?len:int -> bytes -> int
   (** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
