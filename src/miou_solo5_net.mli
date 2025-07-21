@@ -81,6 +81,6 @@ val stackv4 :
      name:string
   -> ?gateway:Ipaddr.V4.t
   -> Ipaddr.V4.Prefix.t
-  -> (stackv4 * TCPv4.state * UDPv4.state) Miou_solo5.arg
+  -> (stackv4 * TCPv4.state * UDPv4.state) Mkernel.arg
 
 val kill : stackv4 -> unit

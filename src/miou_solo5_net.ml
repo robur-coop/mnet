@@ -118,7 +118,7 @@ module TCPv4 = struct
   }
 
   let[@inline] now () =
-    let n = Miou_solo5.clock_monotonic () in
+    let n = Mkernel.clock_monotonic () in
     Mtime.of_uint64_ns (Int64.of_int n)
 
   let write_ipv4 ipv4 (src, dst, seg) =
@@ -410,7 +410,7 @@ module TCPv4 = struct
       Notify.signal err rcv; Notify.signal err snd
     in
     List.iter fn drops;
-    Miou_solo5.sleep 100_000_000;
+    Mkernel.sleep 100_000_000;
     daemon state (n + 1)
 
   type listen = Listen of int [@@unboxed]
@@ -550,7 +550,7 @@ let stackv4 ~name ?gateway cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
-      let* daemon, eth = Ethernet.create ~mtu:cfg.Miou_solo5.Net.mtu mac net in
+      let* daemon, eth = Ethernet.create ~mtu:cfg.Mkernel.Net.mtu mac net in
       Log.debug (fun m ->
           m "✓ ethernet plugged (%a)" Macaddr.pp (Ethernet.mac eth));
       let* arpv4_daemon, arpv4 =
@@ -572,9 +572,9 @@ let stackv4 ~name ?gateway cidr =
       in
       Ok (stackv4, tcpv4, udpv4)
     in
-    let mac = Macaddr.of_octets_exn (cfg.Miou_solo5.Net.mac :> string) in
+    let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
     match connect mac with
     | Ok daemon -> daemon
     | Error err -> Fmt.failwith "%a" pp_error err
   in
-  Miou_solo5.(map fn [ net name ])
+  Mkernel.(map fn [ net name ])

@@ -13,4 +13,4 @@
   macaddr
   bin
   slice.bstr
-  miou-solo5))
+  mkernel))

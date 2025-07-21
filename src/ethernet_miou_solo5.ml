@@ -44,7 +44,7 @@ end
 type protocol = Packet.protocol = ARPv4 | IPv4 | IPv6
 
 type t = {
-    net: Miou_solo5.Net.t
+    net: Mkernel.Net.t
   ; mutable handler: handler
   ; mtu: int
   ; mac: Macaddr.t

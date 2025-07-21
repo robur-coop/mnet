@@ -307,7 +307,7 @@ let read_or_sync ?(delay = 1_500_000_000) t =
     Queue.transfer t.queue todo;
     In todo
   in
-  let prm0 = Miou.async @@ fun () -> Miou_solo5.sleep delay; Tick in
+  let prm0 = Miou.async @@ fun () -> Mkernel.sleep delay; Tick in
   match Miou.await_first [ prm0; prm1 ] with
   | Ok value -> value
   | Error exn ->
@@ -317,12 +317,12 @@ let read_or_sync ?(delay = 1_500_000_000) t =
 
 let arp ?(delay = 1_500_000_000) t =
   let rec go rem =
-    let t0 = Miou_solo5.clock_monotonic () in
+    let t0 = Mkernel.clock_monotonic () in
     match read_or_sync ~delay:rem t with
     | In queue ->
         let fn = input t in
         Queue.iter fn queue;
-        let t1 = Miou_solo5.clock_monotonic () in
+        let t1 = Mkernel.clock_monotonic () in
         let rem = rem - (t1 - t0) in
         let rem = if rem <= 0 then delay else rem in
         go rem
