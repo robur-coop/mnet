@@ -182,8 +182,7 @@ let tick t =
     | Dynamic (_, tick) when tick <= epoch + 1 ->
         (request t k :: pkts, to_remove, timeouts)
     | Pending (w, retry) ->
-        if retry <= t.epoch
-        then (pkts, k :: to_remove, w :: timeouts)
+        if retry <= t.epoch then (pkts, k :: to_remove, w :: timeouts)
         else (request t k :: pkts, to_remove, timeouts)
     | _ -> (pkts, to_remove, timeouts)
   in

@@ -41,7 +41,7 @@ type t = Unsized : Ropes.unknown Ropes.t -> t | Sized : Diet.t * bytes -> t
    Solo5 up to here, this unfragmented packet **is not** a copy.
 *)
 
-let singleton ~off ?(limit = false) slice : t =
+let singleton ~off ?(limit = false) ~len slice : t =
   match (off, limit) with
   | _, false ->
       let str = Slice_bstr.to_string slice in
@@ -51,7 +51,7 @@ let singleton ~off ?(limit = false) slice : t =
       Unsized ropes
   | 0, true -> invalid_arg "Unfragmented packet"
   | _, true ->
-      let str = Slice_bstr.to_string slice in
+      let str = Slice_bstr.sub_string ~off:0 ~len slice in
       let empty = Ropes.(Unknown Limitless) in
       let ropes = Ropes.insert ~off str empty in
       let max = off + String.length str in
