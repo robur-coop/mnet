@@ -139,22 +139,25 @@ module Fragments = struct
 
   type payload = Slice of SBstr.t | String of string
 
-  let insert t pkt slice =
+  let insert t (pkt : Packet.complete Packet.packet) slice =
     let src = pkt.Packet.src
     and dst = pkt.Packet.dst
     and protocol = pkt.Packet.protocol
     and uid = pkt.Packet.uid
     and off = pkt.Packet.off * 8
+    and len = pkt.Packet.checksum_and_length.length - 20
     and limit = not (List.exists (( == ) Flag.MF) pkt.Packet.flags) in
     let key = { Key.src; dst; protocol; uid } in
     let now = Miou_solo5.clock_monotonic () in
     match (off, limit, Cache.find key t.cache) with
-    | 0, true, None -> Some (key, Slice slice) (* unfragmented packed *)
+    | 0, true, None ->
+        Some (key, Slice (Slice_bstr.sub slice ~off:0 ~len))
+        (* unfragmented packed *)
     | _, _, None ->
         (* NOTE(dinosaure): we have an new fragment which is not recorded
            into our cache. We [add] this new fragment and [trim] our
            cache to avoid an OOM. *)
-        let fragment = Fragment.singleton ~off ~limit slice in
+        let fragment = Fragment.singleton ~off ~len ~limit slice in
         let value =
           { Value.to_expire= now + t.to_expire; count= 1; fragment }
         in
@@ -169,7 +172,7 @@ module Fragments = struct
         (* NOTE(dinosaure): from @hannesm, if we found an entry and get a new
            fragment [max_expiration]ns (10secs), we delete the old entry
            and create a new one. *)
-        let fragment = Fragment.singleton ~off ~limit slice in
+        let fragment = Fragment.singleton ~off ~len ~limit slice in
         let value =
           { Value.to_expire= now + t.to_expire; count= 1; fragment }
         in
@@ -186,7 +189,7 @@ module Fragments = struct
            cache also. *)
         let on_exn _exn = Cache.remove key t.cache; None in
         catch ~on_exn @@ fun () ->
-        let str = SBstr.to_string slice in
+        let str = SBstr.sub_string ~off:0 ~len slice in
         let fragment = Fragment.insert fragment ~off ~limit str in
         if Fragment.is_complete fragment then begin
           Log.debug (fun m -> m "fragment is complete");

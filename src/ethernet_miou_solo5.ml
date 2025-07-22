@@ -84,22 +84,23 @@ let of_interest t dst =
   Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
 
 let handler t bstr ~len =
-  match Packet.decode bstr ~len with
-  | Error _ ->
-      let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
-      Logs.err ~src:t.src (fun m -> m "Invalid Ethernet packet");
-      Logs.err ~src:t.src (fun m ->
-          m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
-  | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) -> begin
-      try
-        if of_interest t dst then
-          t.handler { src= Some src; dst; protocol; payload }
-      with exn ->
+  if len >= 14 then
+    match Packet.decode bstr ~len with
+    | Error _ ->
+        let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
+        Logs.err ~src:t.src (fun m -> m "Invalid Ethernet packet");
         Logs.err ~src:t.src (fun m ->
-            m "Unexpected exception from the user's handler: %s"
-              (Printexc.to_string exn))
-    end
-  | Ok _ -> ()
+            m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+    | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) -> begin
+        try
+          if of_interest t dst then
+            t.handler { src= Some src; dst; protocol; payload }
+        with exn ->
+          Logs.err ~src:t.src (fun m ->
+              m "Unexpected exception from the user's handler: %s"
+                (Printexc.to_string exn))
+      end
+    | Ok _ -> ()
 
 let rec daemon t =
   let len = Miou_solo5.Net.read_bigstring t.net t.bstr_ic in
