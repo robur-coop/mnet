@@ -78,7 +78,7 @@ let write_directly_into t (packet : (Bstr.t -> int) packet) =
       m "@[<hov>%a@]"
         (Hxd_string.pp Hxd.default)
         (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus)));
-  Miou_solo5.Net.write_bigstring t.net ~off:0 ~len:(14 + plus) t.bstr_oc
+  Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus) t.bstr_oc
 
 let of_interest t dst =
   Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
@@ -103,7 +103,7 @@ let handler t bstr ~len =
     | Ok _ -> ()
 
 let rec daemon t =
-  let len = Miou_solo5.Net.read_bigstring t.net t.bstr_ic in
+  let len = Mkernel.Net.read_bigstring t.net t.bstr_ic in
   handler t t.bstr_ic ~len; daemon t
 
 let write_directly_into t ?src ~dst ~protocol fn =

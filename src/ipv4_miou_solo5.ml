@@ -148,7 +148,7 @@ module Fragments = struct
     and len = pkt.Packet.checksum_and_length.length - 20
     and limit = not (List.exists (( == ) Flag.MF) pkt.Packet.flags) in
     let key = { Key.src; dst; protocol; uid } in
-    let now = Miou_solo5.clock_monotonic () in
+    let now = Mkernel.clock_monotonic () in
     match (off, limit, Cache.find key t.cache) with
     | 0, true, None ->
         Some (key, Slice (Slice_bstr.sub slice ~off:0 ~len))
