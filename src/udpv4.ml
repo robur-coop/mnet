@@ -1,8 +1,8 @@
-let src = Logs.Src.create "miou-solo5-net.udpv4"
+let src = Logs.Src.create "mnet.udpv4"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
-module IPv4 = Ipv4_miou_solo5
+module IPv4 = Ipv4
 
 module Packet = struct
   type t = { src_port: int; dst_port: int; length: int }

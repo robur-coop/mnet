@@ -1,11 +1,11 @@
-let src = Logs.Src.create "miou-solo5-net"
+let src = Logs.Src.create "mnet"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-module Ethernet = Ethernet_miou_solo5
-module ARPv4 = Arp_miou_solo5
-module IPv4 = Ipv4_miou_solo5
-module ICMPv4 = Icmpv4_miou_solo5
-module UDPv4 = Udpv4_miou_solo5
+module Ethernet = Ethernet
+module ARPv4 = Arp
+module IPv4 = Ipv4
+module ICMPv4 = Icmpv4
+module UDPv4 = Udpv4
 
 exception Net_unreach
 exception Closed_by_peer

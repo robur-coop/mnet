@@ -12,8 +12,7 @@ depends: [
   "dune" {>= "2.7.0"}
   "bstr"
   "slice"
-  "bin"
-  "miou-solo5"
+  "mkernel"
   "mirage-crypto-rng"
   "duration"
   "fmt"

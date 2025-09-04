@@ -28,6 +28,7 @@ type handler = Slice_bstr.t packet -> unit
 
 val write_directly_into :
      t
+  -> ?len:int
   -> ?src:Macaddr.t
   -> dst:Macaddr.t
   -> protocol:protocol

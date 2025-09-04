@@ -64,21 +64,23 @@ and handler = Slice_bstr.t packet -> unit
 
 let mac { mac; _ } = mac
 
-let write_directly_into t (packet : (Bstr.t -> int) packet) =
+let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
   let src = Option.value ~default:t.mac packet.src in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
   Packet.encode_into pkt ~off:0 t.bstr_oc;
   let bstr = Bstr.sub t.bstr_oc ~off:14 ~len:(Bstr.length t.bstr_oc - 14) in
-  let plus = fn bstr in
+  let plus' = fn bstr in
+  Option.iter (fun plus -> assert (plus = plus')) plus;
   Logs.debug ~src:t.src (fun m ->
       m "write ethernet packet src:%a -> dst:%a (%d byte(s))" Macaddr.pp src
-        Macaddr.pp packet.dst plus);
+        Macaddr.pp packet.dst plus');
   Logs.debug ~src:t.src (fun m ->
       m "@[<hov>%a@]"
         (Hxd_string.pp Hxd.default)
-        (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus)));
-  Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus) t.bstr_oc
+        (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus')));
+  (* TODO(dinosaure): use [Mkernel.Net.write_into]. *)
+  Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus') t.bstr_oc
 
 let of_interest t dst =
   Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
@@ -106,9 +108,9 @@ let rec daemon t =
   let len = Mkernel.Net.read_bigstring t.net t.bstr_ic in
   handler t t.bstr_ic ~len; daemon t
 
-let write_directly_into t ?src ~dst ~protocol fn =
+let write_directly_into t ?len ?src ~dst ~protocol fn =
   let pkt = { src; dst; protocol; payload= fn } in
-  write_directly_into t pkt
+  write_directly_into t ?len pkt
 
 let guard err fn = if fn () then Ok () else Error err
 

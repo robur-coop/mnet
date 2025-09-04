@@ -1,4 +1,4 @@
-module ARPv4 = Arp_miou_solo5
+module ARPv4 = Arp
 
 let broadcast = Ok Macaddr.broadcast
 

@@ -1,4 +1,4 @@
-module Ethernet = Ethernet_miou_solo5
+module Ethernet = Ethernet
 
 [@@@warning "-37"]
 
@@ -137,7 +137,7 @@ let write t (arp, dst) =
   (* NOTE(dinosaure): we already check, in [create] that the MTU is more than
      [28] bytes. The buffer given by [Ethernet] is also more than [28] bytes. *)
   let fn = Packet.unsafe_encode_into arp ~off:0 in
-  Ethernet.write_directly_into t.eth ~dst ~protocol:Ethernet.ARPv4 fn
+  Ethernet.write_directly_into ~len:28 t.eth ~dst ~protocol:Ethernet.ARPv4 fn
 
 let guard err fn = if fn () then Ok () else Error err
 let macaddr t = t.macaddr
@@ -341,10 +341,8 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?src ?ipaddr
     | None -> Logs.Src.create (Fmt.str "%a" Macaddr.pp macaddr)
     | Some src -> src
   in
-  if timeout <= 0 then
-    Fmt.invalid_arg "Arp_miou_solo5.create: null or negative timeout";
-  if retries < 0 then
-    Fmt.invalid_arg "Arg_miou_solo5.create: negative retries value";
+  if timeout <= 0 then Fmt.invalid_arg "Arp.create: null or negative timeout";
+  if retries < 0 then Fmt.invalid_arg "Arg.create: negative retries value";
   let unknown = Option.is_none ipaddr in
   let ipaddr = Option.value ~default:Ipaddr.V4.any ipaddr in
   let cache = Hashtbl.create 0x10 in

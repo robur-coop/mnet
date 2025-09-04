@@ -1,4 +1,4 @@
-let src = Logs.Src.create "miou-solo5-net.ropes"
+let src = Logs.Src.create "mnet.ropes"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
