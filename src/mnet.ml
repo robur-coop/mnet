@@ -293,6 +293,16 @@ module TCPv4 = struct
         Logs.err ~src:t.src (fun m ->
             m "%a error in close: %s" Utcp.pp_flow t.flow msg)
 
+  let shutdown t mode =
+    match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
+    | Ok (tcp, segs) ->
+        t.state.tcp <- tcp;
+        List.iter (write_ip t.state.ipv4) segs
+    | Error (`Msg msg) ->
+        Logs.err ~src:t.src (fun m ->
+            m "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
+    | Error `Not_found -> ()
+
   let peers { flow; _ } = Utcp.peers flow
   let _eof = Error `Eof
   let _ok = Ok ()

@@ -21,6 +21,12 @@ module TCPv4 : sig
   (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
   val get : flow -> (string list, [> `Eof | `Refused ]) result
+  (** [get flow] allows reading from a given [flow] {b without} involving a
+      temporary buffer. In other words, the data returned is that from the
+      Ethernet frame.
+
+      If data exists in the internal buffer, [get] flushes it and prepends this
+      content to what we obtain from the Ethernet frames. *)
 
   val read : flow -> ?off:int -> ?len:int -> bytes -> int
   (** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
@@ -67,6 +73,7 @@ module TCPv4 : sig
   val close : flow -> unit
   (** [close flow] closes properly the given [flow]. *)
 
+  val shutdown : flow -> [ `read | `write | `read_write ] -> unit
   val peers : flow -> (Ipaddr.t * int) * (Ipaddr.t * int)
 
   type listen
