@@ -124,7 +124,7 @@ end
 module Cache = Lru.M.Make (Key) (Value)
 
 module Fragments = struct
-  let src = Logs.Src.create "miou-solo5-net.fragments"
+  let src = Logs.Src.create "mnet.fragments"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 

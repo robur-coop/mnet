@@ -92,7 +92,7 @@ end
    only have IPv4 implementation. We should handle easily the IPv6 at this
    layer I think. *)
 module TCPv4 = struct
-  let src = Logs.Src.create "miou-solo5-net.tcpv4"
+  let src = Logs.Src.create "mnet.tcpv4"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
