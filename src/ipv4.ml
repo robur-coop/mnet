@@ -1,4 +1,4 @@
-let src = Logs.Src.create "miou-solo5-net.ipv4"
+let src = Logs.Src.create "mnet.ipv4"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
@@ -124,7 +124,7 @@ end
 module Cache = Lru.M.Make (Key) (Value)
 
 module Fragments = struct
-  let src = Logs.Src.create "miou-solo5-net.fragments"
+  let src = Logs.Src.create "mnet.fragments"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -148,7 +148,7 @@ module Fragments = struct
     and len = pkt.Packet.checksum_and_length.length - 20
     and limit = not (List.exists (( == ) Flag.MF) pkt.Packet.flags) in
     let key = { Key.src; dst; protocol; uid } in
-    let now = Miou_solo5.clock_monotonic () in
+    let now = Mkernel.clock_monotonic () in
     match (off, limit, Cache.find key t.cache) with
     | 0, true, None ->
         Some (key, Slice (Slice_bstr.sub slice ~off:0 ~len))
@@ -205,8 +205,8 @@ module Fragments = struct
         end
 end
 
-module Ethernet = Ethernet_miou_solo5
-module ARPv4 = Arp_miou_solo5
+module Ethernet = Ethernet
+module ARPv4 = Arp
 
 type packet = Key.t = {
     src: Ipaddr.V4.t
@@ -423,7 +423,8 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
           in
           let protocol = Ethernet.IPv4 in
           let fn = fixed pkt user's_fn total_length in
-          Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn;
+          Ethernet.write_directly_into t.eth ~len:(20 + total_length)
+            ~dst:macaddr ~protocol fn;
           Ok ()
       | Writer.Fragmented { total_length; fn } ->
           let uid = Mirage_crypto_rng.generate 2 in
@@ -449,7 +450,8 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
                 in
                 let protocol = Ethernet.IPv4 in
                 let fn = fixed pkt user's_fn size in
-                Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn;
+                Ethernet.write_directly_into t.eth ~len:(20 + size) ~dst:macaddr
+                  ~protocol fn;
                 if next != Seq.Nil && total_length - size > 0 then
                   go (off + size) (total_length - size) next
           in
@@ -476,9 +478,8 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
                 }
               in
               Packet.unsafe_encode_into pkt bstr;
-              let len =
-                user's_fn (Bstr.sub bstr ~off:20 ~len:(Bstr.length bstr - 20))
-              in
+              let user's_payload = Bstr.shift bstr 20 in
+              let len = user's_fn user's_payload in
               Bstr.set_uint16_be bstr 2 (20 + len);
               let len = (len + 0b111) / 8 * 8 in
               off := !off + len;

@@ -28,6 +28,7 @@ type handler = Slice_bstr.t packet -> unit
 
 val write_directly_into :
      t
+  -> ?len:int
   -> ?src:Macaddr.t
   -> dst:Macaddr.t
   -> protocol:protocol
@@ -38,7 +39,7 @@ val create :
      ?mtu:int
   -> ?handler:(Slice_bstr.t packet -> unit)
   -> Macaddr.t
-  -> Miou_solo5.Net.t
+  -> Mkernel.Net.t
   -> (daemon * t, [> `MTU_too_small ]) result
 (** NOTE(dinosaure): Note that the handler managing the Ethernet frames does not
     run cooperatively but from the main task that manages all the I/O. In other

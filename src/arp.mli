@@ -1,4 +1,4 @@
-module Ethernet = Ethernet_miou_solo5
+module Ethernet = Ethernet
 
 type error = [ `Exn of exn | `Timeout | `Clear ]
 

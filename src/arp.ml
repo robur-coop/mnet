@@ -1,4 +1,4 @@
-module Ethernet = Ethernet_miou_solo5
+module Ethernet = Ethernet
 
 [@@@warning "-37"]
 
@@ -137,7 +137,7 @@ let write t (arp, dst) =
   (* NOTE(dinosaure): we already check, in [create] that the MTU is more than
      [28] bytes. The buffer given by [Ethernet] is also more than [28] bytes. *)
   let fn = Packet.unsafe_encode_into arp ~off:0 in
-  Ethernet.write_directly_into t.eth ~dst ~protocol:Ethernet.ARPv4 fn
+  Ethernet.write_directly_into ~len:28 t.eth ~dst ~protocol:Ethernet.ARPv4 fn
 
 let guard err fn = if fn () then Ok () else Error err
 let macaddr t = t.macaddr
@@ -307,7 +307,7 @@ let read_or_sync ?(delay = 1_500_000_000) t =
     Queue.transfer t.queue todo;
     In todo
   in
-  let prm0 = Miou.async @@ fun () -> Miou_solo5.sleep delay; Tick in
+  let prm0 = Miou.async @@ fun () -> Mkernel.sleep delay; Tick in
   match Miou.await_first [ prm0; prm1 ] with
   | Ok value -> value
   | Error exn ->
@@ -317,12 +317,12 @@ let read_or_sync ?(delay = 1_500_000_000) t =
 
 let arp ?(delay = 1_500_000_000) t =
   let rec go rem =
-    let t0 = Miou_solo5.clock_monotonic () in
+    let t0 = Mkernel.clock_monotonic () in
     match read_or_sync ~delay:rem t with
     | In queue ->
         let fn = input t in
         Queue.iter fn queue;
-        let t1 = Miou_solo5.clock_monotonic () in
+        let t1 = Mkernel.clock_monotonic () in
         let rem = rem - (t1 - t0) in
         let rem = if rem <= 0 then delay else rem in
         go rem
@@ -341,10 +341,8 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?src ?ipaddr
     | None -> Logs.Src.create (Fmt.str "%a" Macaddr.pp macaddr)
     | Some src -> src
   in
-  if timeout <= 0 then
-    Fmt.invalid_arg "Arp_miou_solo5.create: null or negative timeout";
-  if retries < 0 then
-    Fmt.invalid_arg "Arg_miou_solo5.create: negative retries value";
+  if timeout <= 0 then Fmt.invalid_arg "Arp.create: null or negative timeout";
+  if retries < 0 then Fmt.invalid_arg "Arg.create: negative retries value";
   let unknown = Option.is_none ipaddr in
   let ipaddr = Option.value ~default:Ipaddr.V4.any ipaddr in
   let cache = Hashtbl.create 0x10 in

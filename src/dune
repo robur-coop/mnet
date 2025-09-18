@@ -1,6 +1,6 @@
 (library
- (name miou_solo5_net)
- (public_name miou-solo5-net)
+ (name mnet)
+ (public_name mnet)
  (libraries
   lru
   mirage-crypto-rng
@@ -13,4 +13,4 @@
   macaddr
   bin
   slice.bstr
-  miou-solo5))
+  mkernel))

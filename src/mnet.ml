@@ -1,11 +1,11 @@
-let src = Logs.Src.create "miou-solo5-net"
+let src = Logs.Src.create "mnet"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-module Ethernet = Ethernet_miou_solo5
-module ARPv4 = Arp_miou_solo5
-module IPv4 = Ipv4_miou_solo5
-module ICMPv4 = Icmpv4_miou_solo5
-module UDPv4 = Udpv4_miou_solo5
+module Ethernet = Ethernet
+module ARPv4 = Arp
+module IPv4 = Ipv4
+module ICMPv4 = Icmpv4
+module UDPv4 = Udpv4
 
 exception Net_unreach
 exception Closed_by_peer
@@ -50,6 +50,13 @@ module Buffer = struct
     let n = fn t.bstr ~off ~len:(Bstr.length t.bstr - off) in
     t.len <- t.len + n;
     n
+
+  let flush t =
+    let buf = Bytes.create t.len in
+    Bstr.blit_to_bytes t.bstr ~src_off:t.off buf ~dst_off:0 ~len:t.len;
+    t.off <- 0;
+    t.len <- 0;
+    Bytes.unsafe_to_string buf
 end
 
 module Notify = struct
@@ -85,7 +92,7 @@ end
    only have IPv4 implementation. We should handle easily the IPv6 at this
    layer I think. *)
 module TCPv4 = struct
-  let src = Logs.Src.create "miou-solo5-net.tcpv4"
+  let src = Logs.Src.create "mnet.tcpv4"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -111,7 +118,7 @@ module TCPv4 = struct
   }
 
   let[@inline] now () =
-    let n = Miou_solo5.clock_monotonic () in
+    let n = Mkernel.clock_monotonic () in
     Mtime.of_uint64_ns (Int64.of_int n)
 
   let write_ipv4 ipv4 (src, dst, seg) =
@@ -137,75 +144,68 @@ module TCPv4 = struct
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
     | _ -> failwith "IPv6 not implemented"
 
-  type result = Filled | Eof | Refused
+  type result = Eof | Refused
 
-  let fill t data =
-    let rec go data =
-      let { Cstruct.buffer; off; len } = data in
-      if len > 0 then begin
-        let len = Int.min len (Buffer.available t.buffer) in
-        let fn dst ~off:dst_off ~len:_ =
-          Bstr.blit buffer ~src_off:off dst ~dst_off ~len;
+  let fill t =
+    let rec one str str_off str_len =
+      if str_len > 0 then begin
+        let len = Int.min str_len (Buffer.available t.buffer) in
+        let into_buffer dst ~off:dst_off ~len:_ =
+          Bstr.blit_from_string str ~src_off:str_off dst ~dst_off ~len;
           len
         in
-        let _ = Buffer.put t.buffer ~fn in
-        go (Cstruct.shift data len)
+        let _ = Buffer.put t.buffer ~fn:into_buffer in
+        one str (str_off + len) (str_len - len)
       end
     in
-    go data; Filled
+    List.iter (fun str -> one str 0 (String.length str))
 
-  let rec read_into t =
+  let rec get t =
     match Utcp.recv t.state.tcp (now ()) t.flow with
-    | Ok (tcp, data, c, segs) ->
+    | Ok (tcp, [], c, segs) -> begin
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
-        Logs.debug ~src:t.src (fun m ->
-            m "recv new packet (%d byte(s))" (Cstruct.length data));
-        if Cstruct.length data == 0 then (
-          match Notify.await c with
-          | Ok () -> begin
-              match Utcp.recv t.state.tcp (now ()) t.flow with
-              | Ok (tcp, data, _c, segs) ->
-                  t.state.tcp <- tcp;
-                  List.iter (write_ip t.state.ipv4) segs;
-                  Logs.debug ~src:t.src (fun m ->
-                      m "recv new packet (%d byte(s)) (second)"
-                        (Cstruct.length data));
-                  (* NOTE(dinosaure): the mirage μTCP layer returns [Eof] if the
-                     returned data is an empty [Cstruct.t]. However, if we don't
-                     try to continue/redo [Utcp.recv], we actually miss some
-                     bytes. Here is the main diff between the mirage μTCP layer
-                     and the miou solo5 layer.
-                     TODO(dinosaure): we must verify that with Hannes. *)
-                  if Cstruct.length data == 0 then read_into t else fill t data
-              | Error `Not_found -> Refused
-              | Error `Eof -> Eof
-              | Error (`Msg msg) ->
-                  Logs.err ~src:t.src (fun m ->
-                      m "%a error while read (second recv): %s" Utcp.pp_flow
-                        t.flow msg);
-                  Refused
-            end
-          | Error `Eof -> Eof
-          | Error (`Msg msg) ->
-              Logs.err ~src:t.src (fun m ->
-                  m "%a error from computation while recv: %s" Utcp.pp_flow
-                    t.flow msg);
-              Refused)
-        else fill t data
-    | Error `Eof -> Eof
+        match Notify.await c with
+        | Ok () -> begin
+            match Utcp.recv t.state.tcp (now ()) t.flow with
+            | Ok (tcp, [], _c, segs) ->
+                t.state.tcp <- tcp;
+                List.iter (write_ip t.state.ipv4) segs;
+                get t
+            | Ok (tcp, data, _c, segs) ->
+                t.state.tcp <- tcp;
+                List.iter (write_ip t.state.ipv4) segs;
+                Ok data
+            | Error `Not_found -> Error Refused
+            | Error `Eof -> Error Eof
+            | Error (`Msg msg) ->
+                Logs.err ~src:t.src (fun m ->
+                    m "%a error while read (second recv): %s" Utcp.pp_flow
+                      t.flow msg);
+                Error Refused
+          end
+        | Error `Eof -> Error Eof
+        | Error (`Msg msg) ->
+            Logs.err ~src:t.src (fun m ->
+                m "%a error from computation while recv: %s" Utcp.pp_flow t.flow
+                  msg);
+            Error Refused
+      end
+    | Ok (tcp, data, _c, segs) ->
+        t.state.tcp <- tcp;
+        List.iter (write_ip t.state.ipv4) segs;
+        Ok data
+    | Error `Eof -> Error Eof
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
             m "%a error while read: %s" Utcp.pp_flow t.flow msg);
-        Refused
-    | Error `Not_found -> Refused
+        Error Refused
+    | Error `Not_found -> Error Refused
 
   let read t ?off:(dst_off = 0) ?len buf =
-    if t.closed then 0
-    else
-      let len =
-        match len with Some len -> len | None -> Bytes.length buf - dst_off
-      in
+    if not t.closed then begin
+      let default = Bytes.length buf - dst_off in
+      let len = Option.value ~default len in
       let fn bstr ~off:src_off ~len:src_len =
         let len = Int.min src_len len in
         Bstr.blit_to_bytes bstr ~src_off buf ~dst_off ~len;
@@ -213,15 +213,26 @@ module TCPv4 = struct
       in
       if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
       else
-        match read_into t with
-        | Filled -> Buffer.get t.buffer ~fn
-        | Eof ->
-            Logs.debug ~src:t.src (fun m -> m "End-of-transmision received");
-            0
-        | Refused ->
-            Logs.err ~src:t.src (fun m -> m "Connection refused");
+        match get t with
+        | Ok data -> fill t data; Buffer.get t.buffer ~fn
+        | Error Eof -> 0
+        | Error Refused ->
             t.closed <- true;
             0
+    end
+    else 0
+
+  let get t =
+    match get t with
+    | Ok css as value ->
+        if Buffer.length t.buffer <= 0 then value
+        else
+          let pre = Buffer.flush t.buffer in
+          Ok (pre :: css)
+    | Error Eof -> Error `Eof
+    | Error Refused ->
+        t.closed <- true;
+        Error `Refused
 
   let rec really_read t off len buf =
     let len' = read t ~off ~len buf in
@@ -240,18 +251,18 @@ module TCPv4 = struct
      internal buffer associated to our flow to avoid allocation-per-writing. The
      only viable solution seems to modify μTCP to use strings instead of
      [Cstruct.t]... *)
-  let rec write t cs =
-    match Utcp.send t.state.tcp (now ()) t.flow cs with
+  let rec write t str off len =
+    match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with
     | Error `Not_found -> raise Connection_refused
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
             m "%a error while write: %s" Utcp.pp_flow t.flow msg);
         raise Closed_by_peer
-    | Ok (tcp, bytes_sent, c, segs) -> (
+    | Ok (tcp, bytes_sent, c, segs) -> begin
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
         Logs.debug ~src:t.src (fun m -> m "write %d byte(s)" bytes_sent);
-        if bytes_sent < Cstruct.length cs then
+        if bytes_sent < len then
           let result = Notify.await c in
           match result with
           | Error `Eof -> raise Closed_by_peer
@@ -261,14 +272,14 @@ module TCPv4 = struct
                     t.flow msg);
               raise Closed_by_peer
           | Ok () ->
-              let cs = Cstruct.shift cs bytes_sent in
-              if Cstruct.length cs > 0 then write t cs)
+              if len - bytes_sent > 0 then
+                write t str (off + bytes_sent) (len - bytes_sent)
+      end
 
   let write t ?(off = 0) ?len str =
-    let len =
-      match len with Some len -> len | None -> String.length str - off
-    in
-    write t (Cstruct.of_string ~off ~len str)
+    let default = String.length str - off in
+    let len = Option.value ~default len in
+    write t str off len
 
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
@@ -281,6 +292,16 @@ module TCPv4 = struct
     | Error (`Msg msg) ->
         Logs.err ~src:t.src (fun m ->
             m "%a error in close: %s" Utcp.pp_flow t.flow msg)
+
+  let shutdown t mode =
+    match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
+    | Ok (tcp, segs) ->
+        t.state.tcp <- tcp;
+        List.iter (write_ip t.state.ipv4) segs
+    | Error (`Msg msg) ->
+        Logs.err ~src:t.src (fun m ->
+            m "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
+    | Error `Not_found -> ()
 
   let peers { flow; _ } = Utcp.peers flow
   let _eof = Error `Eof
@@ -312,7 +333,7 @@ module TCPv4 = struct
       match payload with
       | IPv4.Slice slice ->
           let { Slice.buf; off; len } = slice in
-          Cstruct.of_bigarray ~off ~len (Bstr.copy buf)
+          Cstruct.of_bigarray ~off ~len buf
       | IPv4.String str -> Cstruct.of_string str
     in
     Log.debug (fun m ->
@@ -399,7 +420,7 @@ module TCPv4 = struct
       Notify.signal err rcv; Notify.signal err snd
     in
     List.iter fn drops;
-    Miou_solo5.sleep 100_000_000;
+    Mkernel.sleep 100_000_000;
     daemon state (n + 1)
 
   type listen = Listen of int [@@unboxed]
@@ -539,7 +560,7 @@ let stackv4 ~name ?gateway cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
-      let* daemon, eth = Ethernet.create ~mtu:cfg.Miou_solo5.Net.mtu mac net in
+      let* daemon, eth = Ethernet.create ~mtu:cfg.Mkernel.Net.mtu mac net in
       Log.debug (fun m ->
           m "✓ ethernet plugged (%a)" Macaddr.pp (Ethernet.mac eth));
       let* arpv4_daemon, arpv4 =
@@ -561,9 +582,9 @@ let stackv4 ~name ?gateway cidr =
       in
       Ok (stackv4, tcpv4, udpv4)
     in
-    let mac = Macaddr.of_octets_exn (cfg.Miou_solo5.Net.mac :> string) in
+    let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
     match connect mac with
     | Ok daemon -> daemon
     | Error err -> Fmt.failwith "%a" pp_error err
   in
-  Miou_solo5.(map fn [ net name ])
+  Mkernel.(map fn [ net name ])
