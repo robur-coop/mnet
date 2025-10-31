@@ -62,7 +62,10 @@ and 'a packet = {
 
 and handler = Slice_bstr.t packet -> unit
 
+exception Packet_ignored
+
 let mac { mac; _ } = mac
+let uninteresting_packet _ = raise_notrace Packet_ignored
 
 let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
@@ -97,10 +100,12 @@ let handler t bstr ~len =
         try
           if of_interest t dst then
             t.handler { src= Some src; dst; protocol; payload }
-        with exn ->
-          Logs.err ~src:t.src (fun m ->
-              m "Unexpected exception from the user's handler: %s"
-                (Printexc.to_string exn))
+        with
+        | Packet_ignored -> ()
+        | exn ->
+            Logs.err ~src:t.src (fun m ->
+                m "Unexpected exception from the user's handler: %s"
+                  (Printexc.to_string exn))
       end
     | Ok _ -> ()
 
@@ -116,7 +121,7 @@ let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
 
-let create ?(mtu = 1500) ?(handler = ignore) mac net =
+let create ?(mtu = 1500) ?(handler = uninteresting_packet) mac net =
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> mtu > 14 in
   (* enough for Ethernet packets *)
@@ -140,5 +145,9 @@ let set_handler t handler =
   t.handler <- handler;
   if Atomic.get _cnt > 1 then
     Logs.warn ~src:t.src (fun m -> m "Ethernet handler modified more than once")
+
+let extend_handler_with t handler =
+  let handler pkt = try t.handler pkt with Packet_ignored -> handler pkt in
+  t.handler <- handler
 
 let kill = Miou.cancel

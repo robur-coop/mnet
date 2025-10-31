@@ -67,6 +67,16 @@ let write flow str =
       flow.state <- `Error exn;
       reraise exn
 
+let write_without_interruption flow str =
+  Log.debug (fun m -> m "try to write %d byte(s)" (String.length str));
+  try Mnet.TCPv4.write flow.fd str with
+  | Mnet.Closed_by_peer ->
+      flow.state <- half_close flow.state `write;
+      raise Closed_by_peer
+  | exn ->
+      flow.state <- `Error exn;
+      reraise exn
+
 let handle flow tls str =
   match Tls.Engine.handle_tls tls str with
   | Ok (state, eof, `Response resp, `Data data) ->
@@ -198,7 +208,7 @@ let close flow =
       flow.rd_closed <- true;
       flow.state <- inject_state tls flow.state;
       flow.state <- `Closed;
-      inhibit (write flow) str;
+      inhibit (write_without_interruption flow) str;
       Mnet.TCPv4.close flow.fd
   | `Write_closed _ ->
       flow.rd_closed <- true;
@@ -226,7 +236,7 @@ let shutdown flow mode =
          check if the actual [flow.state] or the [flow.state] after [write flow]
          want to close the underlying file-descriptor. *)
       let to_close = flow.state = `Closed in
-      inhibit (write flow) str;
+      inhibit (write_without_interruption flow) str;
       if to_close || flow.state = `Closed then Mnet.TCPv4.close flow.fd
   | `Write_closed tls, (`read | `read_write) ->
       flow.state <- inject_state tls (half_close flow.state mode);

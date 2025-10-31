@@ -21,3 +21,9 @@
  (modules mnet_tls)
  (public_name mnet.tls)
  (libraries mnet tls))
+
+; (library
+;  (name mnet_dhcp)
+;  (modules mnet_dhcp)
+;  (public_name mnet.dhcp)
+;  (libraries charrua-client mnet))

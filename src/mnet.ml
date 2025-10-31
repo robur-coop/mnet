@@ -104,6 +104,7 @@ module TCPv4 = struct
     ; queue: Utcp.output Queue.t
     ; mutex: Miou.Mutex.t
     ; condition: Miou.Condition.t
+    ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
     ; accept: (int, accept) Hashtbl.t
   }
 
@@ -120,6 +121,19 @@ module TCPv4 = struct
   let[@inline] now () =
     let n = Mkernel.clock_monotonic () in
     Mtime.of_uint64_ns (Int64.of_int n)
+
+  let write_without_interruption_ipv4 t (src, dst, seg) =
+    let len = Utcp.Segment.length seg in
+    let fn bstr =
+      let cs = Cstruct.of_bigarray bstr in
+      let src = Ipaddr.V4 src and dst = Ipaddr.V4 dst in
+      Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    in
+    let pkt = IPv4.Writer.into t.ipv4 ~len fn in
+    match IPv4.attempt_to_discover_destination t.ipv4 dst with
+    | None -> Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
+    | Some macaddr ->
+        IPv4.write_directly t.ipv4 ~src (dst, macaddr) ~protocol:6 pkt
 
   let write_ipv4 ipv4 (src, dst, seg) =
     let len = Utcp.Segment.length seg in
@@ -142,6 +156,12 @@ module TCPv4 = struct
   let write_ip ipv4 (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
+    | _ -> failwith "IPv6 not implemented"
+
+  let write_without_interruption_ip t (src, dst, seg) =
+    match (src, dst) with
+    | Ipaddr.V4 src, Ipaddr.V4 dst ->
+        write_without_interruption_ipv4 t (src, dst, seg)
     | _ -> failwith "IPv6 not implemented"
 
   type result = Eof | Refused
@@ -247,10 +267,6 @@ module TCPv4 = struct
       invalid_arg "TCPv4.really_read";
     if len > 0 then really_read t off len buf
 
-  (* NOTE(dinosaure): μTCP takes the ownership on [cs], so we can not use a
-     internal buffer associated to our flow to avoid allocation-per-writing. The
-     only viable solution seems to modify μTCP to use strings instead of
-     [Cstruct.t]... *)
   let rec write t str off len =
     match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with
     | Error `Not_found -> raise Connection_refused
@@ -281,12 +297,23 @@ module TCPv4 = struct
     let len = Option.value ~default len in
     write t str off len
 
+  let write_without_interruption t ?(off = 0) ?len str =
+    let default = String.length str - off in
+    let len = Option.value ~default len in
+    match Utcp.force_enqueue t.state.tcp (now ()) t.flow ~off ~len str with
+    | Ok tcp -> t.state.tcp <- tcp
+    | Error `Not_found -> raise Connection_refused
+    | Error (`Msg msg) ->
+        Logs.err ~src:t.src (fun m ->
+            m "%a error while write: %s" Utcp.pp_flow t.flow msg);
+        raise Closed_by_peer
+
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
     match Utcp.close t.state.tcp (now ()) t.flow with
     | Ok (tcp, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_without_interruption_ip t.state) segs;
         t.closed <- true
     | Error `Not_found -> ()
     | Error (`Msg msg) ->
@@ -312,23 +339,15 @@ module TCPv4 = struct
     let dst = Ipaddr.V4 pkt.IPv4.dst in
     Log.debug (fun m ->
         m "New TCPv4 packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
-    (* NOTE(dinosaure): μTCP takes the ownership on [cs] also. We can try to
-       think, a bit deeply, about a zero-copy which includes the TCP layer if
-       the given packet is not a part of a _segment_ but it requires some work
-       on the μTCP side. Also, μTCP works with [mirage-tcpip] because
-       [mirage-net-solo5] copies frames — which is not the case here! At least,
-       we make the copy as far as possible.
+    (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
+       does a copy (to strings). It's safe to transmit our [slice] to
+       [Utcp.handle_buf] and be interrupted by the scheduler. We also
+       can think about a [Utcp.handle_buf_string] which can avoid our
+       [Cstruct.of_string] (but IPv4.String appears only when we have
+       fragmented packets and it's not common).
 
-       RE-NOTE(dinosaure): the viewer can say that we also do the copy for
-       ARPv4 and ICMPv4 but they are not a part of our "happy-path". What we
-       want to improve is the TCP/IP stack. ARPv4 & ICMPv4 are just side
-       protocols.
-
-       RE-NOTE(dinosaure): [mirage-netif-{solo5,unikraft}] allocates a
-       [Cstruct.t] for every Ethernet frames. We must reproduce this because
-       μTCP takes the ownership on them (and pass them to the user). This is the
-       main diff with the underlying layer (IPv4) which is based on one unique
-       and global bigarray (see [Ethernet.bstr_ic]). *)
+       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
+       and it permits to perform "fast" checksum validation. *)
     let cs =
       match payload with
       | IPv4.Slice slice ->
@@ -392,8 +411,11 @@ module TCPv4 = struct
 
   let rec daemon state n =
     let handler's_outs = transfer state [] in
+    let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+    Queue.clear state.outs;
     let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
     state.tcp <- tcp;
+    let outs = List.rev_append pending_outs outs in
     let outs = List.rev_append handler's_outs outs in
     let fn out =
       Log.debug (fun m -> m "write new TCPv4 packet from daemon");
@@ -458,7 +480,15 @@ module TCPv4 = struct
     let condition = Miou.Condition.create () in
     let accept = Hashtbl.create 0x10 in
     let state =
-      { tcp; ipv4; queue= Queue.create (); mutex; condition; accept }
+      {
+        tcp
+      ; ipv4
+      ; queue= Queue.create ()
+      ; mutex
+      ; condition
+      ; accept
+      ; outs= Queue.create ()
+      }
     in
     let prm = Miou.async (fun () -> daemon state 0) in
     (prm, state)
@@ -529,7 +559,7 @@ let ethernet_handler arpv4 ipv4 =
     match pkt.Ethernet.protocol with
     | Ethernet.ARPv4 -> ARPv4.transfer arpv4 pkt
     | Ethernet.IPv4 -> IPv4.input ipv4 pkt
-    | _ -> ()
+    | _ -> Ethernet.uninteresting_packet ()
   in
   handler
 
