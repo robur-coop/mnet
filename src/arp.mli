@@ -11,7 +11,6 @@ val create :
      ?delay:int
   -> ?timeout:int
   -> ?retries:int
-  -> ?src:Logs.Src.t
   -> ?ipaddr:Ipaddr.V4.t
   -> Ethernet.t
   -> (daemon * t, [> `MTU_too_small ]) result

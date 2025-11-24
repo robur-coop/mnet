@@ -28,6 +28,8 @@ end
 
 type t
 
+val tags : t -> Logs.Tag.set
+
 type packet = { src: Ipaddr.V4.t; dst: Ipaddr.V4.t; protocol: int; uid: int }
 and payload = Slice of Slice_bstr.t | String of string
 

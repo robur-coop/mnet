@@ -224,8 +224,10 @@ type t = {
   ; gateway: Ipaddr.V4.t option
   ; cache: Fragments.t
   ; mutable handler: packet * payload -> unit
-  ; src: Logs.src
+  ; tags: Logs.Tag.set
 }
+
+let tags { tags; _ } = tags
 
 module Writer = struct
   type z = |
@@ -360,7 +362,8 @@ end
 let guard err fn = if fn () then Ok () else Error err
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
-  let src = Logs.Src.create (Ipaddr.V4.Prefix.to_string cidr) in
+  let tags = Ethernet.tags eth in
+  let tags = Logs.Tag.add Tags.ipv4 cidr tags in
   let t =
     {
       eth
@@ -369,7 +372,7 @@ let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
     ; gateway
     ; cache= Fragments.create ?to_expire ()
     ; handler
-    ; src
+    ; tags
     }
   in
   let ( let* ) = Result.bind in
@@ -392,8 +395,8 @@ let fixed pkt user's_fn len bstr =
   20 + len
 
 let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
-  Logs.debug ~src:t.src (fun m ->
-      m "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
+  Log.debug (fun m ->
+      m ~tags:t.tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
   let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
   let mtu = Ethernet.mtu t.eth in
   match p with
@@ -484,14 +487,14 @@ let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
       out ~last:true user's_fn
 
 let write t ?(ttl = 38) ?src dst ~protocol p =
-  Logs.debug ~src:t.src (fun m -> m "Asking where is %a" Ipaddr.V4.pp dst);
+  Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
   match Routing.destination_macaddr t.cidr t.gateway t.arp dst with
   | Error (`Exn _ | `Timeout | `Clear) ->
-      Logs.err ~src:t.src (fun m -> m "no route found for %a" Ipaddr.V4.pp dst);
+      Log.err (fun m -> m ~tags:t.tags "no route found for %a" Ipaddr.V4.pp dst);
       Error `Route_not_found
   | Error `Gateway ->
-      Logs.debug ~src:t.src (fun m ->
-          m "no gateway specified for writing IPv4 packets");
+      Log.debug (fun m ->
+          m ~tags:t.tags "no gateway specified for writing IPv4 packets");
       Ok ()
   | Ok macaddr ->
       write_directly t ~ttl ?src (dst, macaddr) ~protocol p;
@@ -504,10 +507,10 @@ let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
   | Error err ->
       let str = SBstr.to_string pkt.payload in
-      Logs.err ~src:t.src (fun m ->
-          m "Invalid IPv4 packet: %a" Packet.pp_error err);
-      Logs.err ~src:t.src (fun m ->
-          m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+      Log.err (fun m ->
+          m ~tags:t.tags "Invalid IPv4 packet: %a" Packet.pp_error err);
+      Log.err (fun m ->
+          m ~tags:t.tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (ipv4, payload) ->
       let dst = ipv4.Packet.dst in
       if
@@ -516,8 +519,9 @@ let input t pkt =
            || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
            || Ipaddr.V4.(compare dst (Prefix.broadcast t.cidr)) == 0)
       then begin
-        Logs.debug ~src:t.src (fun m ->
-            m "Incoming IPv4 packet from %a" Ipaddr.V4.pp ipv4.Packet.src);
+        Log.debug (fun m ->
+            m ~tags:t.tags "Incoming IPv4 packet from %a" Ipaddr.V4.pp
+              ipv4.Packet.src);
         let pkt = Fragments.insert t.cache ipv4 payload in
         Option.iter t.handler pkt
       end
@@ -528,4 +532,4 @@ let set_handler t handler =
   Atomic.incr _cnt;
   t.handler <- handler;
   if Atomic.get _cnt > 1 then
-    Logs.warn ~src:t.src (fun m -> m "IPv4 handler modified more than once")
+    Log.warn (fun m -> m ~tags:t.tags "IPv4 handler modified more than once")

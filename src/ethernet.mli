@@ -56,3 +56,4 @@ val create :
 val kill : daemon -> unit
 val mtu : t -> int
 val macaddr : t -> Macaddr.t
+val tags : t -> Logs.Tag.set

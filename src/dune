@@ -1,6 +1,17 @@
 (library
  (name mnet)
- (modules mnet arp diet ethernet fragment icmpv4 ipv4 ropes routing udpv4)
+ (modules
+  mnet
+  tags
+  arp
+  diet
+  ethernet
+  fragment
+  icmpv4
+  ipv4
+  ropes
+  routing
+  udpv4)
  (public_name mnet)
  (libraries
   lru
@@ -13,6 +24,7 @@
   ipaddr
   macaddr
   bin
+  logs
   slice.bstr
   mkernel))
 

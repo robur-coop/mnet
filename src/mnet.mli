@@ -112,6 +112,7 @@ module TCPv4 : sig
 
   val shutdown : flow -> [ `read | `write | `read_write ] -> unit
   val peers : flow -> (Ipaddr.t * int) * (Ipaddr.t * int)
+  val tags : flow -> Logs.Tag.set
 
   type listen
 

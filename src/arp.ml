@@ -1,6 +1,7 @@
-module Ethernet = Ethernet
+let src = Logs.Src.create "mnet.arp"
 
-[@@@warning "-37"]
+module Log = (val Logs.src_log src : Logs.LOG)
+module Ethernet = Ethernet
 
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
@@ -115,7 +116,6 @@ type t = {
   ; timeout: int
   ; retries: int
   ; mutable epoch: int
-  ; src: Logs.src
   ; eth: Ethernet.t
   ; mutex: Miou.Mutex.t
   ; condition: Miou.Condition.t
@@ -204,9 +204,10 @@ let handle_request t arp =
   let dst = arp.Packet.dst_ip in
   let src = arp.Packet.src_ip in
   let src_mac = arp.Packet.src_mac in
-  Logs.debug ~src:t.src (fun m ->
-      m "%a:%a: who has %a?" Macaddr.pp src_mac Ipaddr.V4.pp src Ipaddr.V4.pp
-        dst);
+  Log.debug (fun m ->
+      let tags = Ethernet.tags t.eth in
+      m ~tags "%a:%a: who has %a?" Macaddr.pp src_mac Ipaddr.V4.pp src
+        Ipaddr.V4.pp dst);
   match Entries.find t.entries dst with
   | exception Not_found -> ()
   | Static (macaddr, true) -> write t (reply arp macaddr)
@@ -214,34 +215,37 @@ let handle_request t arp =
 
 let handle_reply t src macaddr =
   let entry = Dynamic (macaddr, t.epoch + t.timeout) in
-  Logs.debug ~src:t.src (fun m ->
-      m "handle ARPv4 reply packet from %a:%a" Macaddr.pp macaddr Ipaddr.V4.pp
-        src);
+  Log.debug (fun m ->
+      let tags = Ethernet.tags t.eth in
+      m ~tags "handle ARPv4 reply packet from %a:%a" Macaddr.pp macaddr
+        Ipaddr.V4.pp src);
   match Entries.find t.entries src with
   | exception Not_found -> ()
   | Static (_, adv) ->
       if adv && Macaddr.compare macaddr mac0 == 0 then
-        Logs.debug ~src:t.src (fun m ->
-            m "ignoring gratuitious ARP from %a using %a" Macaddr.pp macaddr
-              Ipaddr.V4.pp src)
+        Log.debug (fun m ->
+            let tags = Ethernet.tags t.eth in
+            m ~tags "ignoring gratuitious ARP from %a using %a" Macaddr.pp
+              macaddr Ipaddr.V4.pp src)
   | Dynamic (macaddr', _) ->
       if Macaddr.compare macaddr macaddr' != 0 then
-        Logs.debug ~src:t.src (fun m ->
-            m "set %a from %a to %a" Ipaddr.V4.pp src Macaddr.pp macaddr'
+        Log.debug (fun m ->
+            let tags = Ethernet.tags t.eth in
+            m ~tags "set %a from %a to %a" Ipaddr.V4.pp src Macaddr.pp macaddr'
               Macaddr.pp macaddr);
       Entries.add t.entries src entry
   | Pending (c, _) ->
-      Logs.debug ~src:t.src (fun m ->
-          m "%a is-at %a" Ipaddr.V4.pp src Macaddr.pp macaddr);
+      Log.debug (fun m -> m "%a is-at %a" Ipaddr.V4.pp src Macaddr.pp macaddr);
       ignore (Miou.Computation.try_return c macaddr);
       Entries.add t.entries src entry
 
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
   | Error _ ->
-      Logs.err ~src:t.src (fun m -> m "Invalid ARPv4 packet:");
-      Logs.err ~src:t.src (fun m ->
-          m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) pkt.Ethernet.payload)
+      let tags = Ethernet.tags t.eth in
+      Log.err (fun m -> m ~tags "Invalid ARPv4 packet:");
+      Log.err (fun m ->
+          m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) pkt.Ethernet.payload)
   | Ok arp ->
       if
         Ipaddr.V4.compare arp.Packet.src_ip arp.Packet.dst_ip == 0
@@ -322,8 +326,9 @@ let read_or_sync ?(delay = 1_500_000_000) t =
   match Miou.await_first [ prm0; prm1 ] with
   | Ok value -> value
   | Error exn ->
-      Logs.err ~src:t.src (fun m ->
-          m "Unexpected exception: %s" (Printexc.to_string exn));
+      Log.err (fun m ->
+          let tags = Ethernet.tags t.eth in
+          m ~tags "Unexpected exception: %s" (Printexc.to_string exn));
       In (Queue.create ())
 
 let arp ?(delay = 1_500_000_000) t =
@@ -341,17 +346,12 @@ let arp ?(delay = 1_500_000_000) t =
   in
   go delay
 
-let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?src ?ipaddr
-    eth =
+let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?ipaddr eth
+    =
   let ( let* ) = Result.bind in
   let macaddr = Ethernet.macaddr eth in
   (* enough for ARP packets *)
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 28 in
-  let src =
-    match src with
-    | None -> Logs.Src.create (Fmt.str "%a" Macaddr.pp macaddr)
-    | Some src -> src
-  in
   if timeout <= 0 then Fmt.invalid_arg "Arp.create: null or negative timeout";
   if retries < 0 then Fmt.invalid_arg "Arg.create: negative retries value";
   let unknown = Option.is_none ipaddr in
@@ -364,7 +364,6 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?src ?ipaddr
     ; timeout
     ; retries
     ; epoch= 0
-    ; src
     ; eth
     ; mutex= Miou.Mutex.create ()
     ; condition= Miou.Condition.create ()
