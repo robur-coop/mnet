@@ -224,8 +224,10 @@ type t = {
   ; gateway: Ipaddr.V4.t option
   ; cache: Fragments.t
   ; mutable handler: packet * payload -> unit
-  ; src: Logs.src
+  ; tags: Logs.Tag.set
 }
+
+let tags { tags; _ } = tags
 
 module Writer = struct
   type z = |
@@ -360,7 +362,8 @@ end
 let guard err fn = if fn () then Ok () else Error err
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
-  let src = Logs.Src.create (Ipaddr.V4.Prefix.to_string cidr) in
+  let tags = Ethernet.tags eth in
+  let tags = Logs.Tag.add Tags.ipv4 cidr tags in
   let t =
     {
       eth
@@ -369,7 +372,7 @@ let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
     ; gateway
     ; cache= Fragments.create ?to_expire ()
     ; handler
-    ; src
+    ; tags
     }
   in
   let ( let* ) = Result.bind in
@@ -391,118 +394,123 @@ let fixed pkt user's_fn len bstr =
   Bstr.set_uint16_be bstr 10 chk;
   20 + len
 
-let write t ?(ttl = 38) ?src dst ~protocol p =
-  Logs.debug ~src:t.src (fun m -> m "Asking where is %a" Ipaddr.V4.pp dst);
-  match Routing.destination_macaddr t.cidr t.gateway t.arp dst with
-  | Error (`Exn _ | `Timeout | `Clear) ->
-      Logs.err ~src:t.src (fun m -> m "no route found for %a" Ipaddr.V4.pp dst);
-      Error `Route_not_found
-  | Error `Gateway ->
-      Logs.debug ~src:t.src (fun m ->
-          m "no gateway specified for writing IPv4 packets");
-      Ok ()
-  | Ok macaddr -> (
-      Logs.debug ~src:t.src (fun m ->
-          m "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
-      let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
-      let mtu = Ethernet.mtu t.eth in
-      match p with
-      | Writer.Fixed { total_length; fn= user's_fn } ->
+let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
+  Log.debug (fun m ->
+      m ~tags:t.tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
+  let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
+  let mtu = Ethernet.mtu t.eth in
+  match p with
+  | Writer.Fixed { total_length; fn= user's_fn } ->
+      let pkt =
+        {
+          Packet.src
+        ; dst
+        ; uid= 0
+        ; flags= Flag._none
+        ; off= 0
+        ; ttl
+        ; protocol
+        ; checksum_and_length= Packet.Partial
+        ; opt= SBstr.empty
+        }
+      in
+      let protocol = Ethernet.IPv4 in
+      let fn = fixed pkt user's_fn total_length in
+      Ethernet.write_directly_into t.eth ~len:(20 + total_length) ~dst:macaddr
+        ~protocol fn
+  | Writer.Fragmented { total_length; fn } ->
+      let uid = Mirage_crypto_rng.generate 2 in
+      let uid = String.get_uint16_be uid 0 in
+      let rec go off total_length = function
+        | Seq.Nil -> ()
+        | Seq.Cons (user's_fn, next) ->
+            let next = next () in
+            let size = Int.min total_length (mtu - 20) in
+            let flags = if next != Seq.Nil then Flag._mf else Flag._none in
+            let pkt =
+              {
+                Packet.src
+              ; dst
+              ; uid
+              ; flags
+              ; off= off lsr 3
+              ; ttl
+              ; protocol
+              ; checksum_and_length= Packet.Partial
+              ; opt= SBstr.empty
+              }
+            in
+            let protocol = Ethernet.IPv4 in
+            let fn = fixed pkt user's_fn size in
+            Ethernet.write_directly_into t.eth ~len:(20 + size) ~dst:macaddr
+              ~protocol fn;
+            if next != Seq.Nil && total_length - size > 0 then
+              go (off + size) (total_length - size) next
+      in
+      go 0 total_length (fn ())
+  | Writer.Unknown m ->
+      let uid = Mirage_crypto_rng.generate 2 in
+      let uid = String.get_uint16_be uid 0 in
+      let off = ref 0 in
+      let out ~last user's_fn =
+        let fn bstr =
+          let flags = if last then Flag._none else Flag._mf in
           let pkt =
             {
               Packet.src
             ; dst
-            ; uid= 0
-            ; flags= Flag._none
-            ; off= 0
+            ; uid
+            ; flags
+            ; off= !off lsr 3
             ; ttl
             ; protocol
             ; checksum_and_length= Packet.Partial
             ; opt= SBstr.empty
             }
           in
-          let protocol = Ethernet.IPv4 in
-          let fn = fixed pkt user's_fn total_length in
-          Ethernet.write_directly_into t.eth ~len:(20 + total_length)
-            ~dst:macaddr ~protocol fn;
-          Ok ()
-      | Writer.Fragmented { total_length; fn } ->
-          let uid = Mirage_crypto_rng.generate 2 in
-          let uid = String.get_uint16_be uid 0 in
-          let rec go off total_length = function
-            | Seq.Nil -> ()
-            | Seq.Cons (user's_fn, next) ->
-                let next = next () in
-                let size = Int.min total_length (mtu - 20) in
-                let flags = if next != Seq.Nil then Flag._mf else Flag._none in
-                let pkt =
-                  {
-                    Packet.src
-                  ; dst
-                  ; uid
-                  ; flags
-                  ; off= off lsr 3
-                  ; ttl
-                  ; protocol
-                  ; checksum_and_length= Packet.Partial
-                  ; opt= SBstr.empty
-                  }
-                in
-                let protocol = Ethernet.IPv4 in
-                let fn = fixed pkt user's_fn size in
-                Ethernet.write_directly_into t.eth ~len:(20 + size) ~dst:macaddr
-                  ~protocol fn;
-                if next != Seq.Nil && total_length - size > 0 then
-                  go (off + size) (total_length - size) next
-          in
-          go 0 total_length (fn ());
-          Ok ()
-      | Writer.Unknown m ->
-          let uid = Mirage_crypto_rng.generate 2 in
-          let uid = String.get_uint16_be uid 0 in
-          let off = ref 0 in
-          let out ~last user's_fn =
-            let fn bstr =
-              let flags = if last then Flag._none else Flag._mf in
-              let pkt =
-                {
-                  Packet.src
-                ; dst
-                ; uid
-                ; flags
-                ; off= !off lsr 3
-                ; ttl
-                ; protocol
-                ; checksum_and_length= Packet.Partial
-                ; opt= SBstr.empty
-                }
-              in
-              Packet.unsafe_encode_into pkt bstr;
-              let user's_payload = Bstr.shift bstr 20 in
-              let len = user's_fn user's_payload in
-              Bstr.set_uint16_be bstr 2 (20 + len);
-              let len = (len + 0b111) / 8 * 8 in
-              off := !off + len;
-              let chk = Utcp.Checksum.digest ~off:0 ~len:20 bstr in
-              Bstr.set_uint16_be bstr 10 chk;
-              20 + len
-            in
-            let protocol = Ethernet.IPv4 in
-            Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn
-          in
-          let _, Writer.Some user's_fn, () =
-            Writer.go ~out:(out ~last:false) Writer.Zero Writer.None m
-          in
-          out ~last:true user's_fn; Ok ())
+          Packet.unsafe_encode_into pkt bstr;
+          let user's_payload = Bstr.shift bstr 20 in
+          let len = user's_fn user's_payload in
+          Bstr.set_uint16_be bstr 2 (20 + len);
+          let len = (len + 0b111) / 8 * 8 in
+          off := !off + len;
+          let chk = Utcp.Checksum.digest ~off:0 ~len:20 bstr in
+          Bstr.set_uint16_be bstr 10 chk;
+          20 + len
+        in
+        let protocol = Ethernet.IPv4 in
+        Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn
+      in
+      let _, Writer.Some user's_fn, () =
+        Writer.go ~out:(out ~last:false) Writer.Zero Writer.None m
+      in
+      out ~last:true user's_fn
+
+let write t ?(ttl = 38) ?src dst ~protocol p =
+  Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
+  match Routing.destination_macaddr t.cidr t.gateway t.arp dst with
+  | Error (`Exn _ | `Timeout | `Clear) ->
+      Log.err (fun m -> m ~tags:t.tags "no route found for %a" Ipaddr.V4.pp dst);
+      Error `Route_not_found
+  | Error `Gateway ->
+      Log.debug (fun m ->
+          m ~tags:t.tags "no gateway specified for writing IPv4 packets");
+      Ok ()
+  | Ok macaddr ->
+      write_directly t ~ttl ?src (dst, macaddr) ~protocol p;
+      Ok ()
+
+let attempt_to_discover_destination t dst =
+  Routing.destination_macaddr_without_interruption t.cidr t.gateway t.arp dst
 
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
   | Error err ->
       let str = SBstr.to_string pkt.payload in
-      Logs.err ~src:t.src (fun m ->
-          m "Invalid IPv4 packet: %a" Packet.pp_error err);
-      Logs.err ~src:t.src (fun m ->
-          m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+      Log.err (fun m ->
+          m ~tags:t.tags "Invalid IPv4 packet: %a" Packet.pp_error err);
+      Log.err (fun m ->
+          m ~tags:t.tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (ipv4, payload) ->
       let dst = ipv4.Packet.dst in
       if
@@ -511,8 +519,9 @@ let input t pkt =
            || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
            || Ipaddr.V4.(compare dst (Prefix.broadcast t.cidr)) == 0)
       then begin
-        Logs.debug ~src:t.src (fun m ->
-            m "Incoming IPv4 packet from %a" Ipaddr.V4.pp ipv4.Packet.src);
+        Log.debug (fun m ->
+            m ~tags:t.tags "Incoming IPv4 packet from %a" Ipaddr.V4.pp
+              ipv4.Packet.src);
         let pkt = Fragments.insert t.cache ipv4 payload in
         Option.iter t.handler pkt
       end
@@ -523,4 +532,4 @@ let set_handler t handler =
   Atomic.incr _cnt;
   t.handler <- handler;
   if Atomic.get _cnt > 1 then
-    Logs.warn ~src:t.src (fun m -> m "IPv4 handler modified more than once")
+    Log.warn (fun m -> m ~tags:t.tags "IPv4 handler modified more than once")

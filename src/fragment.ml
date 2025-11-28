@@ -82,12 +82,11 @@ let insert t ~off ?(limit = false) str =
       let len = String.length str in
       if off < 0 || off > Bytes.length buf - len then
         raise_notrace Out_of_bounds;
-      begin
-        try
-          let diet = Diet.add ~off ~len diet in
-          Bytes.unsafe_blit_string str 0 buf off len;
-          Sized (diet, buf)
-        with _ -> raise_notrace Overlap
+      begin try
+        let diet = Diet.add ~off ~len diet in
+        Bytes.unsafe_blit_string str 0 buf off len;
+        Sized (diet, buf)
+      with _ -> raise_notrace Overlap
       end
   | Unsized ropes, false ->
       Log.debug (fun m -> m "+%d byte(s) %@ %d" (String.length str) off);

@@ -133,8 +133,8 @@ let input ipv4 pkt payload =
   let dst = pkt.IPv4.src in
   match Packet.decode payload with
   | Error _ ->
-      Logs.err (fun m -> m "Invalid ICMPv4 packet:");
-      Logs.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) payload)
+      Log.err (fun m -> m "Invalid ICMPv4 packet:");
+      Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) payload)
   | Ok (Packet pkt, payload) -> begin
       match pkt.kind with
       | Packet.Echo_request ->
@@ -172,7 +172,7 @@ let rec clean orphans =
       match Miou.await prm with
       | Ok () -> clean orphans
       | Error exn ->
-          Logs.err (fun m ->
+          Log.err (fun m ->
               m "Unexpected exception from an ICMPv4 task: %s"
                 (Printexc.to_string exn));
           clean orphans)

@@ -63,6 +63,12 @@ module TCPv4 : sig
       [String.length str - off]) from byte sequence [buf], starting at offset
       [off] (defaults to [0]), to the given connection [flow].
 
+      {b NOTE}: This function can potentially emit one or more effects and, by
+      extension, give Miou the opportunity to reschedule. Furthermore, it is not
+      advisable to use this function with finalisers such as those required by
+      the [Miou.Ownership.create] function. For this, it is preferable to use
+      {!val:write_directly}.
+
       @raise Net_unreach if network is unreachable.
       @raise Connection_refused
         if the given connection is not connected to a peer.
@@ -70,11 +76,43 @@ module TCPv4 : sig
       @raise Invalid_argument
         if [off] and [len] do not designate a valid range of [buf]. *)
 
+  val write_without_interruption :
+    flow -> ?off:int -> ?len:int -> string -> unit
+  (** [write_without_interruption] writes [len] bytes (defaults to
+      [String.length str - off]) from byte sequence [buf], starting at offset
+      [off] (defaults to [0]), to the given connection [flow].
+
+      {b NOTE}: This function does not perform any effects and can not be
+      interrupted. If the user wants to emit something from an abnormal
+      termination, this function can be useful.
+
+      @raise Connection_refused
+        if the given connection is not connected to a peer.
+      @raise Closed_by_peer if the peer closed the given connection on its side
+      @raise Invalid_argument
+        if [off] and [len] do not designate a valid range of [buf]. *)
+
   val close : flow -> unit
-  (** [close flow] closes properly the given [flow]. *)
+  (** [close flow] closes properly the given [flow].
+
+      {b NOTE}: [close] has the particularity of being effective and
+      uninterrupted. That is to say, this function does not give Miou the
+      opportunity to perform another task. Furthermore, it is possible to use
+      [close] in the finalisation of a resource (with [Miou.Ownership.create]).
+
+      {[
+        let handler flow =
+          let finally = Mnet.TCPv4.close in
+          let r = Miou.Ownership.create ~finally flow in
+          Miou.Ownership.own r;
+          ...
+          Mnet.TCPv4.close flow;
+          Miou.Ownership.disown r
+      ]} *)
 
   val shutdown : flow -> [ `read | `write | `read_write ] -> unit
   val peers : flow -> (Ipaddr.t * int) * (Ipaddr.t * int)
+  val tags : flow -> Logs.Tag.set
 
   type listen
 

@@ -1,4 +1,6 @@
-[@@@warning "-30"]
+let src = Logs.Src.create "mnet.ethernet"
+
+module Log = (val Logs.src_log src : Logs.LOG)
 
 module Packet = struct
   type protocol = ARPv4 | IPv4 | IPv6
@@ -48,7 +50,7 @@ type t = {
   ; mutable handler: handler
   ; mtu: int
   ; mac: Macaddr.t
-  ; src: Logs.src
+  ; tags: Logs.Tag.set
   ; bstr_ic: Bstr.t
   ; bstr_oc: Bstr.t
 }
@@ -62,21 +64,25 @@ and 'a packet = {
 
 and handler = Slice_bstr.t packet -> unit
 
+exception Packet_ignored
+
 let mac { mac; _ } = mac
+let uninteresting_packet _ = raise_notrace Packet_ignored
 
 let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
   let src = Option.value ~default:t.mac packet.src in
+  let tags = Logs.Tag.add Tags.mac src Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
   Packet.encode_into pkt ~off:0 t.bstr_oc;
   let bstr = Bstr.sub t.bstr_oc ~off:14 ~len:(Bstr.length t.bstr_oc - 14) in
   let plus' = fn bstr in
   Option.iter (fun plus -> assert (plus = plus')) plus;
-  Logs.debug ~src:t.src (fun m ->
-      m "write ethernet packet src:%a -> dst:%a (%d byte(s))" Macaddr.pp src
-        Macaddr.pp packet.dst plus');
-  Logs.debug ~src:t.src (fun m ->
-      m "@[<hov>%a@]"
+  Log.debug (fun m ->
+      m ~tags "write ethernet packet src:%a -> dst:%a (%d byte(s))" Macaddr.pp
+        src Macaddr.pp packet.dst plus');
+  Log.debug (fun m ->
+      m ~tags "@[<hov>%a@]"
         (Hxd_string.pp Hxd.default)
         (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus')));
   (* TODO(dinosaure): use [Mkernel.Net.write_into]. *)
@@ -87,20 +93,22 @@ let of_interest t dst =
 
 let handler t bstr ~len =
   if len >= 14 then
+    let tags = t.tags in
     match Packet.decode bstr ~len with
     | Error _ ->
         let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
-        Logs.err ~src:t.src (fun m -> m "Invalid Ethernet packet");
-        Logs.err ~src:t.src (fun m ->
-            m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+        Log.err (fun m -> m ~tags "Invalid Ethernet packet");
+        Log.err (fun m -> m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
     | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) -> begin
         try
           if of_interest t dst then
             t.handler { src= Some src; dst; protocol; payload }
-        with exn ->
-          Logs.err ~src:t.src (fun m ->
-              m "Unexpected exception from the user's handler: %s"
-                (Printexc.to_string exn))
+        with
+        | Packet_ignored -> ()
+        | exn ->
+            Log.err (fun m ->
+                m ~tags "Unexpected exception from the user's handler: %s"
+                  (Printexc.to_string exn))
       end
     | Ok _ -> ()
 
@@ -116,7 +124,7 @@ let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
 
-let create ?(mtu = 1500) ?(handler = ignore) mac net =
+let create ?(mtu = 1500) ?(handler = uninteresting_packet) mac net =
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> mtu > 14 in
   (* enough for Ethernet packets *)
@@ -126,19 +134,26 @@ let create ?(mtu = 1500) ?(handler = ignore) mac net =
      [Bstr.sub] are cheap. We should use [Slice] instead of [Bstr]. TODO! *)
   let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:(14 + mtu) in
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
-  let src = Logs.Src.create (Macaddr.to_string mac) in
-  let t = { net; handler; mtu; mac; src; bstr_ic; bstr_oc } in
+  let tags = Logs.Tag.empty in
+  let tags = Logs.Tag.add Tags.mac mac tags in
+  let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc } in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (daemon, t)
 
 let _cnt = Atomic.make 0
 let mtu { mtu; _ } = mtu
 let macaddr { mac; _ } = mac
+let tags { tags; _ } = tags
 
 let set_handler t handler =
   Atomic.incr _cnt;
   t.handler <- handler;
+  let tags = t.tags in
   if Atomic.get _cnt > 1 then
-    Logs.warn ~src:t.src (fun m -> m "Ethernet handler modified more than once")
+    Log.warn (fun m -> m ~tags "Ethernet handler modified more than once")
+
+let extend_handler_with t handler =
+  let handler pkt = try t.handler pkt with Packet_ignored -> handler pkt in
+  t.handler <- handler
 
 let kill = Miou.cancel

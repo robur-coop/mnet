@@ -104,6 +104,7 @@ module TCPv4 = struct
     ; queue: Utcp.output Queue.t
     ; mutex: Miou.Mutex.t
     ; condition: Miou.Condition.t
+    ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
     ; accept: (int, accept) Hashtbl.t
   }
 
@@ -111,7 +112,7 @@ module TCPv4 = struct
 
   and flow = {
       state: state
-    ; src: Logs.src
+    ; tags: Logs.Tag.set
     ; flow: Utcp.flow
     ; buffer: Buffer.t
     ; mutable closed: bool
@@ -120,6 +121,19 @@ module TCPv4 = struct
   let[@inline] now () =
     let n = Mkernel.clock_monotonic () in
     Mtime.of_uint64_ns (Int64.of_int n)
+
+  let write_without_interruption_ipv4 t (src, dst, seg) =
+    let len = Utcp.Segment.length seg in
+    let fn bstr =
+      let cs = Cstruct.of_bigarray bstr in
+      let src = Ipaddr.V4 src and dst = Ipaddr.V4 dst in
+      Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    in
+    let pkt = IPv4.Writer.into t.ipv4 ~len fn in
+    match IPv4.attempt_to_discover_destination t.ipv4 dst with
+    | None -> Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
+    | Some macaddr ->
+        IPv4.write_directly t.ipv4 ~src (dst, macaddr) ~protocol:6 pkt
 
   let write_ipv4 ipv4 (src, dst, seg) =
     let len = Utcp.Segment.length seg in
@@ -142,6 +156,12 @@ module TCPv4 = struct
   let write_ip ipv4 (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
+    | _ -> failwith "IPv6 not implemented"
+
+  let write_without_interruption_ip t (src, dst, seg) =
+    match (src, dst) with
+    | Ipaddr.V4 src, Ipaddr.V4 dst ->
+        write_without_interruption_ipv4 t (src, dst, seg)
     | _ -> failwith "IPv6 not implemented"
 
   type result = Eof | Refused
@@ -179,16 +199,16 @@ module TCPv4 = struct
             | Error `Not_found -> Error Refused
             | Error `Eof -> Error Eof
             | Error (`Msg msg) ->
-                Logs.err ~src:t.src (fun m ->
-                    m "%a error while read (second recv): %s" Utcp.pp_flow
-                      t.flow msg);
+                Log.err (fun m ->
+                    m ~tags:t.tags "%a error while read (second recv): %s"
+                      Utcp.pp_flow t.flow msg);
                 Error Refused
           end
         | Error `Eof -> Error Eof
         | Error (`Msg msg) ->
-            Logs.err ~src:t.src (fun m ->
-                m "%a error from computation while recv: %s" Utcp.pp_flow t.flow
-                  msg);
+            Log.err (fun m ->
+                m ~tags:t.tags "%a error from computation while recv: %s"
+                  Utcp.pp_flow t.flow msg);
             Error Refused
       end
     | Ok (tcp, data, _c, segs) ->
@@ -197,8 +217,8 @@ module TCPv4 = struct
         Ok data
     | Error `Eof -> Error Eof
     | Error (`Msg msg) ->
-        Logs.err ~src:t.src (fun m ->
-            m "%a error while read: %s" Utcp.pp_flow t.flow msg);
+        Log.err (fun m ->
+            m ~tags:t.tags "%a error while read: %s" Utcp.pp_flow t.flow msg);
         Error Refused
     | Error `Not_found -> Error Refused
 
@@ -247,29 +267,25 @@ module TCPv4 = struct
       invalid_arg "TCPv4.really_read";
     if len > 0 then really_read t off len buf
 
-  (* NOTE(dinosaure): μTCP takes the ownership on [cs], so we can not use a
-     internal buffer associated to our flow to avoid allocation-per-writing. The
-     only viable solution seems to modify μTCP to use strings instead of
-     [Cstruct.t]... *)
   let rec write t str off len =
     match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with
     | Error `Not_found -> raise Connection_refused
     | Error (`Msg msg) ->
-        Logs.err ~src:t.src (fun m ->
-            m "%a error while write: %s" Utcp.pp_flow t.flow msg);
+        Log.err (fun m ->
+            m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
         raise Closed_by_peer
     | Ok (tcp, bytes_sent, c, segs) -> begin
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs;
-        Logs.debug ~src:t.src (fun m -> m "write %d byte(s)" bytes_sent);
+        Log.debug (fun m -> m ~tags:t.tags "write %d byte(s)" bytes_sent);
         if bytes_sent < len then
           let result = Notify.await c in
           match result with
           | Error `Eof -> raise Closed_by_peer
           | Error (`Msg msg) ->
-              Logs.err ~src:t.src (fun m ->
-                  m "%a error from condition while sending: %s" Utcp.pp_flow
-                    t.flow msg);
+              Log.err (fun m ->
+                  m ~tags:t.tags "%a error from condition while sending: %s"
+                    Utcp.pp_flow t.flow msg);
               raise Closed_by_peer
           | Ok () ->
               if len - bytes_sent > 0 then
@@ -281,17 +297,28 @@ module TCPv4 = struct
     let len = Option.value ~default len in
     write t str off len
 
+  let write_without_interruption t ?(off = 0) ?len str =
+    let default = String.length str - off in
+    let len = Option.value ~default len in
+    match Utcp.force_enqueue t.state.tcp (now ()) t.flow ~off ~len str with
+    | Ok tcp -> t.state.tcp <- tcp
+    | Error `Not_found -> raise Connection_refused
+    | Error (`Msg msg) ->
+        Log.err (fun m ->
+            m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
+        raise Closed_by_peer
+
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
     match Utcp.close t.state.tcp (now ()) t.flow with
     | Ok (tcp, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_without_interruption_ip t.state) segs;
         t.closed <- true
     | Error `Not_found -> ()
     | Error (`Msg msg) ->
-        Logs.err ~src:t.src (fun m ->
-            m "%a error in close: %s" Utcp.pp_flow t.flow msg)
+        Log.err (fun m ->
+            m ~tags:t.tags "%a error in close: %s" Utcp.pp_flow t.flow msg)
 
   let shutdown t mode =
     match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
@@ -299,11 +326,12 @@ module TCPv4 = struct
         t.state.tcp <- tcp;
         List.iter (write_ip t.state.ipv4) segs
     | Error (`Msg msg) ->
-        Logs.err ~src:t.src (fun m ->
-            m "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
+        Log.err (fun m ->
+            m ~tags:t.tags "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
     | Error `Not_found -> ()
 
   let peers { flow; _ } = Utcp.peers flow
+  let tags { tags; _ } = tags
   let _eof = Error `Eof
   let _ok = Ok ()
 
@@ -312,23 +340,15 @@ module TCPv4 = struct
     let dst = Ipaddr.V4 pkt.IPv4.dst in
     Log.debug (fun m ->
         m "New TCPv4 packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
-    (* NOTE(dinosaure): μTCP takes the ownership on [cs] also. We can try to
-       think, a bit deeply, about a zero-copy which includes the TCP layer if
-       the given packet is not a part of a _segment_ but it requires some work
-       on the μTCP side. Also, μTCP works with [mirage-tcpip] because
-       [mirage-net-solo5] copies frames — which is not the case here! At least,
-       we make the copy as far as possible.
+    (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
+       does a copy (to strings). It's safe to transmit our [slice] to
+       [Utcp.handle_buf] and be interrupted by the scheduler. We also
+       can think about a [Utcp.handle_buf_string] which can avoid our
+       [Cstruct.of_string] (but IPv4.String appears only when we have
+       fragmented packets and it's not common).
 
-       RE-NOTE(dinosaure): the viewer can say that we also do the copy for
-       ARPv4 and ICMPv4 but they are not a part of our "happy-path". What we
-       want to improve is the TCP/IP stack. ARPv4 & ICMPv4 are just side
-       protocols.
-
-       RE-NOTE(dinosaure): [mirage-netif-{solo5,unikraft}] allocates a
-       [Cstruct.t] for every Ethernet frames. We must reproduce this because
-       μTCP takes the ownership on them (and pass them to the user). This is the
-       main diff with the underlying layer (IPv4) which is based on one unique
-       and global bigarray (see [Ethernet.bstr_ic]). *)
+       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
+       and it permits to perform "fast" checksum validation. *)
     let cs =
       match payload with
       | IPv4.Slice slice ->
@@ -340,47 +360,44 @@ module TCPv4 = struct
         m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
     let tcp, ev, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
     state.tcp <- tcp;
-    begin
-      match ev with
-      | Some (`Established (flow, None)) ->
-          let (_, src_port), (ipaddr, port) = Utcp.peers flow in
-          Log.debug (fun m ->
-              m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-          let src = Logs.Src.create (Fmt.str "%a:%d" Ipaddr.pp ipaddr port) in
-          let buffer = Buffer.create 0x7ff in
-          let flow = { state; src; flow; buffer; closed= false } in
-          begin
-            match Hashtbl.find state.accept src_port with
-            | Await c ->
-                Hashtbl.remove state.accept src_port;
-                Log.debug (fun m ->
-                    m
-                      "transmit the new incoming TCPv4 connection to the \
-                       handler");
-                ignore (Miou.Computation.try_return c flow)
-            | Pending q ->
-                if Queue.length q < 1024 then Queue.push flow q
-                  (* TODO(dinosaure): we only accept 1024 pending established
+    begin match ev with
+    | Some (`Established (flow, None)) ->
+        let (_, src_port), (ipaddr, port) = Utcp.peers flow in
+        Log.debug (fun m ->
+            m "established connection with %a:%d" Ipaddr.pp ipaddr port);
+        let tags = Ipv4.tags state.ipv4 in
+        let tags = Logs.Tag.add Tags.tcp (ipaddr, port) tags in
+        let buffer = Buffer.create 0x7ff in
+        let flow = { state; tags; flow; buffer; closed= false } in
+        begin match Hashtbl.find state.accept src_port with
+        | Await c ->
+            Hashtbl.remove state.accept src_port;
+            Log.debug (fun m ->
+                m "transmit the new incoming TCPv4 connection to the handler");
+            ignore (Miou.Computation.try_return c flow)
+        | Pending q ->
+            if Queue.length q < 1024 then Queue.push flow q
+              (* TODO(dinosaure): we only accept 1024 pending established
                      connections. We should respond to the client if we reach
                      this limit.
                      XXX(hannes): not convinced by this hard limit. *)
-            | exception Not_found ->
-                let q = Queue.create () in
-                Queue.push flow q;
-                Hashtbl.add state.accept src_port (Pending q)
-          end
-      | Some (`Established (flow, Some c)) ->
-          Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow);
-          Notify.signal _ok c
-      | Some (`Drop (flow, c, cs)) ->
-          Log.debug (fun m -> m "drop (%a)" Utcp.pp_flow flow);
-          List.iter (Notify.signal _eof) cs;
-          Option.iter (Notify.signal _ok) c
-      | Some (`Signal (flow, cs)) ->
-          Log.debug (fun m ->
-              m "signal (%a)(%d)" Utcp.pp_flow flow (List.length cs));
-          List.iter (Notify.signal _ok) cs
-      | None -> ()
+        | exception Not_found ->
+            let q = Queue.create () in
+            Queue.push flow q;
+            Hashtbl.add state.accept src_port (Pending q)
+        end
+    | Some (`Established (flow, Some c)) ->
+        Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow);
+        Notify.signal _ok c
+    | Some (`Drop (flow, c, cs)) ->
+        Log.debug (fun m -> m "drop (%a)" Utcp.pp_flow flow);
+        List.iter (Notify.signal _eof) cs;
+        Option.iter (Notify.signal _ok) c
+    | Some (`Signal (flow, cs)) ->
+        Log.debug (fun m ->
+            m "signal (%a)(%d)" Utcp.pp_flow flow (List.length cs));
+        List.iter (Notify.signal _ok) cs
+    | None -> ()
     end;
     Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
     List.iter (fun out -> Queue.push out state.queue) segs
@@ -392,8 +409,11 @@ module TCPv4 = struct
 
   let rec daemon state n =
     let handler's_outs = transfer state [] in
+    let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+    Queue.clear state.outs;
     let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
     state.tcp <- tcp;
+    let outs = List.rev_append pending_outs outs in
     let outs = List.rev_append handler's_outs outs in
     let fn out =
       Log.debug (fun m -> m "write new TCPv4 packet from daemon");
@@ -458,7 +478,15 @@ module TCPv4 = struct
     let condition = Miou.Condition.create () in
     let accept = Hashtbl.create 0x10 in
     let state =
-      { tcp; ipv4; queue= Queue.create (); mutex; condition; accept }
+      {
+        tcp
+      ; ipv4
+      ; queue= Queue.create ()
+      ; mutex
+      ; condition
+      ; accept
+      ; outs= Queue.create ()
+      }
     in
     let prm = Miou.async (fun () -> daemon state 0) in
     (prm, state)
@@ -471,21 +499,23 @@ module TCPv4 = struct
     let tcp, flow, c, seg =
       Utcp.connect ~src ~dst ~dst_port state.tcp (now ())
     in
-    let src = Logs.Src.create (Fmt.str "%a:%d" Ipaddr.pp dst dst_port) in
+    let tags = Ipv4.tags state.ipv4 in
+    let tags = Logs.Tag.add Tags.tcp (dst, dst_port) tags in
     state.tcp <- tcp;
     write_ip state.ipv4 seg;
-    Logs.debug ~src (fun m -> m "Waiting for a TCP handshake");
+    Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
     match Notify.await c with
     | Ok () ->
         let buffer = Buffer.create 0x7ff in
-        { state; flow; src; buffer; closed= false }
+        { state; flow; tags; buffer; closed= false }
     | Error `Eof ->
-        Logs.err ~src (fun m ->
-            m "%a error established connection (timeout)" Utcp.pp_flow flow);
+        Log.err (fun m ->
+            m ~tags "%a error established connection (timeout)" Utcp.pp_flow
+              flow);
         raise Connection_refused
     | Error (`Msg msg) ->
-        Logs.err ~src (fun m ->
-            m "%a error established connection: %s" Utcp.pp_flow flow msg);
+        Log.err (fun m ->
+            m ~tags "%a error established connection: %s" Utcp.pp_flow flow msg);
         raise Connection_refused
 end
 
@@ -529,7 +559,7 @@ let ethernet_handler arpv4 ipv4 =
     match pkt.Ethernet.protocol with
     | Ethernet.ARPv4 -> ARPv4.transfer arpv4 pkt
     | Ethernet.IPv4 -> IPv4.input ipv4 pkt
-    | _ -> ()
+    | _ -> Ethernet.uninteresting_packet ()
   in
   handler
 

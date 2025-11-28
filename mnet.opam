@@ -20,6 +20,7 @@ depends: [
   "ipaddr"
   "macaddr"
   "hxd"
+  "tls"
 ]
 build: [
   ["dune" "subst"] {dev}
@@ -29,6 +30,6 @@ build: [
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
 pin-depends: [
-  [ "utcp.dev" "git+https://github.com/dinosaure/utcp.git#50d0f3a0b42e8ffd3e4b15131dcf2a61b87ef96b" ]
-  [ "mkernel.dev" "git+https://git.robur.coop/robur/mkernel.git#e43e71a74a72b9849d5b01cd249c52e94ea1d57a" ]
+  [ "utcp.dev" "git+https://github.com/dinosaure/utcp.git#854082cf3a45053e0c308faa6dfc84d7735d1ec6" ]
+  [ "mkernel.dev" "git+https://git.robur.coop/robur/mkernel.git#e5259f1a98f0afacb5bca646e5fde176f0c8fb26" ]
 ]

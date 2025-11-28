@@ -28,6 +28,8 @@ end
 
 type t
 
+val tags : t -> Logs.Tag.set
+
 type packet = { src: Ipaddr.V4.t; dst: Ipaddr.V4.t; protocol: int; uid: int }
 and payload = Slice of Slice_bstr.t | String of string
 
@@ -61,6 +63,15 @@ module Writer : sig
   val unknown : (z, 'n s, unit) m -> t
 end
 
+val write_directly :
+     t
+  -> ?ttl:int
+  -> ?src:Ipaddr.V4.t
+  -> Ipaddr.V4.t * Macaddr.t
+  -> protocol:int
+  -> Writer.t
+  -> unit
+
 val write :
      t
   -> ?ttl:int
@@ -69,14 +80,9 @@ val write :
   -> protocol:int
   -> Writer.t
   -> (unit, [> `Route_not_found ]) result
-(** [write ?ttl ?src dst protocol ?finally ?size sstr] writes a new IPv4 packet
-    (fragmented or not) to the specified destination [dst].
+(** [write ?ttl ?src dst protocol w] writes a new IPv4 packet [w] (fragmented or
+    not) to the specified destination [dst]. *)
 
-    The layer above IPv4 (notably TCP) may require the IPv4 "pseudo-header"
-    before generating its own header (notably to calculate a checksum). The
-    [finally] function is called with this pseudo-header and must return the
-    header of the layer above IPv4. The size of this header must be known in
-    advance via the [size] argument. *)
-
+val attempt_to_discover_destination : t -> Ipaddr.V4.t -> Macaddr.t option
 val input : t -> Slice_bstr.t Ethernet.packet -> unit
 val set_handler : t -> (packet * payload -> unit) -> unit

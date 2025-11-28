@@ -1,5 +1,17 @@
 (library
  (name mnet)
+ (modules
+  mnet
+  tags
+  arp
+  diet
+  ethernet
+  fragment
+  icmpv4
+  ipv4
+  ropes
+  routing
+  udpv4)
  (public_name mnet)
  (libraries
   lru
@@ -12,5 +24,18 @@
   ipaddr
   macaddr
   bin
+  logs
   slice.bstr
   mkernel))
+
+(library
+ (name mnet_tls)
+ (modules mnet_tls)
+ (public_name mnet.tls)
+ (libraries mnet tls))
+
+; (library
+;  (name mnet_dhcp)
+;  (modules mnet_dhcp)
+;  (public_name mnet.dhcp)
+;  (libraries charrua-client mnet))

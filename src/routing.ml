@@ -25,3 +25,13 @@ let destination_macaddr network gateway arp ipaddr =
     match gateway with
     | None -> Error `Gateway
     | Some gateway -> ARPv4.query arp gateway
+
+let destination_macaddr_without_interruption network gateway arp ipaddr =
+  if
+    Ipaddr.V4.(compare broadcast) ipaddr == 0
+    || Ipaddr.V4.(compare any) ipaddr == 0
+    || Ipaddr.V4.(compare (Prefix.broadcast network)) ipaddr == 0
+  then Result.to_option broadcast
+  else if Ipaddr.V4.is_multicast ipaddr then Some (macaddr_of_multicast ipaddr)
+  else if Ipaddr.V4.Prefix.mem ipaddr network then ARPv4.ask arp ipaddr
+  else match gateway with None -> None | Some gateway -> ARPv4.ask arp gateway

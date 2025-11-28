@@ -26,6 +26,13 @@ type 'a packet = {
 
 type handler = Slice_bstr.t packet -> unit
 
+val set_handler : t -> handler -> unit
+val extend_handler_with : t -> handler -> unit
+val uninteresting_packet : unit -> 'a
+(* If a {!type:handler} does not know what to do with the packet, it can
+   terminate via this function to give other handlers the opportunity to handle
+   the incoming packet. *)
+
 val write_directly_into :
      t
   -> ?len:int
@@ -49,4 +56,4 @@ val create :
 val kill : daemon -> unit
 val mtu : t -> int
 val macaddr : t -> Macaddr.t
-val set_handler : t -> handler -> unit
+val tags : t -> Logs.Tag.set
