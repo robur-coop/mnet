@@ -4,11 +4,14 @@
   mnet
   tags
   arp
+  table
   diet
   ethernet
   fragment
   icmpv4
   ipv4
+  ipv6
+  ndpv6
   ropes
   routing
   udpv4)

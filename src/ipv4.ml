@@ -1,4 +1,5 @@
 let src = Logs.Src.create "mnet.ipv4"
+let guard err fn = if fn () then Ok () else Error err
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
@@ -48,8 +49,6 @@ module Packet = struct
     | `Invalid_IPv4_packet -> Fmt.string ppf "bad packet"
     | `Invalid_checksum -> Fmt.string ppf "bad checksum"
     | `Msg msg -> Fmt.string ppf msg
-
-  let guard err fn = if fn () then Ok () else Error err
 
   let decode slice =
     let ( let* ) = Result.bind in
@@ -358,8 +357,6 @@ module Writer = struct
         in
         go ~out (Succ s) (Some user's_fn1) m
 end
-
-let guard err fn = if fn () then Ok () else Error err
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
   let tags = Ethernet.tags eth in

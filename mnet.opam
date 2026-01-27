@@ -1,10 +1,9 @@
 opam-version: "2.0"
 maintainer: "Robur <team@robur.coop>"
 authors: ["Robur <team@robur.coop>"]
-homepage: "https://github.com/robur-coop/utcp"
-dev-repo: "git+https://github.com/robur-coop/utcp.git"
-bug-reports: "https://github.com/robur-coop/utcp/issues"
-available: [ arch != "arm32" & arch != "x86_32" ] # see #35
+homepage: "https://github.com/robur-coop/mnet"
+dev-repo: "git+https://github.com/robur-coop/mnet.git"
+bug-reports: "https://github.com/robur-coop/mnet/issues"
 
 depends: [
   "ocaml" {>= "5.0.0"}
