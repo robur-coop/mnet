@@ -204,9 +204,6 @@ module Fragments = struct
         end
 end
 
-module Ethernet = Ethernet
-module ARPv4 = Arp
-
 type packet = Key.t = {
     src: Ipaddr.V4.t
   ; dst: Ipaddr.V4.t

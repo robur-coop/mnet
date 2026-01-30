@@ -1,0 +1,3 @@
+(library
+ (name ndpv6)
+ (libraries utcp slice.bstr lru macaddr ipaddr))

@@ -1,9 +1,3 @@
-module Ethernet = Ethernet
-module ARPv4 = Arp
-module IPv4 = Ipv4
-module ICMPv4 = Icmpv4
-module UDPv4 = Udpv4
-
 exception Net_unreach
 exception Closed_by_peer
 exception Connection_refused

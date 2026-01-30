@@ -1,5 +1,3 @@
-module IPv4 = Ipv4
-
 type state
 
 val create : IPv4.t -> state

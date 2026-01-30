@@ -1,35 +1,28 @@
 (library
- (name mnet)
- (modules
-  mnet
-  tags
-  arp
-  table
-  diet
-  ethernet
-  fragment
-  icmpv4
-  ipv4
-  ipv6
-  ndpv6
-  ropes
-  routing
-  udpv4)
- (public_name mnet)
+ (name tags)
+ (public_name mnet.tags)
+ (modules tags)
+ (libraries fmt ipaddr macaddr logs))
+
+(library
+ (name ethernet)
+ (public_name mnet.ethernet)
+ (modules ethernet)
  (libraries
-  lru
-  mirage-crypto-rng
-  utcp
-  duration
   hxd.core
   hxd.string
+  mnet.tags
   fmt
-  ipaddr
+  mkernel
   macaddr
-  bin
   logs
-  slice.bstr
-  mkernel))
+  slice.bstr))
+
+(library
+ (name mnet)
+ (modules mnet UDPv4)
+ (public_name mnet)
+ (libraries duration mnet.ipv4 mnet.icmpv4 mnet.ethernet))
 
 (library
  (name mnet_tls)

@@ -2,7 +2,6 @@ let src = Logs.Src.create "mnet.udpv4"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
-module IPv4 = Ipv4
 
 module Packet = struct
   type t = { src_port: int; dst_port: int; length: int }

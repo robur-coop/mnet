@@ -1,11 +1,6 @@
 let src = Logs.Src.create "mnet"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-module Ethernet = Ethernet
-module ARPv4 = Arp
-module IPv4 = Ipv4
-module ICMPv4 = Icmpv4
-module UDPv4 = Udpv4
 
 exception Net_unreach
 exception Closed_by_peer
@@ -365,7 +360,7 @@ module TCPv4 = struct
         let (_, src_port), (ipaddr, port) = Utcp.peers flow in
         Log.debug (fun m ->
             m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-        let tags = Ipv4.tags state.ipv4 in
+        let tags = IPv4.tags state.ipv4 in
         let tags = Logs.Tag.add Tags.tcp (ipaddr, port) tags in
         let buffer = Buffer.create 0x7ff in
         let flow = { state; tags; flow; buffer; closed= false } in
@@ -499,7 +494,7 @@ module TCPv4 = struct
     let tcp, flow, c, seg =
       Utcp.connect ~src ~dst ~dst_port state.tcp (now ())
     in
-    let tags = Ipv4.tags state.ipv4 in
+    let tags = IPv4.tags state.ipv4 in
     let tags = Logs.Tag.add Tags.tcp (dst, dst_port) tags in
     state.tcp <- tcp;
     write_ip state.ipv4 seg;

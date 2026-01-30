@@ -6,9 +6,9 @@ end
 
 module Make (K : Hashtbl.HashedType) (V : V) = struct
   module W = struct
-    type t = unit
+    type t = Weight
 
-    let weight () = 1
+    let weight Weight = 1
   end
 
   module Lru = Lru.M.Make (K) (W)
@@ -22,12 +22,12 @@ module Make (K : Hashtbl.HashedType) (V : V) = struct
 
   let add t key value =
     Hashtbl.replace t.entries key value;
-    if V.is_disposable value then Lru.add key () t.disposables
+    if V.is_disposable value then Lru.add key Weight t.disposables
     else Lru.remove key t.disposables;
     while Lru.weight t.disposables > Lru.capacity t.disposables do
       match Lru.lru t.disposables with
       | None -> ()
-      | Some (key', ()) ->
+      | Some (key', Weight) ->
           Hashtbl.remove t.entries key';
           Lru.remove key' t.disposables
     done

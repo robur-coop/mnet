@@ -127,8 +127,6 @@ module Packet = struct
     Bin.to_string (t ~kind:pkt.kind) pkt |> Bytes.unsafe_of_string
 end
 
-module IPv4 = Ipv4
-
 let input ipv4 pkt payload =
   let dst = pkt.IPv4.src in
   match Packet.decode payload with

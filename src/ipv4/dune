@@ -1,0 +1,28 @@
+(library
+ (name IPv4)
+ (public_name mnet.ipv4)
+ (modules diet ropes fragment IPv4 routing)
+ (libraries
+  mnet.ethernet
+  mnet.arpv4
+  utcp
+  mirage-crypto-rng
+  logs
+  lru
+  ipaddr
+  macaddr
+  bin
+  fmt
+  slice.bstr))
+
+(library
+ (name ARPv4)
+ (public_name mnet.arpv4)
+ (modules ARPv4 table)
+ (libraries mnet.ethernet lru ipaddr macaddr fmt slice.bstr))
+
+(library
+ (name ICMPv4)
+ (public_name mnet.icmpv4)
+ (modules ICMPv4)
+ (libraries mnet.ipv4 utcp bin ipaddr macaddr fmt slice.bstr))

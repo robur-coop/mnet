@@ -88,22 +88,18 @@ type t = {
 }
 
 let alias t ipaddr =
-  let () =
-    match Entries.find t.entries ipaddr with
-    | exception Not_found -> ()
-    | Pending { ivar; _ } -> ignore (Miou.Computation.try_return ivar t.macaddr)
-    | _ -> ()
-  in
+  begin match Entries.find t.entries ipaddr with
+  | exception Not_found -> ()
+  | Pending { ivar; _ } -> ignore (Miou.Computation.try_return ivar t.macaddr)
+  | _ -> ()
+  end;
   Entries.add t.entries ipaddr (Static t.macaddr);
-  let pkt =
-    {
-      Packet.operation= Packet.Request
-    ; src_mac= t.macaddr
-    ; dst_mac= mac0
-    ; src_ip= ipaddr
-    ; dst_ip= ipaddr
-    }
-  in
+  let operation = Packet.Request in
+  let src_mac = t.macaddr in
+  let dst_mac = mac0 in
+  let src_ip = ipaddr in
+  let dst_ip = ipaddr in
+  let pkt = { Packet.operation; src_mac; dst_mac; src_ip; dst_ip } in
   (pkt, Macaddr.broadcast)
 
 let write t (arp, dst) =
@@ -116,26 +112,19 @@ let guard err fn = if fn () then Ok () else Error err
 let macaddr t = t.macaddr
 
 let request t dst_ip =
+  let operation = Packet.Request in
+  let src_mac = t.macaddr in
   let dst_mac = Macaddr.broadcast in
-  ( {
-      Packet.operation= Request
-    ; src_mac= t.macaddr
-    ; dst_mac
-    ; src_ip= t.ipaddr
-    ; dst_ip
-    }
-  , dst_mac )
+  let src_ip = t.ipaddr in
+  ({ Packet.operation; src_mac; dst_mac; src_ip; dst_ip }, dst_mac)
 
 let reply arp macaddr =
-  let pkt =
-    {
-      Packet.operation= Packet.Reply
-    ; src_mac= macaddr
-    ; dst_mac= arp.Packet.src_mac
-    ; src_ip= arp.Packet.dst_ip
-    ; dst_ip= arp.Packet.src_ip
-    }
-  in
+  let operation = Packet.Reply in
+  let src_mac = macaddr in
+  let dst_mac = arp.Packet.src_mac in
+  let src_ip = arp.Packet.dst_ip in
+  let dst_ip = arp.Packet.src_ip in
+  let pkt = { Packet.operation; src_mac; dst_mac; src_ip; dst_ip } in
   (pkt, arp.Packet.src_mac)
 
 exception Timeout

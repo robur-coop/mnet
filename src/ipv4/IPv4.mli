@@ -1,6 +1,3 @@
-module Ethernet = Ethernet
-module ARPv4 = Arp
-
 module Flag : sig
   type t = DF | MF
 end
@@ -71,6 +68,9 @@ val write_directly :
   -> protocol:int
   -> Writer.t
   -> unit
+(** [write_directly ipv4 ?ttl ?src (dst, macaddr) ~protocol w] writes a new IPv4
+    packet [w] {b effectively} (without interruption) (fragmented or not) to the
+    specified destination [macaddr]. *)
 
 val write :
      t
@@ -80,9 +80,12 @@ val write :
   -> protocol:int
   -> Writer.t
   -> (unit, [> `Route_not_found ]) result
-(** [write ?ttl ?src dst protocol w] writes a new IPv4 packet [w] (fragmented or
-    not) to the specified destination [dst]. *)
+(** [write ipv4 ?ttl ?src dst protocol w] writes a new IPv4 packet [w]
+    (fragmented or not) to the specified destination [dst]. *)
 
 val attempt_to_discover_destination : t -> Ipaddr.V4.t -> Macaddr.t option
+(** [attempt_to_discover_destination ipv4 dst] attempts to return the MAC
+    address to which we must send a packet if we wish to send it to [dst]. *)
+
 val input : t -> Slice_bstr.t Ethernet.packet -> unit
 val set_handler : t -> (packet * payload -> unit) -> unit
