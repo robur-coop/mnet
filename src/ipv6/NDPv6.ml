@@ -254,10 +254,12 @@ type t = {
   ; lmtu: int
 }
 
-let push addr packet queues =
+let src t dst = Addrs.select t.addrs dst
+
+let push addr pkts queues =
   match Ipaddr.V6.Map.find_opt addr queues with
-  | Some packets -> Ipaddr.V6.Map.add addr (packet :: packets) queues
-  | None -> Ipaddr.V6.Map.add addr [ packet ] queues
+  | Some pkts' -> Ipaddr.V6.Map.add addr (List.rev_append pkts pkts') queues
+  | None -> Ipaddr.V6.Map.add addr pkts queues
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
@@ -275,8 +277,8 @@ type event =
   | `Tick ]
 
 let next_hop t addr =
-  (* TODO(dinosaure): for on-link addr, should we use the Link-MTU or the [RA.lmtu]? *)
-  if Prefixes.is_local t.prefixes addr then Ok (t, addr, None)
+  if Ipaddr.V6.is_multicast addr then Ok (t, addr, Some t.lmtu)
+  else if Prefixes.is_local t.prefixes addr then Ok (t, addr, Some t.lmtu)
   else
     match Dsts.next_hop addr t.dsts with
     | Ok (next_hop, pmtu, dsts) -> Ok ({ t with dsts }, next_hop, Some pmtu)
@@ -292,13 +294,14 @@ let next_hop t addr =
         Ok ({ t with routers; dsts }, next_hop, mtu)
     | Error #Dsts.error as err -> err
 
-type action = [ Neighbors.action | `Send of Macaddr.t * int option * packet ]
+type action = [ Neighbors.action | `Send of Macaddr.t * packet ]
 
-let send t ~now dst packet =
-  if Ipaddr.V6.is_multicast dst then
-    Ok (t, [ `Send (multicast_mac dst, None, packet) ])
+let send t ~now next_hop pkts =
+  if Ipaddr.V6.is_multicast next_hop then
+    let fn packet = `Send (multicast_mac next_hop, packet) in
+    let actions = List.map fn pkts in
+    (t, actions)
   else
-    let* t, next_hop, mtu = next_hop t dst in
     let neighbors, lladdr, actions =
       Neighbors.query t.neighbors ~now next_hop
     in
@@ -306,11 +309,14 @@ let send t ~now dst packet =
     match lladdr with
     | Some lladdr ->
         let t = { t with neighbors } in
-        Ok (t, `Send (lladdr, mtu, packet) :: actions)
+        let fn packet = `Send (lladdr, packet) in
+        (* NOTE(dinosaure): here, the order of [pkts] is not important. *)
+        let actions = List.rev_append (List.map fn pkts) actions in
+        (t, actions)
     | None ->
-        let queues = push dst packet t.queues in
+        let queues = push next_hop pkts t.queues in
         let t = { t with neighbors; queues } in
-        Ok (t, actions)
+        (t, actions)
 
 let tick t ~now (event : event) =
   let prefixes = Prefixes.tick t.prefixes ~now event in

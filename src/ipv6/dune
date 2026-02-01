@@ -1,3 +1,4 @@
 (library
- (name ndpv6)
- (libraries utcp slice.bstr lru macaddr ipaddr))
+ (name ipv6)
+ (public_name mnet.ipv6)
+ (libraries mirage-crypto-rng utcp slice.bstr lru macaddr ipaddr))

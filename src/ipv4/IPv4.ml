@@ -221,32 +221,20 @@ type t = {
   ; cache: Fragments.t
   ; mutable handler: packet * payload -> unit
   ; tags: Logs.Tag.set
+  ; cnt: int Atomic.t
 }
 
 let tags { tags; _ } = tags
 
 module Writer = struct
-  type z = |
-  type 'a s = |
-  type 'a peano = Zero : z peano | Succ : 'a peano -> 'a s peano
-
-  [@@@warning "-27"]
-  [@@@warning "-37"]
-
-  type ('p, 'q, 'a) m =
-    | Bind : ('p, 'q, 'a) m * ('a -> ('q, 'r, 'b) m) -> ('p, 'r, 'b) m
-    | Return : 'a -> ('p, 'p, 'a) m
-    | Write : ('n s, 'm s, 'a) m * (Bstr.t -> int) -> ('n, 'm s, 'a) m
-
   type ipv4 = t
 
   type t =
     | Fixed of { total_length: int; fn: Bstr.t -> unit }
       (* invariant: [total_length <= mtu - 20] *)
     | Fragmented of { total_length: int; fn: (Bstr.t -> unit) Seq.t }
-      (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
+  (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
          until the last element (which contains remaining unaligned bytes. *)
-    | Unknown : (z, 'n s, unit) m -> t
 
   let of_string t str =
     let mtu = Ethernet.mtu t.eth in
@@ -266,6 +254,8 @@ module Writer = struct
       in
       Fragmented { total_length; fn= go 0 }
 
+  (* TODO(dinosaure): it should be possible to make a Seq.t version of this
+     function to be able to fragment correctly a /stream/. *)
   let chunk chunk_size ?(str_off = 0) sstr =
     let rec go acc str_off chunk_size sstr =
       if chunk_size == 0 then (List.rev acc, str_off, sstr)
@@ -324,51 +314,14 @@ module Writer = struct
     if 20 + total_length > Ethernet.mtu t.eth then
       invalid_arg "IPv4.Writer.into: too huge IPv4 packet";
     Fixed { total_length; fn }
-
-  let unknown : type n. (z, n s, unit) m -> t = fun m -> Unknown m
-  let ( let* ) x fn = Bind (x, fn)
-  let ( let+ ) x fn = Write (x, fn)
-  let return x = Return x
-
-  type 'a user's_fn =
-    | Some : (Bstr.t -> int) -> 'a s user's_fn
-    | None : z user's_fn
-
-  type out = (Bstr.t -> int) -> unit
-
-  let rec go : type a p q.
-         out:out
-      -> p peano
-      -> p user's_fn
-      -> (p, q, a) m
-      -> q peano * q user's_fn * a =
-   fun ~out s user's_fn0 m ->
-    match (m, s) with
-    | Return x, _ -> (s, user's_fn0, x)
-    | Bind (m, fn), s ->
-        let s, user's_fn1, x = go ~out s user's_fn0 m in
-        go ~out s user's_fn1 (fn x)
-    | Write (m, user's_fn1), s ->
-        let () =
-          match user's_fn0 with None -> () | Some user's_fn0 -> out user's_fn0
-        in
-        go ~out (Succ s) (Some user's_fn1) m
 end
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
   let tags = Ethernet.tags eth in
   let tags = Logs.Tag.add Tags.ipv4 cidr tags in
-  let t =
-    {
-      eth
-    ; arp
-    ; cidr
-    ; gateway
-    ; cache= Fragments.create ?to_expire ()
-    ; handler
-    ; tags
-    }
-  in
+  let cache = Fragments.create ?to_expire () in
+  let cnt = Atomic.make 0 in
+  let t = { eth; arp; cidr; gateway; cache; handler; tags; cnt } in
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
@@ -442,43 +395,6 @@ let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
               go (off + size) (total_length - size) next
       in
       go 0 total_length (fn ())
-  | Writer.Unknown m ->
-      let uid = Mirage_crypto_rng.generate 2 in
-      let uid = String.get_uint16_be uid 0 in
-      let off = ref 0 in
-      let out ~last user's_fn =
-        let fn bstr =
-          let flags = if last then Flag._none else Flag._mf in
-          let pkt =
-            {
-              Packet.src
-            ; dst
-            ; uid
-            ; flags
-            ; off= !off lsr 3
-            ; ttl
-            ; protocol
-            ; checksum_and_length= Packet.Partial
-            ; opt= SBstr.empty
-            }
-          in
-          Packet.unsafe_encode_into pkt bstr;
-          let user's_payload = Bstr.shift bstr 20 in
-          let len = user's_fn user's_payload in
-          Bstr.set_uint16_be bstr 2 (20 + len);
-          let len = (len + 0b111) / 8 * 8 in
-          off := !off + len;
-          let chk = Utcp.Checksum.digest ~off:0 ~len:20 bstr in
-          Bstr.set_uint16_be bstr 10 chk;
-          20 + len
-        in
-        let protocol = Ethernet.IPv4 in
-        Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn
-      in
-      let _, Writer.Some user's_fn, () =
-        Writer.go ~out:(out ~last:false) Writer.Zero Writer.None m
-      in
-      out ~last:true user's_fn
 
 let write t ?(ttl = 38) ?src dst ~protocol p =
   Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
@@ -520,10 +436,8 @@ let input t pkt =
         Option.iter t.handler pkt
       end
 
-let _cnt = Atomic.make 0
-
 let set_handler t handler =
-  Atomic.incr _cnt;
+  Atomic.incr t.cnt;
   t.handler <- handler;
-  if Atomic.get _cnt > 1 then
+  if Atomic.get t.cnt > 1 then
     Log.warn (fun m -> m ~tags:t.tags "IPv4 handler modified more than once")

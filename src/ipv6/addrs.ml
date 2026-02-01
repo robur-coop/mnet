@@ -89,3 +89,15 @@ let is_my_addr t ipaddr =
     | _ -> ()
   in
   match Addrs.iter_k fn t with exception Yes -> true | _ -> false
+
+exception Choose of Ipaddr.V6.Prefix.t
+
+let select t _dst =
+  let fn addr = function
+    | Addr.Tentative _ -> ()
+    | _ -> raise_notrace (Choose addr)
+  in
+  match Addrs.iter_k fn t with
+  | exception Choose addr ->
+      Ipaddr.V6.Prefix.address addr (* TODO(dinosaure): ??? *)
+  | () -> Ipaddr.V6.unspecified

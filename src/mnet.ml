@@ -96,6 +96,7 @@ module TCPv4 = struct
   type state = {
       mutable tcp: w Utcp.state
     ; ipv4: IPv4.t
+    ; ipv6: IPv6.t
     ; queue: Utcp.output Queue.t
     ; mutex: Miou.Mutex.t
     ; condition: Miou.Condition.t
@@ -148,10 +149,32 @@ module TCPv4 = struct
         Log.err (fun m -> m "%a is unreachable" Ipaddr.V4.pp dst);
         raise Net_unreach
 
+  let write_ipv6 ipv6 (src, dst, seg) =
+    let len = Utcp.Segment.length seg in
+    let fn bstr =
+      let cs = Cstruct.of_bigarray bstr in
+      let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
+      Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    in
+    let pkt = { IPv6.len; fn } in
+    match IPv6.write ipv6 ~src dst ~protocol:6 pkt with
+    | Ok () -> ()
+    | Error `Packet_too_big ->
+        (* TODO(dinosaure): we should set MSS on the TCP layer and retry
+           everything which was not ACKed. *)
+        assert false
+    | Error `Route_not_found ->
+        Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
+        raise Net_unreach
+
   let write_ip ipv4 (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
-    | _ -> failwith "IPv6 not implemented"
+    | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 ipv6 (src, dst, seg)
+    | Ipaddr.V4 _, Ipaddr.V6 _ ->
+        failwith "Impossible to write an IPv6 packet from an IPv4 host"
+    | Ipaddr.V6 _, Ipaddr.V4 _ ->
+        failwith "Impossible to write an IPv4 packet from an IPv4 host"
 
   let write_without_interruption_ip t (src, dst, seg) =
     match (src, dst) with
