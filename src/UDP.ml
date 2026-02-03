@@ -82,9 +82,13 @@ type waiter = {
   ; waiter: out Miou.Computation.t
 }
 
-type state = { readers: (int, waiter list) Hashtbl.t; ipv4: IPv4.t }
+type state = {
+    readers: (int, waiter list) Hashtbl.t
+  ; ipv4: IPv4.t
+  ; ipv6: IPv6.t
+}
 
-let create ipv4 = { readers= Hashtbl.create 0x7ff; ipv4 }
+let create ipv4 ipv6 = { readers= Hashtbl.create 0x7ff; ipv4; ipv6 }
 
 let fill state ~peer ~pkt payload =
   match Hashtbl.find state.readers pkt.Packet.dst_port with

@@ -2,7 +2,7 @@ exception Net_unreach
 exception Closed_by_peer
 exception Connection_refused
 
-module TCPv4 : sig
+module TCP : sig
   type state
   type flow
   type daemon
@@ -96,11 +96,11 @@ module TCPv4 : sig
 
       {[
         let handler flow =
-          let finally = Mnet.TCPv4.close in
+          let finally = Mnet.TCP.close in
           let r = Miou.Ownership.create ~finally flow in
           Miou.Ownership.own r;
           ...
-          Mnet.TCPv4.close flow;
+          Mnet.TCP.close flow;
           Miou.Ownership.disown r
       ]} *)
 
@@ -114,12 +114,12 @@ module TCPv4 : sig
   val accept : state -> listen -> flow
 end
 
-type stackv4
+type stack
 
-val stackv4 :
+val stack :
      name:string
   -> ?gateway:Ipaddr.V4.t
   -> Ipaddr.V4.Prefix.t
-  -> (stackv4 * TCPv4.state * UDPv4.state) Mkernel.arg
+  -> (stack * TCP.state * UDP.state) Mkernel.arg
 
-val kill : stackv4 -> unit
+val kill : stack -> unit

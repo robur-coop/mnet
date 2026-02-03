@@ -177,11 +177,13 @@ let write_directly t ~now ?src dst ~protocol ~len user's_fn =
 
 let input t pkt =
   match NDPv6.decode t.ndpv6 pkt.Ethernet.payload with
-  | Error _err -> assert false
-  | Ok `Drop -> assert false
+  | Error err ->
+      Log.err (fun m -> m "Invalid IPv6 packet: %a" NDPv6.pp_error err);
+      let str = SBstr.to_string pkt.Ethernet.payload in
+      Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+  | Ok `Drop -> ()
   | Ok event ->
       let now = Mkernel.clock_monotonic () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in
       List.iter (write t.eth) outs;
-      t.ndpv6 <- ndpv6;
-      assert false
+      t.ndpv6 <- ndpv6

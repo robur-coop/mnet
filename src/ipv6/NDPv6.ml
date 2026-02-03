@@ -379,6 +379,19 @@ type error =
   | `Truncated
   | `Unknown_ICMP_packet of int ]
 
+let pp_error ppf = function
+  | `Bad_version -> Fmt.string ppf "Bad version"
+  | `Destination_unreachable -> Fmt.string ppf "Destination unreachable"
+  | `Drop -> Fmt.string ppf "Drop"
+  | `Drop_RS -> Fmt.string ppf "Drop RS"
+  | `ICMP_error _ -> Fmt.pf ppf "ICMP error"
+  | `Invalid_ICMP_checksum -> Fmt.string ppf "Invalid ICMP checksum"
+  | `Msg msg -> Fmt.string ppf msg
+  | `Parameter_problem -> Fmt.string ppf "Parameter problem"
+  | `Time_exceeded -> Fmt.string ppf "Time exceeded"
+  | `Truncated -> Fmt.string ppf "Truncated"
+  | `Unknown_ICMP_packet n -> Fmt.pf ppf "Unknown ICMP packet (%d)" n
+
 let decode t payload =
   let is_my_addr = Addrs.is_my_addr t.addrs in
   Parser.decode ~is_my_addr payload

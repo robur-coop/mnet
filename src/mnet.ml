@@ -86,8 +86,8 @@ end
 (* NOTE(dinosaure): μTCP is actually well-abstracted about IPv4 and IPv6 but we
    only have IPv4 implementation. We should handle easily the IPv6 at this
    layer I think. *)
-module TCPv4 = struct
-  let src = Logs.Src.create "mnet.tcpv4"
+module TCP = struct
+  let src = Logs.Src.create "mnet.tcp"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -282,7 +282,7 @@ module TCPv4 = struct
       match len with None -> Bytes.length buf - off | Some len -> len
     in
     if off < 0 || len < 0 || off > Bytes.length buf - len then
-      invalid_arg "TCPv4.really_read";
+      invalid_arg "TCP.really_read";
     if len > 0 then really_read t off len buf
 
   let rec write t str off len =
@@ -357,7 +357,7 @@ module TCPv4 = struct
     let src = Ipaddr.V4 pkt.IPv4.src in
     let dst = Ipaddr.V4 pkt.IPv4.dst in
     Log.debug (fun m ->
-        m "New TCPv4 packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
+        m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
     (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
        does a copy (to strings). It's safe to transmit our [slice] to
        [Utcp.handle_buf] and be interrupted by the scheduler. We also
@@ -391,7 +391,7 @@ module TCPv4 = struct
         | Await c ->
             Hashtbl.remove state.accept src_port;
             Log.debug (fun m ->
-                m "transmit the new incoming TCPv4 connection to the handler");
+                m "transmit the new incoming TCP connection to the handler");
             ignore (Miou.Computation.try_return c flow)
         | Pending q ->
             if Queue.length q < 1024 then Queue.push flow q
@@ -434,7 +434,7 @@ module TCPv4 = struct
     let outs = List.rev_append pending_outs outs in
     let outs = List.rev_append handler's_outs outs in
     let fn out =
-      Log.debug (fun m -> m "write new TCPv4 packet from daemon");
+      Log.debug (fun m -> m "write new TCP packet from daemon");
       try write_ip state.ipv4 state.ipv6 out with
       | Net_unreach ->
           let _, dst, _ = out in
@@ -542,7 +542,7 @@ let pp_error ppf = function
   | `MTU_too_small -> Fmt.string ppf "MTU too small"
   | `Exn exn -> Fmt.pf ppf "exception: %s" (Printexc.to_string exn)
 
-let ethernet_handler arpv4 ipv4 =
+let ethernet_handler arpv4 ipv4 ipv6 =
   ();
   (* NOTE(dinosaure): about the handler and the packet received. The latter is
      in the form of a [Bstr.t] that physically corresponds to the [Bstr.t] used
@@ -578,34 +578,34 @@ let ethernet_handler arpv4 ipv4 =
     match pkt.Ethernet.protocol with
     | Ethernet.ARPv4 -> ARPv4.transfer arpv4 pkt
     | Ethernet.IPv4 -> IPv4.input ipv4 pkt
-    | _ -> Ethernet.uninteresting_packet ()
+    | Ethernet.IPv6 -> IPv6.input ipv6 pkt
   in
   handler
 
-let ipv4_handler icmpv4 udpv4 tcpv4 =
+let ipv4_handler icmpv4 udp tcp =
   ();
   fun ((hdr, _) as pkt) ->
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
-    | 6 -> TCPv4.handler tcpv4 pkt
-    | 17 -> UDPv4.handler udpv4 pkt
+    | 6 -> TCP.handler tcp pkt
+    | 17 -> UDP.handler udp pkt
     | _ -> ()
 
-type stackv4 = {
+type stack = {
     ethernet_daemon: Ethernet.daemon
   ; arpv4_daemon: ARPv4.daemon
   ; icmpv4: ICMPv4.daemon
-  ; udpv4: UDPv4.state
-  ; tcpv4_daemon: TCPv4.daemon
+  ; udp: UDP.state
+  ; tcp_daemon: TCP.daemon
 }
 
 let kill t =
-  TCPv4.kill t.tcpv4_daemon;
+  TCP.kill t.tcp_daemon;
   ICMPv4.kill t.icmpv4;
   ARPv4.kill t.arpv4_daemon;
   Ethernet.kill t.ethernet_daemon
 
-let stackv4 ~name ?gateway cidr =
+let stack ~name ?gateway cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
@@ -615,22 +615,18 @@ let stackv4 ~name ?gateway cidr =
       let* arpv4_daemon, arpv4 =
         ARPv4.create ~ipaddr:(Ipaddr.V4.Prefix.address cidr) eth
       in
-      Log.debug (fun m -> m "✓ ARPv4 daemon launched");
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
       let* ipv6 = IPv6.create eth in
-      Log.debug (fun m -> m "✓ IPv4 stack created");
       let icmpv4 = ICMPv4.handler ipv4 in
-      Log.debug (fun m -> m "✓ ICMPv4 daemon launched");
-      let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 ipv6 in
-      let udpv4 = UDPv4.create ipv4 in
-      Log.debug (fun m -> m "✓ TCPv4 daemon launched");
-      IPv4.set_handler ipv4 (ipv4_handler icmpv4 udpv4 tcpv4);
-      let fn = ethernet_handler arpv4 ipv4 in
+      let tcp_daemon, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
+      let udp = UDP.create ipv4 ipv6 in
+      IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
+      let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;
-      let stackv4 =
-        { ethernet_daemon= daemon; arpv4_daemon; udpv4; icmpv4; tcpv4_daemon }
+      let stack =
+        { ethernet_daemon= daemon; arpv4_daemon; udp; icmpv4; tcp_daemon }
       in
-      Ok (stackv4, tcpv4, udpv4)
+      Ok (stack, tcp, udp)
     in
     let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
     match connect mac with

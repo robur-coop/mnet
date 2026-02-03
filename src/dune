@@ -20,7 +20,7 @@
 
 (library
  (name mnet)
- (modules mnet UDPv4)
+ (modules mnet UDP)
  (public_name mnet)
  (libraries duration mnet.ipv6 mnet.ipv4 mnet.icmpv4 mnet.ethernet))
 

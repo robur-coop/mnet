@@ -53,4 +53,5 @@ type error =
   | `Truncated
   | `Unknown_ICMP_packet of int ]
 
+val pp_error : error Fmt.t
 val decode : t -> SBstr.t -> (event, [> error ]) result

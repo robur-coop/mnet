@@ -26,7 +26,7 @@ type state =
 
 type t = {
     role: [ `Server | `Client ]
-  ; fd: Mnet.TCPv4.flow
+  ; fd: Mnet.TCP.flow
   ; mutable state: state
   ; mutable linger: string option
   ; read_buffer_size: int
@@ -59,7 +59,7 @@ let inhibit fn v = try fn v with _ -> ()
 
 let write flow str =
   Log.debug (fun m -> m "try to write %d byte(s)" (String.length str));
-  try Mnet.TCPv4.write flow.fd str with
+  try Mnet.TCP.write flow.fd str with
   | Mnet.Closed_by_peer ->
       flow.state <- half_close flow.state `write;
       raise Closed_by_peer
@@ -69,7 +69,7 @@ let write flow str =
 
 let write_without_interruption flow str =
   Log.debug (fun m -> m "try to write %d byte(s)" (String.length str));
-  try Mnet.TCPv4.write flow.fd str with
+  try Mnet.TCP.write flow.fd str with
   | Mnet.Closed_by_peer ->
       flow.state <- half_close flow.state `write;
       raise Closed_by_peer
@@ -92,7 +92,7 @@ let handle flow tls str =
       (* NOTE(dinosaure): [write flow] can set [flow.state]. So we must
          check if the actual [flow.state] or the [flow.state] after [write flow]
          want to close the underlying file-descriptor. *)
-      if to_close || flow.state = `Closed then Mnet.TCPv4.close flow.fd;
+      if to_close || flow.state = `Closed then Mnet.TCP.close flow.fd;
       data
   | Error (fail, `Response resp) ->
       let exn = match fail with `Alert a -> tls_alert a | f -> tls_fail f in
@@ -101,9 +101,7 @@ let handle flow tls str =
       raise exn
 
 let read flow =
-  match
-    Mnet.TCPv4.read flow.fd flow.buf ~off:0 ~len:(Bytes.length flow.buf)
-  with
+  match Mnet.TCP.read flow.fd flow.buf ~off:0 ~len:(Bytes.length flow.buf) with
   | 0 -> Ok String.empty
   | len -> Ok (Bytes.sub_string flow.buf 0 len)
   | exception exn -> Error exn
@@ -209,15 +207,15 @@ let close flow =
       flow.state <- inject_state tls flow.state;
       flow.state <- `Closed;
       inhibit (write_without_interruption flow) str;
-      Mnet.TCPv4.close flow.fd
+      Mnet.TCP.close flow.fd
   | `Write_closed _ ->
       flow.rd_closed <- true;
       flow.state <- `Closed;
-      Mnet.TCPv4.close flow.fd
+      Mnet.TCP.close flow.fd
   | `Closed -> flow.rd_closed <- true
   | `Error _ ->
       flow.rd_closed <- true;
-      Mnet.TCPv4.close flow.fd
+      Mnet.TCP.close flow.fd
 
 let closed_by_user flow = function
   | `read | `read_write -> flow.rd_closed <- true
@@ -237,11 +235,11 @@ let shutdown flow mode =
          want to close the underlying file-descriptor. *)
       let to_close = flow.state = `Closed in
       inhibit (write_without_interruption flow) str;
-      if to_close || flow.state = `Closed then Mnet.TCPv4.close flow.fd
+      if to_close || flow.state = `Closed then Mnet.TCP.close flow.fd
   | `Write_closed tls, (`read | `read_write) ->
       flow.state <- inject_state tls (half_close flow.state mode);
-      if flow.state = `Closed then Mnet.TCPv4.close flow.fd
-  | `Error _, _ -> Mnet.TCPv4.close flow.fd
+      if flow.state = `Closed then Mnet.TCP.close flow.fd
+  | `Error _, _ -> Mnet.TCP.close flow.fd
   | `Read_closed _, `read -> ()
   | `Write_closed _, `write -> ()
   | `Closed, _ -> ()
