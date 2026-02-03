@@ -156,8 +156,8 @@ module TCPv4 = struct
       let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
       Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
     in
-    let pkt = { IPv6.len; fn } in
-    match IPv6.write ipv6 ~src dst ~protocol:6 pkt with
+    let now = Mkernel.clock_monotonic () in
+    match IPv6.write ~now ipv6 ~src dst ~protocol:6 ~len fn with
     | Ok () -> ()
     | Error `Packet_too_big ->
         (* TODO(dinosaure): we should set MSS on the TCP layer and retry
@@ -167,7 +167,7 @@ module TCPv4 = struct
         Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
         raise Net_unreach
 
-  let write_ip ipv4 (src, dst, seg) =
+  let write_ip ipv4 ipv6 (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
     | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 ipv6 (src, dst, seg)
@@ -202,17 +202,17 @@ module TCPv4 = struct
     match Utcp.recv t.state.tcp (now ()) t.flow with
     | Ok (tcp, [], c, segs) -> begin
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         match Notify.await c with
         | Ok () -> begin
             match Utcp.recv t.state.tcp (now ()) t.flow with
             | Ok (tcp, [], _c, segs) ->
                 t.state.tcp <- tcp;
-                List.iter (write_ip t.state.ipv4) segs;
+                List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
                 get t
             | Ok (tcp, data, _c, segs) ->
                 t.state.tcp <- tcp;
-                List.iter (write_ip t.state.ipv4) segs;
+                List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
                 Ok data
             | Error `Not_found -> Error Refused
             | Error `Eof -> Error Eof
@@ -231,7 +231,7 @@ module TCPv4 = struct
       end
     | Ok (tcp, data, _c, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         Ok data
     | Error `Eof -> Error Eof
     | Error (`Msg msg) ->
@@ -294,7 +294,7 @@ module TCPv4 = struct
         raise Closed_by_peer
     | Ok (tcp, bytes_sent, c, segs) -> begin
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         Log.debug (fun m -> m ~tags:t.tags "write %d byte(s)" bytes_sent);
         if bytes_sent < len then
           let result = Notify.await c in
@@ -342,7 +342,7 @@ module TCPv4 = struct
     match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
     | Ok (tcp, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs
     | Error (`Msg msg) ->
         Log.err (fun m ->
             m ~tags:t.tags "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
@@ -435,7 +435,7 @@ module TCPv4 = struct
     let outs = List.rev_append handler's_outs outs in
     let fn out =
       Log.debug (fun m -> m "write new TCPv4 packet from daemon");
-      try write_ip state.ipv4 out with
+      try write_ip state.ipv4 state.ipv6 out with
       | Net_unreach ->
           let _, dst, _ = out in
           Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
@@ -490,7 +490,7 @@ module TCPv4 = struct
 
   type daemon = unit Miou.t
 
-  let create ~name ipv4 =
+  let create ~name ipv4 ipv6 =
     let tcp = Utcp.empty Notify.create name Mirage_crypto_rng.generate in
     let mutex = Miou.Mutex.create () in
     let condition = Miou.Condition.create () in
@@ -499,6 +499,7 @@ module TCPv4 = struct
       {
         tcp
       ; ipv4
+      ; ipv6
       ; queue= Queue.create ()
       ; mutex
       ; condition
@@ -520,7 +521,7 @@ module TCPv4 = struct
     let tags = IPv4.tags state.ipv4 in
     let tags = Logs.Tag.add Tags.tcp (dst, dst_port) tags in
     state.tcp <- tcp;
-    write_ip state.ipv4 seg;
+    write_ip state.ipv4 state.ipv6 seg;
     Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
     match Notify.await c with
     | Ok () ->
@@ -616,10 +617,11 @@ let stackv4 ~name ?gateway cidr =
       in
       Log.debug (fun m -> m "✓ ARPv4 daemon launched");
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
+      let* ipv6 = IPv6.create eth in
       Log.debug (fun m -> m "✓ IPv4 stack created");
       let icmpv4 = ICMPv4.handler ipv4 in
       Log.debug (fun m -> m "✓ ICMPv4 daemon launched");
-      let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 in
+      let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 ipv6 in
       let udpv4 = UDPv4.create ipv4 in
       Log.debug (fun m -> m "✓ TCPv4 daemon launched");
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udpv4 tcpv4);

@@ -14,6 +14,8 @@ module Addrs = Lru.F.Make (Ipaddr.V6.Prefix) (Addr)
 
 type t = Addrs.t
 
+let make capacity = Addrs.empty capacity
+
 type action =
   [ `Send_NS of [ `Unspecified | `Specified ] * Ipaddr.V6.t * Ipaddr.V6.t ]
 
@@ -32,7 +34,7 @@ let tick t ~now = function
       let capacity = Addrs.capacity t in
       (Addrs.fold_k fn (Addrs.empty capacity) t, [])
   | _ ->
-      let fn prefix state (t, actions) =
+      let fn prefix state (t, pkts) =
         match state with
         | Addr.Tentative { lifetime; expire_at; dad_sent } when expire_at < now
           ->
@@ -49,17 +51,22 @@ let tick t ~now = function
                 | Some { Addr.valid; _ } -> valid
               in
               let state = Addr.Preferred { expire_at; valid_lifetime } in
-              (Addrs.add prefix state t, actions)
-            else
-              let ipaddr = Ipaddr.V6.Prefix.address prefix in
+              (Addrs.add prefix state t, pkts)
+            else begin
+              let addr = Ipaddr.V6.Prefix.address prefix in
               let dst =
-                Ipaddr.V6.Prefix.network_address solicited_node_prefix ipaddr
+                Ipaddr.V6.Prefix.network_address solicited_node_prefix addr
               in
+              assert (Ipaddr.V6.is_multicast dst);
               let expire_at = now + _1s in
               let dad_sent = dad_sent + 1 in
               let state = Addr.Tentative { lifetime; expire_at; dad_sent } in
               let t = Addrs.add prefix state t in
-              (t, `Send_NS (`Unspecified, dst, ipaddr) :: actions)
+              let lladdr = Ipaddr.V6.multicast_to_mac dst in
+              let ns = { Neighbors.NS.target= addr; slla= None } in
+              let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
+              (t, pkt :: pkts)
+            end
         | Preferred { expire_at= Some expire_at; valid_lifetime }
           when expire_at < now ->
             (* Preferred -> Deprecated *)
@@ -70,10 +77,10 @@ let tick t ~now = function
             in
             let state = Addr.Deprecated { expire_at } in
             let t = Addrs.add prefix state t in
-            (t, actions)
+            (t, pkts)
         | Deprecated { expire_at= Some expire_at; _ } when expire_at < now ->
-            (t, actions)
-        | state -> (Addrs.add prefix state t, actions)
+            (t, pkts)
+        | state -> (Addrs.add prefix state t, pkts)
       in
       let capacity = Addrs.capacity t in
       Addrs.fold_k fn (Addrs.empty capacity, []) t

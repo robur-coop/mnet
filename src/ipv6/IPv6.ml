@@ -1,5 +1,5 @@
 module Packet = struct
-  let unsafe_hdr_into ?(hop_limit = 64) src dst ~protocol ?(off = 0) bstr =
+  let _unsafe_hdr_into ?(hop_limit = 64) src dst ~protocol ?(off = 0) bstr =
     Bstr.set_int32_be bstr (off + 0) 0x60000000l;
     Bstr.set_uint16_be bstr (off + 4) 0;
     Bstr.set_uint8 bstr (off + 6) protocol;
@@ -12,7 +12,12 @@ end
 
 let ( let* ) = Result.bind
 
-type t = { ndpv6: NDPv6.t }
+type t = { mutable ndpv6: NDPv6.t; lmtu: int }
+
+let create eth =
+  let lmtu = Ethernet.mtu eth in
+  let ndpv6 = NDPv6.make ~lmtu in
+  Ok { ndpv6; lmtu }
 
 let segment_and_coalesce ~mtu seq =
   (* NOTE(dinosaure): Here, the objective is to segment by chunks of [mtu - 48]
@@ -40,7 +45,7 @@ let segment_and_coalesce ~mtu seq =
   in
   go String.empty seq
 
-let to_chunks ~mtu seq =
+let _to_chunks ~mtu seq =
   let seq = segment_and_coalesce ~mtu seq in
   match seq () with
   | Seq.Nil -> None (* nothing to encode *)
@@ -80,38 +85,52 @@ let to_chunks ~mtu seq =
           Some (Seq.map fn seq)
     end
 
-let into ~mtu ~protocol ~len user's_fn =
+let with_hdr ~src ~dst ~protocol ~len fn =
+  let fn bstr =
+    Bstr.set_int32_be bstr 0 0x60000000l;
+    Bstr.set_uint16_be bstr 4 len;
+    Bstr.set_uint8 bstr 6 protocol;
+    Bstr.set_uint8 bstr 7 64 (* HOP limit *);
+    let src = Ipaddr.V6.to_octets src in
+    Bstr.blit_from_string src ~src_off:0 bstr ~dst_off:8 ~len:16;
+    let dst = Ipaddr.V6.to_octets dst in
+    Bstr.blit_from_string dst ~src_off:0 bstr ~dst_off:24 ~len:16;
+    fn (Bstr.shift bstr 40)
+  in
+  fn
+
+let into ~mtu ~src ~dst ~protocol ~len user's_fn =
   if len > mtu - 40 then begin
     let bstr = Bstr.create len in
     let tmp = Bytes.create 4 in
     Mirage_crypto_rng.generate_into tmp ~off:0 4;
     let uid = Bytes.get_int32_ne tmp 0 in
-    let len' = user's_fn bstr in
-    assert (len = len');
+    user's_fn bstr;
     let max = mtu - 48 in
     let rec go acc src_off =
       if src_off - len <= 0 then List.rev acc
       else
-        let filler dst =
-          assert (Bstr.length dst >= max);
-          let len = Int.min max (len - src_off) in
-          let last = if src_off - len <= 0 then true else false in
+        let chunk = Int.min max (len - src_off) in
+        let _last = if src_off - chunk <= 0 then true else false in
+        let fn dst =
           Bstr.set_uint8 dst 0 protocol;
           Bstr.set_uint8 dst 1 0;
           Bstr.set_uint16_be dst 2 0;
           Bstr.set_int32_be dst 4 uid;
-          Bstr.blit bstr ~src_off:8 dst ~dst_off:0 ~len;
-          len + 8
+          Bstr.blit bstr ~src_off dst ~dst_off:8 ~len:chunk
         in
-        let size = Int.min max (len - src_off) in
-        go ({ NDPv6.size; filler } :: acc) (src_off + max)
+        let fn = with_hdr ~src ~dst ~protocol:0 ~len:chunk fn in
+        go ({ NDPv6.Packet.len= chunk + 48; fn } :: acc) (src_off + chunk)
     in
     go [] 0
   end
-  else [ { NDPv6.size= len; filler= user's_fn } ]
+  else
+    let len = len + 40 in
+    let fn = with_hdr ~src ~dst ~protocol ~len user's_fn in
+    [ { NDPv6.Packet.len; fn } ]
 
 let write t ~now ?src dst ~protocol ~len user's_fn =
-  let src = match src with Some src -> src | None -> NDPv6.src t.ndpv6 dst in
+  let src = NDPv6.src t.ndpv6 ?src dst in
   let* ndpv6, next_hop, mtu = NDPv6.next_hop t.ndpv6 dst in
   match mtu with
   | None ->
@@ -119,10 +138,12 @@ let write t ~now ?src dst ~protocol ~len user's_fn =
          this PMTU may fail for the intended destination. The only valid PMTU in
          all cases is 1280. *)
       let mtu = t.lmtu in
-      let pkts = into ~mtu ~protocol ~len user's_fn in
-      let ndpv6, outs = NDPv6.send t.ndpv6 ~now next_hop pkts in
+      let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      let ndpv6, _outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      t.ndpv6 <- ndpv6;
       assert false
   | Some mtu ->
-      let pkts = into ~mtu ~protocol ~len user's_fn in
-      let ndpv6, outs = NDPv6.send t.ndpv6 ~now next_hop pkts in
+      let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      let ndpv6, _outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      t.ndpv6 <- ndpv6;
       assert false

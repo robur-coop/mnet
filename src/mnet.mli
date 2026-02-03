@@ -8,7 +8,7 @@ module TCPv4 : sig
   type daemon
 
   val handler : state -> IPv4.packet * IPv4.payload -> unit
-  val create : name:string -> IPv4.t -> daemon * state
+  val create : name:string -> IPv4.t -> IPv6.t -> daemon * state
   val kill : daemon -> unit
 
   val connect : state -> Ipaddr.V4.t * int -> flow

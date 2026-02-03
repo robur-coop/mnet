@@ -17,5 +17,6 @@ type t
     valid forever, unless a new (finite) value is received in a subsequent
     advertisement. *)
 
+val make : int -> t
 val tick : t -> now:int -> [> `Prefix of Pfx.t ] -> t
 val is_local : t -> Ipaddr.V6.t -> bool

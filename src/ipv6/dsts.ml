@@ -14,6 +14,8 @@ module Dsts = Lru.F.Make (Ipaddr.V6) (Dst)
 
 type t = { cache: Dsts.t; lmtu: int }
 
+let make ~lmtu capacity = { cache= Dsts.empty capacity; lmtu }
+
 let next_hop addr t =
   match Dsts.find addr t.cache with
   | Some { pmtu; next_hop; errored= None } ->

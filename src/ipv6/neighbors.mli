@@ -1,3 +1,12 @@
+module Packet : sig
+  type t = {
+      lladdr: Macaddr.t
+    ; dst: Ipaddr.V6.t
+    ; len: int
+    ; fn: src:Ipaddr.V6.t -> Bstr.t -> unit
+  }
+end
+
 module NA : sig
   type t = {
       router: bool
@@ -10,6 +19,8 @@ end
 
 module NS : sig
   type t = { target: Ipaddr.V6.t; slla: Macaddr.t option }
+
+  val encode_into : lladdr:Macaddr.t -> dst:Ipaddr.V6.t -> t -> Packet.t
 end
 
 type t
@@ -23,11 +34,12 @@ type t
     number of unanswered probes, and the time the next Neighbor Unreachability
     Detection event is scheduled to take place. *)
 
+val make : int -> t
+
 type action =
-  [ `Send_ICMPv6_neighbor_unreachable
-  | `Send_NS of [ `Unspecified | `Specified ] * Ipaddr.V6.t * Ipaddr.V6.t
-  | `Send_queued_packets of Ipaddr.V6.t
-  | `Cancel of Ipaddr.V6.t ]
+  | Packet of Packet.t
+  | Cancel of Ipaddr.V6.t
+  | Release_with of Ipaddr.V6.t * Macaddr.t
 
 val tick :
      t
@@ -40,6 +52,6 @@ val lladdr : t -> Ipaddr.V6.t -> Macaddr.t option
 (** [lladdr t addr] tries to find the Link-Layer address of the given IPv6
     address [addr] from [t]. *)
 
-val query : t -> now:int -> Ipaddr.V6.t -> t * Macaddr.t option * action list
+val query : t -> now:int -> Ipaddr.V6.t -> t * Macaddr.t option * action option
 val is_reachable : t -> Ipaddr.V6.t -> bool
 val is_router : t -> Ipaddr.V6.t -> bool option

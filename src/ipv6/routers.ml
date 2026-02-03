@@ -24,6 +24,7 @@ module Routers = Lru.F.Make (Ipaddr.V6) (Router)
 
 type t = Routers.t
 
+let make capacity = Routers.empty capacity
 let _9000s = 0
 
 let rec trim acc routers =

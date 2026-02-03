@@ -18,6 +18,8 @@ module Prefixes = Lru.F.Make (Ipaddr.V6.Prefix) (Prefix)
 
 type t = Prefixes.t
 
+let make capacity = Prefixes.empty capacity
+
 (* NOTE(dinosaure): From RFC4861, 5.3:
 
    When removing an entry from the Prefix List, there is no need to

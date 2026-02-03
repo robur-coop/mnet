@@ -1,10 +1,14 @@
 module SBstr = Slice_bstr
 
-type packet = { size: int; filler: Bstr.t -> int }
-type t
-type action = [ Neighbors.action | `Send of Macaddr.t * packet ]
+module Packet : sig
+  type t = { dst: Macaddr.t; len: int; fn: Bstr.t -> unit }
+  type user's_packet = { len: int; fn: Bstr.t -> unit }
+end
 
-val src : t -> Ipaddr.V6.t -> Ipaddr.V6.t
+type t
+
+val make : lmtu:int -> t
+val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
@@ -21,14 +25,20 @@ type event =
   | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Tick ]
 
-val tick : t -> now:int -> event -> t * action list
+val tick : t -> now:int -> event -> t * Packet.t list
 
 val next_hop :
      t
   -> Ipaddr.V6.t
   -> (t * Ipaddr.V6.t * int option, [> `Packet_too_big ]) result
 
-val send : t -> now:int -> Ipaddr.V6.t -> packet list -> t * action list
+val send :
+     t
+  -> now:int
+  -> dst:Ipaddr.V6.t
+  -> Ipaddr.V6.t
+  -> Packet.user's_packet list
+  -> t * Packet.t list
 
 type error =
   [ `Bad_version

@@ -3,14 +3,6 @@ module SBstr = Slice_bstr
 let ( let* ) = Result.bind
 let guard err fn = if fn () then Ok () else Error err
 
-let multicast_mac =
-  let tmp = Bytes.create 6 in
-  Bytes.set_uint16_be tmp 0 0x3333;
-  fun addr ->
-    let _, _, _, n = Ipaddr.V6.to_int32 addr in
-    Bytes.set_int32_be tmp 2 n;
-    Macaddr.of_octets_exn (Bytes.unsafe_to_string tmp)
-
 module Parser = struct
   let rec options acc sbstr =
     if SBstr.length sbstr >= 2 then
@@ -147,7 +139,7 @@ module Parser = struct
     | 133 -> Error `Drop_RS
     | 134 ->
         (* The packet does not come from a direct neighbour if hlimit is not
-           255. It must be dropped. It is the same of NS and NA. *)
+           255. It must be dropped. It is the same of NS, NA and Redirect. *)
         let hlim = SBstr.get_uint8 sbstr 7 in
         if hlim <> 255 then Error `Drop
         else
@@ -242,7 +234,10 @@ module Parser = struct
         with_extension ~src ~dst sbstr ~first:true nhdr 40
 end
 
-type packet = { size: int; filler: Bstr.t -> int }
+module Packet = struct
+  type t = { dst: Macaddr.t; len: int; fn: Bstr.t -> unit }
+  type user's_packet = { len: int; fn: Bstr.t -> unit }
+end
 
 type t = {
     neighbors: Neighbors.t
@@ -250,11 +245,21 @@ type t = {
   ; prefixes: Prefixes.t
   ; addrs: Addrs.t
   ; dsts: Dsts.t
-  ; queues: packet list Ipaddr.V6.Map.t
+  ; queues: Packet.user's_packet list Ipaddr.V6.Map.t
   ; lmtu: int
 }
 
-let src t dst = Addrs.select t.addrs dst
+let make ~lmtu =
+  let neighbors = Neighbors.make 0x100 in
+  let routers = Routers.make 16 in
+  let prefixes = Prefixes.make 16 in
+  let addrs = Addrs.make 16 in
+  let dsts = Dsts.make ~lmtu 0x100 in
+  let queues = Ipaddr.V6.Map.empty in
+  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu }
+
+let src t ?src dst =
+  match src with Some src -> src | None -> Addrs.select t.addrs dst
 
 let push addr pkts queues =
   match Ipaddr.V6.Map.find_opt addr queues with
@@ -277,8 +282,9 @@ type event =
   | `Tick ]
 
 let next_hop t addr =
-  if Ipaddr.V6.is_multicast addr then Ok (t, addr, Some t.lmtu)
-  else if Prefixes.is_local t.prefixes addr then Ok (t, addr, Some t.lmtu)
+  if Ipaddr.V6.is_multicast addr || Prefixes.is_local t.prefixes addr then
+    (* On-Link *)
+    Ok (t, addr, Some t.lmtu)
   else
     match Dsts.next_hop addr t.dsts with
     | Ok (next_hop, pmtu, dsts) -> Ok ({ t with dsts }, next_hop, Some pmtu)
@@ -294,40 +300,71 @@ let next_hop t addr =
         Ok ({ t with routers; dsts }, next_hop, mtu)
     | Error #Dsts.error as err -> err
 
-type action = [ Neighbors.action | `Send of Macaddr.t * packet ]
+let process t = function
+  | Neighbors.Release_with (dst, lladdr) ->
+      let queues = t.queues in
+      let queues, pkts =
+        match Ipaddr.V6.Map.find_opt dst queues with
+        | Some pkts ->
+            let queues = Ipaddr.V6.Map.remove dst queues in
+            let fn { Packet.len; fn } = { Packet.dst= lladdr; len; fn } in
+            let pkts = List.map fn pkts in
+            (queues, pkts)
+        | None -> (queues, [])
+      in
+      ({ t with queues }, pkts)
+  | Cancel dst ->
+      let queues = Ipaddr.V6.Map.remove dst t.queues in
+      (* TODO(dinosaure): Send an ICMPv6, Neighbor unreachable? *)
+      ({ t with queues }, [])
+  | Packet { Neighbors.Packet.lladdr; dst; len; fn } ->
+      let src = src t dst in
+      let fn = fn ~src in
+      let pkt = { Packet.dst= lladdr; len; fn } in
+      (t, [ pkt ])
 
-let send t ~now next_hop pkts =
+let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
   if Ipaddr.V6.is_multicast next_hop then
-    let fn packet = `Send (multicast_mac next_hop, packet) in
-    let actions = List.map fn pkts in
-    (t, actions)
+    let dst = Ipaddr.V6.multicast_to_mac next_hop in
+    let fn { Packet.len; fn } = { Packet.dst; len; fn } in
+    let pkts = List.map fn user's_pkts in
+    (t, pkts)
   else
-    let neighbors, lladdr, actions =
-      Neighbors.query t.neighbors ~now next_hop
-    in
-    let actions = (actions :> action list) in
+    let neighbors, lladdr, act = Neighbors.query t.neighbors ~now next_hop in
+    let t = { t with neighbors } in
+    let t, pkts = Option.fold ~none:(t, []) ~some:(process t) act in
     match lladdr with
-    | Some lladdr ->
-        let t = { t with neighbors } in
-        let fn packet = `Send (lladdr, packet) in
+    | Some dst ->
+        let fn { Packet.len; fn } = { Packet.dst; len; fn } in
         (* NOTE(dinosaure): here, the order of [pkts] is not important. *)
-        let actions = List.rev_append (List.map fn pkts) actions in
-        (t, actions)
+        let pkts = List.rev_append (List.map fn user's_pkts) pkts in
+        (t, pkts)
     | None ->
-        let queues = push next_hop pkts t.queues in
-        let t = { t with neighbors; queues } in
-        (t, actions)
+        let queues = push dst user's_pkts t.queues in
+        ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
   let prefixes = Prefixes.tick t.prefixes ~now event in
   let routers_to_delete, routers = Routers.tick t.routers ~now event in
   let dsts = Dsts.clean_old_routers routers_to_delete t.dsts in
-  let addrs, actions0 = Addrs.tick t.addrs ~now event in
-  let actions1, neighbors = Neighbors.tick t.neighbors ~now event in
+  let addrs, pkts = Addrs.tick t.addrs ~now event in
+  let acts0 = List.map (fun pkt -> Neighbors.Packet pkt) pkts in
+  (* NOTE(dinosaure): [acts0] contains only packets to send, so we don't need to
+     change anything from our current state [t]. Only
+     [Neighbors.{Release_with,Cancel}] can change the state [t] (and particulary
+     [t.queues]). We can therefore defer the [acts0] process and merge it with
+     [acts1] without any implications for our state [t]. *)
+  let acts1, neighbors = Neighbors.tick t.neighbors ~now event in
   let dsts = Dsts.tick dsts ~now event in
-  let actions = List.rev_append (actions0 :> Neighbors.action list) actions1 in
   let t = { t with neighbors; routers; prefixes; addrs; dsts } in
-  (t, (actions :> action list))
+  let t, pkts =
+    let fn (t, pkts) act =
+      let t, pkts' = process t act in
+      (t, List.rev_append pkts' pkts)
+    in
+    List.fold_left fn (t, []) (List.rev_append acts0 acts1)
+  in
+  (t, pkts)
 
 type error =
   [ `Bad_version

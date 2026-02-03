@@ -1,3 +1,26 @@
+module Packet = struct
+  type t = {
+      lladdr: Macaddr.t
+    ; dst: Ipaddr.V6.t
+    ; len: int
+    ; fn: src:Ipaddr.V6.t -> Bstr.t -> unit
+  }
+end
+
+(* NOTE(dinosaure): There are two things to keep in mind regarding NDPv6: the
+   algorithm can (and will) send packets whose destination is always On-Link,
+   meaning that we do not have to resolve the "next hop" as soon as NDPv6 wants
+   to send packets: we should always have the destination MAC address.
+
+   The packets we are trying to send are always less than 1280 bytes, which is
+   the minimum MTU according to IPv6. We should therefore not worry about the
+   [`Packet_too_big] error that destinations may send us.
+
+   Finally, at this point, we still do not know the source MAC address or the
+   source IPv6 address. The packets are therefore encoded so that they wait for
+   the IPv6 address we want to use and, through currying, produce a function
+   that fully writes the IPv6 packet that our algorithm wants to send. *)
+
 (* Neighbor Advertisement *)
 module NA = struct
   type t = {
@@ -9,8 +32,54 @@ module NA = struct
   }
 end
 
+let cs_of_len_and_protocol =
+  let tmp = Cstruct.create 8 in
+  fun ~len ~protocol ->
+    Cstruct.BE.set_uint32 tmp 0 (Int32.of_int len);
+    Cstruct.BE.set_uint32 tmp 4 (Int32.of_int protocol);
+    tmp
+
 module NS = struct
   type t = { target: Ipaddr.V6.t; slla: Macaddr.t option }
+
+  let encode_into ~lladdr ~dst t =
+    let len = match t.slla with None -> 64 | Some _ -> 72 in
+    let fn ~src bstr =
+      Bstr.set_int32_be bstr 0 0x60000000l;
+      Bstr.set_uint16_be bstr 4 len;
+      Bstr.set_uint8 bstr 6 58 (* ICMPv6 *);
+      Bstr.set_uint8 bstr 7 255 (* HOP limit *);
+      let src = Ipaddr.V6.to_octets src in
+      Bstr.blit_from_string src ~src_off:0 bstr ~dst_off:8 ~len:16;
+      let dst = Ipaddr.V6.to_octets dst in
+      Bstr.blit_from_string dst ~src_off:0 bstr ~dst_off:24 ~len:16;
+      Bstr.set_uint8 bstr 40 135 (* NS *);
+      Bstr.set_uint8 bstr 41 0;
+      Bstr.set_uint16_be bstr 42 0;
+      Bstr.set_int32_be bstr 44 0l;
+      let target = Ipaddr.V6.to_octets t.target in
+      Bstr.blit_from_string target ~src_off:0 bstr ~dst_off:48 ~len:16;
+      begin match t.slla with
+      | None -> ()
+      | Some lladdr ->
+          Bstr.set_uint8 bstr 64 1;
+          Bstr.set_uint8 bstr 63 1;
+          let lladdr = Macaddr.to_octets lladdr in
+          Bstr.blit_from_string lladdr ~src_off:0 bstr ~dst_off:64 ~len:6
+      end;
+      let cs0 = Cstruct.of_bigarray bstr ~off:0 ~len:32 in
+      let cs1 = cs_of_len_and_protocol ~len ~protocol:58 in
+      let cs2 =
+        Cstruct.of_bigarray bstr ~off:40
+          ~len:(24 + Option.fold ~none:0 ~some:(Fun.const 8) t.slla)
+      in
+      let chk = 0 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs0 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs1 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs2 in
+      Bstr.set_uint16_be bstr 42 chk
+    in
+    { Packet.lladdr; dst; len; fn }
 end
 
 module Neighbor = struct
@@ -38,6 +107,7 @@ module Neighbors = Lru.F.Make (Ipaddr.V6) (Neighbor)
 
 type t = Neighbors.t
 
+let make capacity = Neighbors.empty capacity
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 
 (* Appendix C: State Machine for the Reachability State
@@ -73,10 +143,15 @@ let _5s = 0
 let _30s = 0
 
 type action =
-  [ `Send_ICMPv6_neighbor_unreachable
-  | `Send_NS of [ `Unspecified | `Specified ] * Ipaddr.V6.t * Ipaddr.V6.t
-  | `Send_queued_packets of Ipaddr.V6.t
-  | `Cancel of Ipaddr.V6.t ]
+  | Packet of Packet.t
+  | Cancel of Ipaddr.V6.t
+  | Release_with of Ipaddr.V6.t * Macaddr.t
+
+(* NOTE(dinosaure): For simplicity's sake, the transition produces at most a
+   single action. This action can be "expanded" to send multiple packets, but
+   this expansion is done later (outside of NDPv6). For now, this is sufficient,
+   and we can use the [List.cons]/[List.rev] pair rather than [List.rev_append]
+   when aggregating all actions for all our entries. *)
 
 let transition key (state, is_router) now event =
   let open Neighbor in
@@ -91,27 +166,34 @@ let transition key (state, is_router) now event =
    *)
   | Incomplete { expire_at: int; sent_probes; _ }, _ when expire_at <= now ->
       if sent_probes >= 3 (* MAX_MULTICAST_SOLICIT *) then
-        (None, [ `Send_ICMPv6_neighbor_unreachable; `Cancel key ])
-      else
+        (None, Some (Cancel key))
+      else begin
         let expire_at = now + _1s in
         let sent_probes = sent_probes + 1 in
         let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix key in
-        let actions = [ `Send_NS (`Specified, dst, key) ] in
-        (Some (Incomplete { expire_at; sent_probes }, is_router), actions)
+        assert (Ipaddr.V6.is_multicast dst);
+        let lladdr = Ipaddr.V6.multicast_to_mac dst in
+        let ns = { NS.target= key; slla= Some lladdr } in
+        let pkt = NS.encode_into ~lladdr ~dst ns in
+        let action = Some (Packet pkt) in
+        (Some (Incomplete { expire_at; sent_probes }, is_router), action)
+      end
   (* | REACHABLE | timeout, more than    | - | STALE
      |           | N seconds since       |   |
      |           | reachability confirm. |   |
    *)
   | Reachable { expire_at; lladdr }, _ when expire_at <= now ->
-      (Some (Stale lladdr, is_router), [])
+      (Some (Stale lladdr, is_router), None)
   (* | DELAY | Delay timeout | Send unicast NS probe  | PROBE
      |       |               | Start retransmit timer |
    *)
   | Delay { lladdr; expire_at }, _ when expire_at <= now ->
       let expire_at = now + _1s in
       let sent_probes = 1 in
-      let actions = [ `Send_NS (`Specified, key, key) ] in
-      (Some (Probe { lladdr; expire_at; sent_probes }, is_router), actions)
+      let ns = { NS.target= key; slla= Some lladdr } in
+      let pkt = NS.encode_into ~lladdr ~dst:key ns in
+      let action = Some (Packet pkt) in
+      (Some (Probe { lladdr; expire_at; sent_probes }, is_router), action)
   (* | PROBE | Retransmit timeout, | Retransmit NS | PROBE
      |       | less than N         |               |
      |       | retransmissions.    |               |
@@ -121,12 +203,15 @@ let transition key (state, is_router) now event =
      |       | retransmissions.    |               |
    *)
   | Probe { lladdr; expire_at; sent_probes }, _ when expire_at <= now ->
-      if sent_probes >= 3 (* MAX_UNICAST_SOLICIT *) then (None, [])
-      else
+      if sent_probes >= 3 (* MAX_UNICAST_SOLICIT *) then (None, None)
+      else begin
         let expire_at = now + _1s in
         let sent_probes = sent_probes + 1 in
-        let actions = [ `Send_NS (`Specified, key, key) ] in
-        (Some (Probe { lladdr; expire_at; sent_probes }, is_router), actions)
+        let ns = { NS.target= key; slla= Some lladdr } in
+        let pkt = NS.encode_into ~lladdr ~dst:key ns in
+        let action = Some (Packet pkt) in
+        (Some (Probe { lladdr; expire_at; sent_probes }, is_router), action)
+      end
   (* | INCOMPLETE | NA, Solicited=1, | Record link-layer    | REACHABLE
      |            | Override=any     | address. Send queued |
      |            |                  | packets.             |
@@ -134,20 +219,20 @@ let transition key (state, is_router) now event =
   | Incomplete _, `NA (_src, _dst, { NA.solicited= true; tlla= Some lladdr; _ })
     ->
       let expire_at = now + _30s in
-      (Some (Reachable { lladdr; expire_at }, is_router), [])
+      (Some (Reachable { lladdr; expire_at }, is_router), None)
   (* | INCOMPLETE | NA, Solicited=0, | Record link-layer    | STALE
      |            | Override=any     | address. Send queued |
      |            |                  | packets.             |
    *)
   | Incomplete _, `NA (_src, _dst, { NA.solicited= false; tlla= Some lladdr; _ })
     ->
-      (Some (Stale lladdr, is_router), [ `Send_queued_packets key ])
+      (Some (Stale lladdr, is_router), Some (Release_with (key, lladdr)))
   (* | INCOMPLETE | NA, Solicited=any, | Update content of | unchanged
      |            | Override=any, No   | IsRouter flag     |
      |            | Link-layer address |                   |
    *)
   | Incomplete _, `NA (_src, _dst, { NA.tlla= None; _ }) ->
-      (Some (state, true), [])
+      (Some (state, true), None)
   (* |  REACHABLE | NA, Solicited=1,     | - | STALE
      |            | Override=0           |   |
      |            | Different link-layer |   |
@@ -156,8 +241,8 @@ let transition key (state, is_router) now event =
   | ( Reachable { lladdr; _ }
     , `NA (_src, _dst, { NA.solicited= true; tlla= Some lladdr'; _ }) ) ->
       if Macaddr.compare lladdr lladdr' != 0 then
-        (Some (Stale lladdr', is_router), [])
-      else (Some (state, is_router), [])
+        (Some (Stale lladdr', is_router), None)
+      else (Some (state, is_router), None)
   (* | !INCOMPLETE  | NA, Solicited=1,     | - | REACHABLE
      |              | Override=0           |   |
      |              | Same link-layer      |   |
@@ -177,8 +262,8 @@ let transition key (state, is_router) now event =
       let lladdr' = Option.get lladdr' in
       if Macaddr.compare lladdr lladdr' = 0 then
         let expire_at = now + _30s in
-        (Some (Reachable { lladdr; expire_at }, is_router), [])
-      else (Some (state, is_router), [])
+        (Some (Reachable { lladdr; expire_at }, is_router), None)
+      else (Some (state, is_router), None)
   (* | !INCOMPLETE | NA, Solicited=0,     | -                 | unchanged
      |             | Override=1           |                   |
      |             | Same link-layer      |                   |
@@ -199,27 +284,27 @@ let transition key (state, is_router) now event =
       let lladdr' = Neighbor.lladdr state in
       let lladdr' = Option.get lladdr' in
       if (not solicited) && Macaddr.compare lladdr lladdr' = 0 then
-        (Some (state, is_router), [])
+        (Some (state, is_router), None)
       else if solicited then
         let expire_at = now + _30s in
-        (Some (Reachable { lladdr; expire_at }, is_router), [])
+        (Some (Reachable { lladdr; expire_at }, is_router), None)
       else (* not solicited && Macaddr.compare lladdr lladdr' <> 0 *)
         let () = assert (not solicited) in
         let () = assert (Macaddr.compare lladdr lladdr' <> 0) in
-        (Some (Stale lladdr, is_router), [])
+        (Some (Stale lladdr, is_router), None)
   (* | !INCOMPLETE | NA, Solicited=any, | Update content of | unchanged
      |             | Override=any, No   | IsRouter flag.    |
      |             | link-layer address |                   |
    *)
   | ( (Stale _ | Probe _ | Delay _ | Reachable _)
     , `NA (_src, _dst, { NA.tlla= None; _ }) ) ->
-      (Some (state, true), [])
+      (Some (state, true), None)
   (* | !INCOMPLETE | NA, Solicited=0, | - | unchanged
      |             | Override=0       |   |
    *)
   | ( (Stale _ | Probe _ | Delay _ | Reachable _)
     , `NA (_src, _dst, { NA.solicited= false; override= false; _ }) ) ->
-      (Some (state, is_router), [])
+      (Some (state, is_router), None)
   (* 7.2.3.  Receipt of Neighbor Solicitations
 
      ... the recipient SHOULD create or update the Neighbor Cache entry for the
@@ -232,10 +317,10 @@ let transition key (state, is_router) now event =
   | Incomplete _, `NS (src, _dst, { NS.slla= Some lladdr; _ }) ->
       if Ipaddr.V6.compare key src = 0 then
         let state = Stale lladdr in
-        (Some (state, is_router), [ `Send_queued_packets key ])
+        (Some (state, is_router), Some (Release_with (key, lladdr)))
       else
         let state = Stale lladdr in
-        (Some (state, false), [])
+        (Some (state, false), None)
   | ( (Stale _ | Probe _ | Delay _ | Reachable _)
     , `NS (src, _dst, { NS.slla= Some lladdr; _ }) ) ->
       let lladdr' = Neighbor.lladdr state in
@@ -243,28 +328,26 @@ let transition key (state, is_router) now event =
       if Ipaddr.V6.compare key src = 0 && Macaddr.compare lladdr lladdr' <> 0
       then
         let state = Stale lladdr in
-        (Some (state, is_router), [])
+        (Some (state, is_router), None)
       else
         let state = Stale lladdr in
-        (Some (state, false), [])
+        (Some (state, false), None)
   | (Incomplete _ | Reachable _ | Delay _ | Probe _ | Stale _), _ ->
-      (Some (state, is_router), [])
+      (Some (state, is_router), None)
 
 let tick t ~now event =
   let fn key value (actions, t') =
+    let push = Option.fold ~none:actions ~some:(Fun.flip List.cons actions) in
     match transition key value now event with
-    | Some value', actions' ->
-        let actions = List.rev_append actions' actions in
+    | Some value', action ->
         let t' = Neighbors.add key value' t' in
-        (actions, t')
-    | None, actions' ->
-        let actions = List.rev_append actions' actions in
-        (actions, t)
+        (push action, t')
+    | None, action -> (push action, t)
   in
   (* NOTE(dinosaure): even if we can [fold_k] here (which performs better), we
      would like to keep the usage order to clean up then. *)
   let actions, t' = Neighbors.fold fn ([], Neighbors.empty 0x7ff) t in
-  (actions, Neighbors.trim t')
+  (List.rev actions, Neighbors.trim t')
 
 let lladdr t addr =
   match Option.map fst (Neighbors.find addr t) with
@@ -290,21 +373,25 @@ let query t ~now addr =
       let sent_probes = 0 in
       let state = Neighbor.Incomplete { expire_at; sent_probes } in
       let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
-      let actions = [ `Send_NS (`Specified, dst, addr) ] in
+      assert (Ipaddr.V6.is_multicast dst);
+      let lladdr = Ipaddr.V6.multicast_to_mac dst in
+      let ns = { NS.target= addr; slla= Some lladdr } in
+      let pkt = NS.encode_into ~lladdr ~dst ns in
+      let action = Some (Packet pkt) in
       let t = Neighbors.add addr (state, false) t in
       let t = Neighbors.trim t in
-      (t, None, actions)
-  | Some Neighbor.(Incomplete _, _) -> (t, None, [])
+      (t, None, action)
+  | Some Neighbor.(Incomplete _, _) -> (t, None, None)
   | Some
       ( ( Neighbor.Reachable { lladdr; _ }
         | Delay { lladdr; _ }
         | Probe { lladdr; _ } )
       , _ ) ->
-      (t, Some lladdr, [])
+      (t, Some lladdr, None)
   (* | STALE | Sending packet | Start delay timer | DELAY *)
   | Some (Neighbor.Stale lladdr, is_router) ->
       let expire_at = now + _5s in
       let state = Neighbor.Delay { lladdr; expire_at } in
       let t = Neighbors.remove addr t in
       let t = Neighbors.add addr (state, is_router) t in
-      (t, Some lladdr, [])
+      (t, Some lladdr, None)
