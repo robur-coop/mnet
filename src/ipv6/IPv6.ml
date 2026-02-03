@@ -1,3 +1,8 @@
+let src = Logs.Src.create "mnet.ipv6"
+
+module SBstr = Slice_bstr
+module Log = (val Logs.src_log src : Logs.LOG)
+
 module Packet = struct
   let _unsafe_hdr_into ?(hop_limit = 64) src dst ~protocol ?(off = 0) bstr =
     Bstr.set_int32_be bstr (off + 0) 0x60000000l;
@@ -12,38 +17,48 @@ end
 
 let ( let* ) = Result.bind
 
-type t = { mutable ndpv6: NDPv6.t; lmtu: int }
+type t = {
+    eth: Ethernet.t
+  ; mutable ndpv6: NDPv6.t
+  ; lmtu: int
+  ; tags: Logs.Tag.set
+  ; cnt: int Atomic.t
+}
 
 let create eth =
   let lmtu = Ethernet.mtu eth in
   let ndpv6 = NDPv6.make ~lmtu in
-  Ok { ndpv6; lmtu }
+  let tags = Logs.Tag.empty in
+  let cnt = Atomic.make 0 in
+  Ok { eth; ndpv6; lmtu; tags; cnt }
 
+(*
 let segment_and_coalesce ~mtu seq =
-  (* NOTE(dinosaure): Here, the objective is to segment by chunks of [mtu - 48]
-     bytes and coalesce what we are given. Then, we can introspect the returned
-     [seq] to determine whether we should actually fragment (and send IPv6
-     packets, 40 bytes, plus the 8-byte extension and payloads, everything is
-     aligned) or simply send a single packet. *)
   let max = mtu - 48 in
-  let rec go rem seq : _ Seq.t =
-   fun () ->
+  let buf = Bytes.create max in
+  let rec go buf_pos seq () =
     match seq () with
-    | Seq.Nil when rem = "" -> Seq.Nil
     | Seq.Nil ->
-        assert (String.length rem <= max);
-        Seq.Cons (rem, Seq.empty)
-    | Seq.Cons (str, next) ->
-        let rem = rem ^ str in
-        let len = String.length rem in
-        if len = 0 then go String.empty next ()
-        else if len <= max then go rem next ()
+        if buf_pos = 0 then Seq.Nil
         else
-          let chunk = String.sub rem 0 max in
-          let rem = String.sub rem max (len - max) in
-          Seq.Cons (chunk, go rem next)
+          let last = Bytes.sub_string buf 0 buf_pos in
+          Seq.Cons (last, Seq.empty)
+    | Seq.Cons (str, next) -> fill pos str next ()
+  and fill buf_pos str next () =
+    let str_len = String.length str in
+    let rem = max - pos in
+    if str_len <= rem then begin
+      Bytes.blit_string str 0 buf buf_pos str_len;
+      if buf_pos + str_len = max then Seq.Cons (Bytes.to_string buf, go 0 next)
+      else go (buf_pos + str_len) next ()
+    end
+    else begin
+      Bytes.blit_string str 0 buf pos rem;
+      let rem_str = String.sub str rem (str_len - rem) in
+      Seq.Cons (Bytes.to_string buf, fun () -> fill 0 rem_str next ())
+    end
   in
-  go String.empty seq
+  go 0 seq
 
 let _to_chunks ~mtu seq =
   let seq = segment_and_coalesce ~mtu seq in
@@ -84,6 +99,7 @@ let _to_chunks ~mtu seq =
           in
           Some (Seq.map fn seq)
     end
+*)
 
 let with_hdr ~src ~dst ~protocol ~len fn =
   let fn bstr =
@@ -119,7 +135,7 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
           Bstr.set_int32_be dst 4 uid;
           Bstr.blit bstr ~src_off dst ~dst_off:8 ~len:chunk
         in
-        let fn = with_hdr ~src ~dst ~protocol:0 ~len:chunk fn in
+        let fn = with_hdr ~src ~dst ~protocol:44 ~len:chunk fn in
         go ({ NDPv6.Packet.len= chunk + 48; fn } :: acc) (src_off + chunk)
     in
     go [] 0
@@ -129,7 +145,14 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
     let fn = with_hdr ~src ~dst ~protocol ~len user's_fn in
     [ { NDPv6.Packet.len; fn } ]
 
-let write t ~now ?src dst ~protocol ~len user's_fn =
+let at_most_one = function [] | [ _ ] -> true | _ -> false
+
+let write eth { NDPv6.Packet.dst; len; fn } =
+  let fn bstr = fn bstr; len in
+  let protocol = Ethernet.IPv6 in
+  Ethernet.write_directly_into eth ~len:(20 + len) ~dst ~protocol fn
+
+let write_directly t ~now ?src dst ~protocol ~len user's_fn =
   let src = NDPv6.src t.ndpv6 ?src dst in
   let* ndpv6, next_hop, mtu = NDPv6.next_hop t.ndpv6 dst in
   match mtu with
@@ -139,11 +162,26 @@ let write t ~now ?src dst ~protocol ~len user's_fn =
          all cases is 1280. *)
       let mtu = t.lmtu in
       let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
-      let ndpv6, _outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      if protocol = 6 (* TCP *) && not (at_most_one pkts) then
+        Log.warn (fun m -> m "Fragmentation of IPv6/TCP packets");
+      let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      List.iter (write t.eth) outs;
       t.ndpv6 <- ndpv6;
-      assert false
+      Ok ()
   | Some mtu ->
       let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
-      let ndpv6, _outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
+      List.iter (write t.eth) outs;
+      t.ndpv6 <- ndpv6;
+      Ok ()
+
+let input t pkt =
+  match NDPv6.decode t.ndpv6 pkt.Ethernet.payload with
+  | Error _err -> assert false
+  | Ok `Drop -> assert false
+  | Ok event ->
+      let now = Mkernel.clock_monotonic () in
+      let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in
+      List.iter (write t.eth) outs;
       t.ndpv6 <- ndpv6;
       assert false

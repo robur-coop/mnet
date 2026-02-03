@@ -157,7 +157,7 @@ module TCPv4 = struct
       Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
     in
     let now = Mkernel.clock_monotonic () in
-    match IPv6.write ~now ipv6 ~src dst ~protocol:6 ~len fn with
+    match IPv6.write_directly ~now ipv6 ~src dst ~protocol:6 ~len fn with
     | Ok () -> ()
     | Error `Packet_too_big ->
         (* TODO(dinosaure): we should set MSS on the TCP layer and retry
