@@ -12,7 +12,6 @@ val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
-  | `Drop
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
   | `Packet_too_big of Ipaddr.V6.t * Ipaddr.V6.t * int

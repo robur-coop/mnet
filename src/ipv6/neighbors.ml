@@ -123,9 +123,7 @@ let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 
    State           Event                   Action             New state
 
-   -               Packet to send.        Create entry.       INCOMPLETE
-                                          Send multicast NS.
-                                          Start retransmit timer
+   
 
 
 
@@ -133,8 +131,6 @@ let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
                    No link-layer address
 
 
-   !INCOMPLETE     upper-layer reachability  -                 REACHABLE
-                   confirmation
 
   *)
 
@@ -367,6 +363,10 @@ let is_reachable t addr =
 let is_router t addr = Option.map snd (Neighbors.find addr t)
 
 let query t ~now addr =
+  (* | - | Packet to send. | Create entry.          | INCOMPLETE
+     |   |                 | Send multicast NS.     |
+     |   |                 | Start retransmit timer |
+   *)
   match Neighbors.find addr t with
   | None ->
       let expire_at = now + _1s in
@@ -382,6 +382,12 @@ let query t ~now addr =
       let t = Neighbors.trim t in
       (t, None, action)
   | Some Neighbor.(Incomplete _, _) -> (t, None, None)
+  (* | !INCOMPLETE | upper-layer reachability | - | REACHABLE
+     |             | confirmation             |   |
+
+     TODO(dinosaure): not sure that it's currently on this case
+     that we should set the state to REACHABLE.
+   *)
   | Some
       ( ( Neighbor.Reachable { lladdr; _ }
         | Delay { lladdr; _ }

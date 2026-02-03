@@ -162,6 +162,7 @@ let write_directly t ~now ?src dst ~protocol ~len user's_fn =
          all cases is 1280. *)
       let mtu = t.lmtu in
       let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      (* NOTE(dinosaure): we should never fragment a TCP packet. *)
       if protocol = 6 (* TCP *) && not (at_most_one pkts) then
         Log.warn (fun m -> m "Fragmentation of IPv6/TCP packets");
       let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
@@ -181,7 +182,6 @@ let input t pkt =
       Log.err (fun m -> m "Invalid IPv6 packet: %a" NDPv6.pp_error err);
       let str = SBstr.to_string pkt.Ethernet.payload in
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
-  | Ok `Drop -> ()
   | Ok event ->
       let now = Mkernel.clock_monotonic () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in

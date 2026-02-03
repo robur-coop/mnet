@@ -166,7 +166,7 @@ module Parser = struct
         let hlim = SBstr.get_uint8 sbstr 7 in
         if hlim <> 255 then Error `Drop
         else
-          (* let _redirect = redirect payload in *)
+          (* TODO(dinosaure): let _redirect = redirect payload in *)
           Error `Drop
     | 1 -> Error `Destination_unreachable
     | 2 ->
@@ -185,7 +185,7 @@ module Parser = struct
     | 58 -> decode_icmp ~src ~dst sbstr off
     | 17 -> Ok (`UDP (src, dst, SBstr.shift sbstr off))
     | 6 -> Ok (`TCP (src, dst, SBstr.shift sbstr off))
-    | n when 143 <= n && n <= 255 -> Ok `Drop
+    | n when 143 <= n && n <= 255 -> Error `Drop
     | n -> Ok (`Default (n, src, dst, SBstr.shift sbstr off))
 
   and with_options ~src ~dst sbstr off =
@@ -268,7 +268,6 @@ let push addr pkts queues =
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
-  | `Drop
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
   | `Packet_too_big of Ipaddr.V6.t * Ipaddr.V6.t * int
