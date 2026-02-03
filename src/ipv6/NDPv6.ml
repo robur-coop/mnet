@@ -24,7 +24,7 @@ module Parser = struct
       | 3, 4 ->
           let prefix = SBstr.sub_string opt ~off:16 ~len:16 in
           let* prefix = Ipaddr.V6.of_octets prefix in
-          let prefix = Ipaddr.V6.Prefix.make (SBstr.get_uint8 opt 1) prefix in
+          let prefix = Ipaddr.V6.Prefix.make (SBstr.get_uint8 opt 2) prefix in
           let on_link = SBstr.get_uint8 opt 3 land 0x80 <> 0 in
           let autonomous = SBstr.get_uint8 opt 3 land 0x40 <> 0 in
           let valid_lifetime =
@@ -113,22 +113,26 @@ module Parser = struct
       ; prefix
       }
 
-  let checksum =
+  let checksum ~src ~dst payload =
+    let src = Ipaddr.V6.to_octets src in
+    let dst = Ipaddr.V6.to_octets dst in
+    let chk = Utcp.Checksum.feed_string ~off:0 ~len:16 0 src in
+    let chk = Utcp.Checksum.feed_string ~off:0 ~len:16 chk dst in
+    let len = SBstr.length payload in
     let hdr = Bytes.create 8 in
-    Bytes.set_int32_be hdr 4 48l;
-    fun payload ->
-      Bytes.set_int32_be hdr 0 (Int32.of_int (SBstr.length payload));
-      let chk =
-        Utcp.Checksum.feed_string ~off:0 ~len:0 0 (Bytes.unsafe_to_string hdr)
-      in
-      let { Slice.buf; off; len } = payload in
-      let cs = Cstruct.of_bigarray buf ~off ~len in
-      let chk = Utcp.Checksum.feed_cstruct chk cs in
-      Utcp.Checksum.finally chk
+    Bytes.set_int32_be hdr 0 (Int32.of_int len);
+    Bytes.set_int32_be hdr 4 58l;
+    let chk =
+      Utcp.Checksum.feed_string ~off:0 ~len:8 chk (Bytes.unsafe_to_string hdr)
+    in
+    let { Slice.buf; off; len } = payload in
+    let cs = Cstruct.of_bigarray buf ~off ~len in
+    let chk = Utcp.Checksum.feed_cstruct chk cs in
+    Utcp.Checksum.finally chk
 
   let decode_icmp ~src ~dst sbstr off =
     let payload = SBstr.shift sbstr off in
-    let chk = checksum payload in
+    let chk = checksum ~src ~dst payload in
     let* () = guard `Invalid_ICMP_checksum @@ fun () -> chk == 0 in
     match SBstr.get_uint8 payload 0 with
     | 128 ->
@@ -247,6 +251,7 @@ type t = {
   ; dsts: Dsts.t
   ; queues: Packet.user's_packet list Ipaddr.V6.Map.t
   ; lmtu: int
+  ; iid: string
 }
 
 let make ~lmtu =
@@ -256,7 +261,14 @@ let make ~lmtu =
   let addrs = Addrs.make 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
   let queues = Ipaddr.V6.Map.empty in
-  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu }
+  (* RFC 7217 3.1.1: bit 0 = 0 (unicast), bit 1 = 1 (locally administered) *)
+  let iid =
+    let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
+    let b = Char.code (Bytes.get buf 0) in
+    Bytes.set buf 0 (Char.chr ((b lor 0x02) land 0xFE));
+    Bytes.unsafe_to_string buf
+  in
+  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid }
 
 let src t ?src dst =
   match src with Some src -> src | None -> Addrs.select t.addrs dst
@@ -343,10 +355,11 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
-  let prefixes = Prefixes.tick t.prefixes ~now event in
+  let pfxs = match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> [] in
+  let prefixes = Prefixes.tick t.prefixes ~now pfxs in (* NOTE(dinosaure): [Prefixes] only consumes prefixes's RA. *)
   let routers_to_delete, routers = Routers.tick t.routers ~now event in
   let dsts = Dsts.clean_old_routers routers_to_delete t.dsts in
-  let addrs, pkts = Addrs.tick t.addrs ~now event in
+  let addrs, pkts = Addrs.tick t.addrs ~now ~iid:t.iid event in
   let acts0 = List.map (fun pkt -> Neighbors.Packet pkt) pkts in
   (* NOTE(dinosaure): [acts0] contains only packets to send, so we don't need to
      change anything from our current state [t]. Only

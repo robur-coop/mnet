@@ -18,5 +18,5 @@ type t
     advertisement. *)
 
 val make : int -> t
-val tick : t -> now:int -> [> `Prefix of Pfx.t ] -> t
+val tick : t -> now:int -> Pfx.t list -> t
 val is_local : t -> Ipaddr.V6.t -> bool

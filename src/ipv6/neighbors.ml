@@ -43,10 +43,11 @@ module NS = struct
   type t = { target: Ipaddr.V6.t; slla: Macaddr.t option }
 
   let encode_into ~lladdr ~dst t =
-    let len = match t.slla with None -> 64 | Some _ -> 72 in
+    let payload_len = match t.slla with None -> 24 | Some _ -> 32 in
+    let len = payload_len + 40 in
     let fn ~src bstr =
       Bstr.set_int32_be bstr 0 0x60000000l;
-      Bstr.set_uint16_be bstr 4 len;
+      Bstr.set_uint16_be bstr 4 payload_len;
       Bstr.set_uint8 bstr 6 58 (* ICMPv6 *);
       Bstr.set_uint8 bstr 7 255 (* HOP limit *);
       let src = Ipaddr.V6.to_octets src in
@@ -62,17 +63,14 @@ module NS = struct
       begin match t.slla with
       | None -> ()
       | Some lladdr ->
-          Bstr.set_uint8 bstr 64 1;
           Bstr.set_uint8 bstr 63 1;
+          Bstr.set_uint8 bstr 64 1;
           let lladdr = Macaddr.to_octets lladdr in
           Bstr.blit_from_string lladdr ~src_off:0 bstr ~dst_off:64 ~len:6
       end;
-      let cs0 = Cstruct.of_bigarray bstr ~off:0 ~len:32 in
-      let cs1 = cs_of_len_and_protocol ~len ~protocol:58 in
-      let cs2 =
-        Cstruct.of_bigarray bstr ~off:40
-          ~len:(24 + Option.fold ~none:0 ~some:(Fun.const 8) t.slla)
-      in
+      let cs0 = Cstruct.of_bigarray bstr ~off:8 ~len:32 in
+      let cs1 = cs_of_len_and_protocol ~len:payload_len ~protocol:58 in
+      let cs2 = Cstruct.of_bigarray bstr ~off:40 ~len:payload_len in
       let chk = 0 in
       let chk = Utcp.Checksum.feed_cstruct chk cs0 in
       let chk = Utcp.Checksum.feed_cstruct chk cs1 in
@@ -110,33 +108,9 @@ type t = Neighbors.t
 let make capacity = Neighbors.empty capacity
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 
-(* Appendix C: State Machine for the Reachability State
-
-   This appendix contains a summary of the rules specified in Sections
-   7.2 and 7.3.  This document does not mandate that implementations
-   adhere to this model as long as their external behavior is consistent
-   with that described in this document.
-
-   When performing address resolution and Neighbor Unreachability
-   Detection the following state transitions apply using the conceptual
-   model:
-
-   State           Event                   Action             New state
-
-   
-
-
-
-    -              NS, RS, Redirect             -                 -
-                   No link-layer address
-
-
-
-  *)
-
-let _1s = 0
-let _5s = 0
-let _30s = 0
+let _1s = 1_000_000_000
+let _5s = 5_000_000_000
+let _30s = 30_000_000_000
 
 type action =
   | Packet of Packet.t
@@ -247,7 +221,6 @@ let transition key (state, is_router) now event =
      | STALE, PROBE | NA, Solicited=1,     | - | unchanged
      | Or DELAY     | Override=0           |   |
      |              | Different link-layer |   |
-
    *)
   | ( (Stale _ | Probe _ | Delay _)
     , `NA

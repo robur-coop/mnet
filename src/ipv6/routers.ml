@@ -12,7 +12,7 @@ module RA = struct
   }
 end
 
-(* NOTE(dinosaure): RFC4191 defines a priority for routers. *)
+(* NOTE(dinosaure): RFC 4191 defines a priority for routers. *)
 
 module Router = struct
   type t = { expire_at: int; preference: int; lmtu: int option }
@@ -25,7 +25,8 @@ module Routers = Lru.F.Make (Ipaddr.V6) (Router)
 type t = Routers.t
 
 let make capacity = Routers.empty capacity
-let _9000s = 0
+let _1s = 1_000_000_000
+let _9000s = 9000 * _1s
 
 let rec trim acc routers =
   if Routers.weight routers > Routers.capacity routers then
@@ -38,7 +39,7 @@ let tick t ~now = function
   | `RA (src, _dst, { RA.router_lifetime= 0; _ }) ->
       trim [ src ] (Routers.remove src t)
   | `RA (src, _dst, ra) ->
-      let lifetime = Int.min ra.RA.router_lifetime _9000s in
+      let lifetime = Int.min (ra.RA.router_lifetime * _1s) _9000s in
       let preference = ra.RA.preference in
       let lmtu = ra.RA.lmtu in
       let expire_at = now + lifetime in

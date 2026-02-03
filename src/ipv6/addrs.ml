@@ -16,13 +16,35 @@ type t = Addrs.t
 
 let make capacity = Addrs.empty capacity
 
-type action =
-  [ `Send_NS of [ `Unspecified | `Specified ] * Ipaddr.V6.t * Ipaddr.V6.t ]
-
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
-let _1s = 0
+let _1s = 1_000_000_000
 
-let tick t ~now = function
+let tick t ~now ~iid event =
+  let pfxs = match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> [] in
+  (* RFC 4862 5.5.2, RFC 7217 *)
+  let fn t (pfx : Prefixes.Pfx.t) =
+    if (not pfx.autonomous) || Ipaddr.V6.Prefix.size pfx.prefix <> 64
+       || pfx.valid_lifetime = Some 0
+    then t
+    else
+      let network = Ipaddr.V6.to_octets (Ipaddr.V6.Prefix.address pfx.prefix) in
+      let buf = Bytes.create 16 in
+      Bytes.blit_string network 0 buf 0 8;
+      Bytes.blit_string iid 0 buf 8 8;
+      let addr = Ipaddr.V6.of_octets_exn (Bytes.unsafe_to_string buf) in
+      let prefix = Ipaddr.V6.Prefix.make 128 addr in
+      if Addrs.mem prefix t then t
+      else
+        let lifetime =
+          match pfx.preferred_lifetime with
+          | None -> None
+          | Some preferred -> Some { Addr.preferred; valid= pfx.valid_lifetime }
+        in
+        let state = Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 0 } in
+        Addrs.add prefix state t
+  in
+  let t = List.fold_left fn t pfxs in
+  match event with
   | `NA (_src, _dst, { Neighbors.NA.target; _ }) ->
       let fn prefix state t =
         if Ipaddr.V6.Prefix.mem target prefix then
@@ -38,12 +60,12 @@ let tick t ~now = function
         match state with
         | Addr.Tentative { lifetime; expire_at; dad_sent } when expire_at < now
           ->
-            if dad_sent + 1 >= 1 (* DupAddrDetectTransmits *) then
+            if dad_sent >= 1 (* DupAddrDetectTransmits *) then
               (* Tentative -> Preferred *)
               let expire_at =
                 match lifetime with
                 | None -> None
-                | Some { Addr.preferred; _ } -> Some (now + preferred)
+                | Some { Addr.preferred; _ } -> Some (now + preferred * _1s)
               in
               let valid_lifetime =
                 match lifetime with
@@ -73,7 +95,7 @@ let tick t ~now = function
             let expire_at =
               match valid_lifetime with
               | None -> None
-              | Some valid -> Some (now + valid)
+              | Some valid -> Some (now + valid * _1s)
             in
             let state = Addr.Deprecated { expire_at } in
             let t = Addrs.add prefix state t in
@@ -97,14 +119,21 @@ let is_my_addr t ipaddr =
   in
   match Addrs.iter_k fn t with exception Yes -> true | _ -> false
 
-exception Choose of Ipaddr.V6.Prefix.t
-
-let select t _dst =
-  let fn addr = function
-    | Addr.Tentative _ -> ()
-    | _ -> raise_notrace (Choose addr)
+let select t dst =
+  let dst_is_ll = Ipaddr.V6.Prefix.(mem dst link) in
+  let fn prefix state (best, best_score) =
+    match state with
+    | Addr.Tentative _ -> (best, best_score)
+    | _ ->
+        let addr = Ipaddr.V6.Prefix.address prefix in
+        (* NOTE(dinosaure): prefer Link-Local source if [dst] is Link-Local. *)
+        let score = if Ipaddr.V6.Prefix.(mem addr link) = dst_is_ll then 2 else 0 in
+        (* NOTE(dinosaure): Avoid deprecated addresses. *)
+        let score = match state with Addr.Preferred _ -> 1 + score | _ -> 0 + score in
+        if score > best_score then (Some prefix, score)
+        else (best, best_score)
   in
-  match Addrs.iter_k fn t with
-  | exception Choose addr ->
-      Ipaddr.V6.Prefix.address addr (* TODO(dinosaure): ??? *)
-  | () -> Ipaddr.V6.unspecified
+  let best, _ = Addrs.fold_k fn (None, -1) t in
+  match best with
+  | Some prefix -> Ipaddr.V6.Prefix.address prefix
+  | None -> Ipaddr.V6.unspecified
