@@ -30,6 +30,14 @@ module NA = struct
     ; target: Ipaddr.V6.t
     ; tlla: Macaddr.t option
   }
+
+  let pp ppf t =
+    Fmt.pf ppf
+      "{ @[<hov>router=@ %b;@ solicited=@ %b;@ override=@ %b;@ target=@ %a;@ \
+       tlla=@ %a;@] }"
+      t.router t.solicited t.override Ipaddr.V6.pp t.target
+      Fmt.(Dump.option Macaddr.pp)
+      t.tlla
 end
 
 let cs_of_len_and_protocol =
@@ -41,6 +49,11 @@ let cs_of_len_and_protocol =
 
 module NS = struct
   type t = { target: Ipaddr.V6.t; slla: Macaddr.t option }
+
+  let pp ppf t =
+    Fmt.pf ppf "{ @[<hov>target=@ %a;@ slla=@ %a;@] }" Ipaddr.V6.pp t.target
+      Fmt.(Dump.option Macaddr.pp)
+      t.slla
 
   let encode_into ~lladdr ~dst t =
     let payload_len = match t.slla with None -> 24 | Some _ -> 32 in
@@ -75,6 +88,7 @@ module NS = struct
       let chk = Utcp.Checksum.feed_cstruct chk cs0 in
       let chk = Utcp.Checksum.feed_cstruct chk cs1 in
       let chk = Utcp.Checksum.feed_cstruct chk cs2 in
+      let chk = Utcp.Checksum.finally chk in
       Bstr.set_uint16_be bstr 42 chk
     in
     { Packet.lladdr; dst; len; fn }

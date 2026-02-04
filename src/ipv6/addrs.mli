@@ -1,6 +1,6 @@
 type t
 
-val make : int -> t
+val make : now:int -> iid:string -> int -> t * Neighbors.Packet.t
 
 val tick :
      t

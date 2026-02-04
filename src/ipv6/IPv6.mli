@@ -1,9 +1,16 @@
 module SBstr = Slice_bstr
 
 type t
+type daemon
 type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> SBstr.t -> unit
 
-val create : ?handler:handler -> Ethernet.t -> (t, [> `MTU_too_small ]) result
+val create :
+     now:int
+  -> ?handler:handler
+  -> Ethernet.t
+  -> (t * daemon, [> `MTU_too_small ]) result
+
+val kill : daemon -> unit
 val set_handler : t -> handler -> unit
 
 val write_directly :

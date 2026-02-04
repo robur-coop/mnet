@@ -605,11 +605,13 @@ type stack = {
   ; arpv4_daemon: ARPv4.daemon
   ; icmpv4: ICMPv4.daemon
   ; udp: UDP.state
+  ; ipv6_daemon: IPv6.daemon
   ; tcp_daemon: TCP.daemon
 }
 
 let kill t =
   TCP.kill t.tcp_daemon;
+  IPv6.kill t.ipv6_daemon;
   ICMPv4.kill t.icmpv4;
   ARPv4.kill t.arpv4_daemon;
   Ethernet.kill t.ethernet_daemon
@@ -625,7 +627,8 @@ let stack ~name ?gateway cidr =
         ARPv4.create ~ipaddr:(Ipaddr.V4.Prefix.address cidr) eth
       in
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
-      let* ipv6 = IPv6.create eth in
+      let now = Mkernel.clock_monotonic () in
+      let* ipv6, ipv6_daemon = IPv6.create ~now eth in
       let icmpv4 = ICMPv4.handler ipv4 in
       let tcp_daemon, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
       let udp = UDP.create ipv4 ipv6 in
@@ -635,7 +638,14 @@ let stack ~name ?gateway cidr =
       let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;
       let stack =
-        { ethernet_daemon= daemon; arpv4_daemon; udp; icmpv4; tcp_daemon }
+        {
+          ethernet_daemon= daemon
+        ; arpv4_daemon
+        ; udp
+        ; icmpv4
+        ; ipv6_daemon
+        ; tcp_daemon
+        }
       in
       Ok (stack, tcp, udp)
     in

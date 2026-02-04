@@ -6,6 +6,16 @@ module Pfx = struct
     ; preferred_lifetime: int option
     ; prefix: Ipaddr.V6.Prefix.t
   }
+
+  let pp ppf t =
+    Fmt.pf ppf
+      "{ @[<hov>on_link=@ %b;@ autonomous=@ %b;@ valid_lifetime=@ %a;@ \
+       preferred_lifetime=@ %a;@ prefix=@ %a;@] }"
+      t.on_link t.autonomous
+      Fmt.(Dump.option int)
+      t.valid_lifetime
+      Fmt.(Dump.option int)
+      t.preferred_lifetime Ipaddr.V6.Prefix.pp t.prefix
 end
 
 module Prefix = struct

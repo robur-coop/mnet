@@ -1,3 +1,5 @@
+let src = Logs.Src.create "mnet.ipv6.addrs"
+
 module Addr = struct
   type lifetime = { preferred: int; valid: int option }
   (* NOTE(dinosaure): these values are **relatives**. *)
@@ -10,11 +12,11 @@ module Addr = struct
   let weight (_t : t) = 1
 end
 
+module Log = (val Logs.src_log src : Logs.LOG)
 module Addrs = Lru.F.Make (Ipaddr.V6.Prefix) (Addr)
 
 type t = Addrs.t
 
-let make capacity = Addrs.empty capacity
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 let _1s = 1_000_000_000
 
@@ -26,7 +28,7 @@ let tick t ~now ~iid event =
   let fn t (pfx : Prefixes.Pfx.t) =
     if
       (not pfx.autonomous)
-      || Ipaddr.V6.Prefix.size pfx.prefix <> 64
+      || Ipaddr.V6.Prefix.bits pfx.prefix <> 64
       || pfx.valid_lifetime = Some 0
     then t
     else
@@ -65,7 +67,7 @@ let tick t ~now ~iid event =
         match state with
         | Addr.Tentative { lifetime; expire_at; dad_sent } when expire_at < now
           ->
-            if dad_sent >= 1 (* DupAddrDetectTransmits *) then
+            if dad_sent >= 1 (* DupAddrDetectTransmits *) then begin
               (* Tentative -> Preferred *)
               let expire_at =
                 match lifetime with
@@ -77,8 +79,10 @@ let tick t ~now ~iid event =
                 | None -> None
                 | Some { Addr.valid; _ } -> valid
               in
+              Log.debug (fun m -> m "%a preferred" Ipaddr.V6.Prefix.pp prefix);
               let state = Addr.Preferred { expire_at; valid_lifetime } in
               (Addrs.add prefix state t, pkts)
+            end
             else begin
               let addr = Ipaddr.V6.Prefix.address prefix in
               let dst =
@@ -111,6 +115,24 @@ let tick t ~now ~iid event =
       in
       let capacity = Addrs.capacity t in
       Addrs.fold_k fn (Addrs.empty capacity, []) t
+
+let make ~now ~iid capacity =
+  let addrs = Addrs.empty capacity in
+  let addr =
+    let buf = Bytes.make 16 '\x00' in
+    Bytes.set buf 0 '\xfe';
+    Bytes.set buf 1 '\x80';
+    Bytes.blit_string iid 0 buf 8 8;
+    Ipaddr.V6.of_octets_exn (Bytes.to_string buf)
+  in
+  let expire_at = now + _1s in
+  let entry = Addr.Tentative { lifetime= None; expire_at; dad_sent= 0 } in
+  let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
+  let lladdr = Ipaddr.V6.multicast_to_mac dst in
+  let ns = { Neighbors.NS.target= addr; slla= None } in
+  let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
+  let addrs = Addrs.add (Ipaddr.V6.Prefix.make 64 addr) entry addrs in
+  (addrs, pkt)
 
 exception Yes
 

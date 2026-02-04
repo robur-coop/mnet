@@ -15,11 +15,14 @@ module NA : sig
     ; target: Ipaddr.V6.t
     ; tlla: Macaddr.t option
   }
+
+  val pp : t Fmt.t
 end
 
 module NS : sig
   type t = { target: Ipaddr.V6.t; slla: Macaddr.t option }
 
+  val pp : t Fmt.t
   val encode_into : lladdr:Macaddr.t -> dst:Ipaddr.V6.t -> t -> Packet.t
 end
 
@@ -53,6 +56,16 @@ val lladdr : t -> Ipaddr.V6.t -> Macaddr.t option
 (** [lladdr t addr] tries to find the Link-Layer address of the given IPv6
     address [addr] from [t]. *)
 
-val query : t -> mac:Macaddr.t -> now:int -> Ipaddr.V6.t -> t * Macaddr.t option * action option
+val query :
+     t
+  -> mac:Macaddr.t
+  -> now:int
+  -> Ipaddr.V6.t
+  -> t * Macaddr.t option * action option
+
 val is_reachable : t -> Ipaddr.V6.t -> bool
 val is_router : t -> Ipaddr.V6.t -> bool option
+
+(**/**)
+
+val cs_of_len_and_protocol : len:int -> protocol:int -> Cstruct.t

@@ -6,6 +6,8 @@ module Pfx : sig
     ; preferred_lifetime: int option
     ; prefix: Ipaddr.V6.Prefix.t
   }
+
+  val pp : t Fmt.t
 end
 
 type t

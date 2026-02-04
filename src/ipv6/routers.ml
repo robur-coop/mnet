@@ -10,6 +10,23 @@ module RA = struct
     ; lmtu: int option
     ; prefix: Prefixes.Pfx.t list
   }
+
+  let pp ppf t =
+    Fmt.pf ppf
+      "{ @[<hov>current_hop_limit=@ %d;@ preference=@ %d;@ router_lifetime=@ \
+       %d;@ reachable_time=@ %a;@ retrans_timer=@ %a;@ slla=@ %a;@ lmtu=@ %a;@ \
+       prefix=@ @[<hov>%a@];@] }"
+      t.current_hop_limit t.preference t.router_lifetime
+      Fmt.(Dump.option int)
+      t.reachable_time
+      Fmt.(Dump.option int)
+      t.retrans_timer
+      Fmt.(Dump.option Macaddr.pp)
+      t.slla
+      Fmt.(Dump.option int)
+      t.lmtu
+      Fmt.(Dump.list Prefixes.Pfx.pp)
+      t.prefix
 end
 
 (* NOTE(dinosaure): RFC 4191 defines a priority for routers. *)

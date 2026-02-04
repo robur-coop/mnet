@@ -1,4 +1,4 @@
 (library
  (name IPv6)
  (public_name mnet.ipv6)
- (libraries mnet.ethernet mirage-crypto-rng utcp slice.bstr lru macaddr ipaddr))
+ (libraries hxd.core hxd.string mnet.ethernet mirage-crypto-rng utcp slice.bstr lru macaddr ipaddr))

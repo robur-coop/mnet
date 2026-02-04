@@ -7,7 +7,7 @@ end
 
 type t
 
-val make : lmtu:int -> mac:Macaddr.t -> t
+val make : now:int -> lmtu:int -> mac:Macaddr.t -> t * Packet.t list
 val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =
@@ -19,8 +19,7 @@ type event =
   | `Ping of Ipaddr.V6.t * Ipaddr.V6.t * int * int * SBstr.t
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
-  | `Prefix of Prefixes.Pfx.t
-  | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t (* src, redirect *)
+  | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t
   | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Tick ]

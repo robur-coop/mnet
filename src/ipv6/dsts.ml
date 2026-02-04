@@ -1,14 +1,24 @@
 module Redirect = struct
   type t = { target: Ipaddr.V6.t; destination: Ipaddr.V6.t }
+
+  let pp ppf t =
+    Fmt.pf ppf "{ @[<hov>target=@ %a;@ destination=@ %a;@] }" Ipaddr.V6.pp
+      t.target Ipaddr.V6.pp t.destination
 end
 
 module Unreachable = struct
   type t = { code: int; destination: Ipaddr.V6.t }
+
+  let pp ppf { code; destination } =
+    Fmt.pf ppf "Destination %a unreachable (%d)" Ipaddr.V6.pp destination code
 end
 
-(* RFC 8201: Path MTU Discovery for IPv6 *)
 module PTB = struct
   type t = { mtu: int; destination: Ipaddr.V6.t }
+
+  let pp ppf t =
+    Fmt.pf ppf "Packet too big (mtu:%d, addr:%a)" t.mtu Ipaddr.V6.pp
+      t.destination
 end
 
 type error = [ `Packet_too_big | `Destination_unreachable of int ]

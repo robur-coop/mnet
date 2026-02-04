@@ -28,15 +28,36 @@ type t = {
   ; cnt: int Atomic.t
 }
 
-let ignore ~protocol:_ _src _dst _payload = ()
+type daemon = unit Miou.t
 
-let create ?(handler = ignore) eth =
+let write eth { NDPv6.Packet.dst; len; fn } =
+  let fn bstr = fn bstr; len in
+  let protocol = Ethernet.IPv6 in
+  Ethernet.write_directly_into eth ~len ~dst ~protocol fn
+
+let ignore ~protocol:_ _src _dst _payload = ()
+let _1s = 1_000_000_000
+
+let rec daemon t =
+  let now = Mkernel.clock_monotonic () in
+  let ndpv6, outs = NDPv6.tick t.ndpv6 ~now `Tick in
+  t.ndpv6 <- ndpv6;
+  List.iter (write t.eth) outs;
+  Mkernel.sleep _1s;
+  daemon t
+
+let kill = Miou.cancel
+
+let create ~now ?(handler = ignore) eth =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
-  let ndpv6 = NDPv6.make ~lmtu ~mac in
+  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac in
+  List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
-  Ok { eth; ndpv6; lmtu; tags; handler; cnt }
+  let t = { eth; ndpv6; lmtu; tags; handler; cnt } in
+  let daemon = Miou.async @@ fun () -> daemon t in
+  Ok (t, daemon)
 
 let set_handler t handler =
   Atomic.incr t.cnt;
@@ -160,11 +181,6 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
 
 let at_most_one = function [] | [ _ ] -> true | _ -> false
 
-let write eth { NDPv6.Packet.dst; len; fn } =
-  let fn bstr = fn bstr; len in
-  let protocol = Ethernet.IPv6 in
-  Ethernet.write_directly_into eth ~len ~dst ~protocol fn
-
 let write_directly t ~now ?src dst ~protocol ~len user's_fn =
   let src = NDPv6.src t.ndpv6 ?src dst in
   let* ndpv6, next_hop, mtu = NDPv6.next_hop t.ndpv6 dst in
@@ -197,6 +213,8 @@ let input t pkt =
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (`Default (protocol, src, dst, payload)) ->
       t.handler ~protocol src dst payload
+  | Ok (`TCP (src, dst, payload)) -> t.handler ~protocol:6 src dst payload
+  | Ok (`UDP (src, dst, payload)) -> t.handler ~protocol:17 src dst payload
   | Ok event ->
       let now = Mkernel.clock_monotonic () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in

@@ -1,3 +1,6 @@
+let src = Logs.Src.create "mnet.ndpv6"
+
+module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
 
 let ( let* ) = Result.bind
@@ -163,9 +166,8 @@ module Parser = struct
     let hdr = Bytes.create 8 in
     Bytes.set_int32_be hdr 0 (Int32.of_int len);
     Bytes.set_int32_be hdr 4 58l;
-    let chk =
-      Utcp.Checksum.feed_string ~off:0 ~len:8 chk (Bytes.unsafe_to_string hdr)
-    in
+    let hdr = Bytes.unsafe_to_string hdr in
+    let chk = Utcp.Checksum.feed_string ~off:0 ~len:8 chk hdr in
     let { Slice.buf; off; len } = payload in
     let cs = Cstruct.of_bigarray buf ~off ~len in
     let chk = Utcp.Checksum.feed_cstruct chk cs in
@@ -228,8 +230,8 @@ module Parser = struct
     | 4 -> Error `Parameter_problem
     | n -> Error (`Unknown_ICMP_packet n)
 
-  let rec with_extension ~src ~dst sbstr ?(first = false) hdr off =
-    match hdr with
+  let rec with_extension ~src ~dst sbstr ?(first = false) nhdr off =
+    match nhdr with
     | 0 when first -> with_options ~src ~dst sbstr off
     | 0 -> Error `Drop
     | 60 -> with_options ~src ~dst sbstr off
@@ -243,7 +245,7 @@ module Parser = struct
   and with_options ~src ~dst sbstr off =
     let payload = SBstr.shift sbstr off in
     let nhdr = SBstr.get_uint8 payload 0 in
-    let opt_len = SBstr.get_uint8 payload 1 in
+    let opt_len = (SBstr.get_uint8 payload 1 * 8) + 8 in
     let rec go src_off =
       if src_off < off + opt_len then
         let opt = SBstr.shift sbstr src_off in
@@ -291,6 +293,50 @@ module Packet = struct
   type user's_packet = { len: int; fn: Bstr.t -> unit }
 end
 
+module RS = struct
+  let encode_into ~mac select =
+    let dst = Ipaddr.V6.link_routers in
+    let src = select dst in
+    let include_slla = Ipaddr.V6.compare src Ipaddr.V6.unspecified <> 0 in
+    let slla_len = if include_slla then 8 else 0 in
+    let payload_len = 8 + slla_len in
+    let len = 40 + payload_len in
+    let fn bstr =
+      Bstr.set_int32_be bstr 0 0x60000000l;
+      Bstr.set_uint16_be bstr 4 payload_len;
+      Bstr.set_uint8 bstr 6 58 (* ICMPv6 *);
+      Bstr.set_uint8 bstr 7 255 (* HOP limit *);
+      let src = Ipaddr.V6.to_octets src in
+      Bstr.blit_from_string src ~src_off:0 bstr ~dst_off:8 ~len:16;
+      let dst = Ipaddr.V6.to_octets dst in
+      Bstr.blit_from_string dst ~src_off:0 bstr ~dst_off:24 ~len:16;
+      Bstr.set_uint8 bstr 40 133;
+      Bstr.set_uint8 bstr 41 0;
+      Bstr.set_uint16_be bstr 42 0;
+      Bstr.set_int32_be bstr 44 0l;
+      if include_slla then begin
+        let bstr = Bstr.shift bstr 48 in
+        Bstr.set_uint8 bstr 0 1;
+        Bstr.set_uint8 bstr 1 1;
+        let slla = Macaddr.to_octets mac in
+        Bstr.blit_from_string slla ~src_off:0 bstr ~dst_off:2 ~len:6
+      end;
+      let cs0 = Cstruct.of_bigarray bstr ~off:8 ~len:32 in
+      let cs1 =
+        Neighbors.cs_of_len_and_protocol ~len:payload_len ~protocol:58
+      in
+      let cs2 = Cstruct.of_bigarray bstr ~off:40 ~len:payload_len in
+      let chk = 0 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs0 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs1 in
+      let chk = Utcp.Checksum.feed_cstruct chk cs2 in
+      let chk = Utcp.Checksum.finally chk in
+      Bstr.set_uint16_be bstr 42 chk
+    in
+    let dst = Ipaddr.V6.multicast_to_mac dst in
+    { Packet.dst; len; fn }
+end
+
 type t = {
     neighbors: Neighbors.t
   ; routers: Routers.t
@@ -302,22 +348,6 @@ type t = {
   ; iid: string
   ; mac: Macaddr.t
 }
-
-let make ~lmtu ~mac =
-  let neighbors = Neighbors.make 0x100 in
-  let routers = Routers.make 16 in
-  let prefixes = Prefixes.make 16 in
-  let addrs = Addrs.make 16 in
-  let dsts = Dsts.make ~lmtu 0x100 in
-  let queues = Ipaddr.V6.Map.empty in
-  (* RFC 7217 3.1.1: bit 0 = 0 (unicast), bit 1 = 1 (locally administered) *)
-  let iid =
-    let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
-    let b = Char.code (Bytes.get buf 0) in
-    Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xFE));
-    Bytes.unsafe_to_string buf
-  in
-  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
 
 let src t ?src dst =
   match src with Some src -> src | None -> Addrs.select t.addrs dst
@@ -336,11 +366,48 @@ type event =
   | `Ping of Ipaddr.V6.t * Ipaddr.V6.t * int * int * SBstr.t
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
-  | `Prefix of Prefixes.Pfx.t
   | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t
   | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Tick ]
+
+let pp_event ppf = function
+  | `Default (protocol, src, dst, payload) ->
+      let { Slice.off; len; buf } = payload in
+      let bstr = Bstr.sub ~off ~len buf in
+      let str = Bstr.to_string bstr in
+      Fmt.pf ppf "[%d] %a -> %a: @[<hov>%a@]" protocol Ipaddr.V6.pp src
+        Ipaddr.V6.pp dst
+        (Hxd_string.pp Hxd.default)
+        str
+  | `Destination_unreachable v -> Dsts.Unreachable.pp ppf v
+  | `NA (src, dst, na) ->
+      Fmt.pf ppf "%a -> %a: @[<hov>%a@]" Ipaddr.V6.pp src Ipaddr.V6.pp dst
+        Neighbors.NA.pp na
+  | `NS (src, dst, ns) ->
+      Fmt.pf ppf "%a -> %a: @[<hov>%a@]" Ipaddr.V6.pp src Ipaddr.V6.pp dst
+        Neighbors.NS.pp ns
+  | `Packet_too_big ptb -> Dsts.PTB.pp ppf ptb
+  | `Ping (src, dst, uid, seq, payload) ->
+      let { Slice.off; len; buf } = payload in
+      let bstr = Bstr.sub ~off ~len buf in
+      let str = Bstr.to_string bstr in
+      Fmt.pf ppf "%a -> %a [ping:%d:%d]: @[<hov>%a@]" Ipaddr.V6.pp src
+        Ipaddr.V6.pp dst uid seq
+        (Hxd_string.pp Hxd.default)
+        str
+  | `Pong payload ->
+      let { Slice.off; len; buf } = payload in
+      let bstr = Bstr.sub ~off ~len buf in
+      let str = Bstr.to_string bstr in
+      Fmt.pf ppf "pong:@[<hov>%a@]" (Hxd_string.pp Hxd.default) str
+  | `RA (src, dst, ra) ->
+      Fmt.pf ppf "%a -> %a: @[<hov>%a@]" Ipaddr.V6.pp src Ipaddr.V6.pp dst
+        Routers.RA.pp ra
+  | `Redirect (src, r) ->
+      Fmt.pf ppf "%a -> %a" Ipaddr.V6.pp src Dsts.Redirect.pp r
+  | `Tick -> Fmt.string ppf "tick"
+  | `TCP _ | `UDP _ -> Fmt.string ppf "Layer 3 protocol"
 
 let next_hop t addr =
   if Ipaddr.V6.is_multicast addr || Prefixes.is_local t.prefixes addr then
@@ -407,6 +474,7 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
+  Log.debug (fun m -> m "%a" pp_event event);
   let pfxs =
     match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> []
   in
@@ -440,6 +508,26 @@ let tick t ~now (event : event) =
     List.fold_left fn (t, []) (List.rev_append acts0 acts1)
   in
   (t, pkts)
+
+let make ~now ~lmtu ~mac =
+  let iid =
+    let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
+    let b = Char.code (Bytes.get buf 0) in
+    Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xFE));
+    Bytes.unsafe_to_string buf
+  in
+  let neighbors = Neighbors.make 0x100 in
+  let routers = Routers.make 16 in
+  let prefixes = Prefixes.make 16 in
+  let addrs, act = Addrs.make ~now ~iid 16 in
+  let dsts = Dsts.make ~lmtu 0x100 in
+  let queues = Ipaddr.V6.Map.empty in
+  let t =
+    { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
+  in
+  let t, pkt' = process t (Neighbors.Packet act) in
+  let pkt = RS.encode_into ~mac (Addrs.select t.addrs) in
+  (t, pkt :: pkt')
 
 type error =
   [ `Bad_version

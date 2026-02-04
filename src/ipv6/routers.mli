@@ -9,6 +9,8 @@ module RA : sig
     ; lmtu: int option
     ; prefix: Prefixes.Pfx.t list
   }
+
+  val pp : t Fmt.t
 end
 
 type t
