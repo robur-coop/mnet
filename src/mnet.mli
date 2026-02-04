@@ -7,7 +7,7 @@ module TCP : sig
   type flow
   type daemon
 
-  val handler : state -> IPv4.packet * IPv4.payload -> unit
+  val handler : state -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
   val create : name:string -> IPv4.t -> IPv6.t -> daemon * state
   val kill : daemon -> unit
 

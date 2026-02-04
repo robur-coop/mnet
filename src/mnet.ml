@@ -353,27 +353,10 @@ module TCP = struct
   let _eof = Error `Eof
   let _ok = Ok ()
 
-  let handler state (pkt, payload) =
-    let src = Ipaddr.V4 pkt.IPv4.src in
-    let dst = Ipaddr.V4 pkt.IPv4.dst in
+  let handler state src dst payload =
     Log.debug (fun m ->
         m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
-    (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
-       does a copy (to strings). It's safe to transmit our [slice] to
-       [Utcp.handle_buf] and be interrupted by the scheduler. We also
-       can think about a [Utcp.handle_buf_string] which can avoid our
-       [Cstruct.of_string] (but IPv4.String appears only when we have
-       fragmented packets and it's not common).
-
-       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
-       and it permits to perform "fast" checksum validation. *)
-    let cs =
-      match payload with
-      | IPv4.Slice slice ->
-          let { Slice.buf; off; len } = slice in
-          Cstruct.of_bigarray ~off ~len buf
-      | IPv4.String str -> Cstruct.of_string str
-    in
+    let cs = Cstruct.of_bigarray payload in
     Log.debug (fun m ->
         m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
     let tcp, ev, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
@@ -584,12 +567,38 @@ let ethernet_handler arpv4 ipv4 ipv6 =
 
 let ipv4_handler icmpv4 udp tcp =
   ();
-  fun ((hdr, _) as pkt) ->
+  fun ((hdr, payload) as pkt) ->
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
-    | 6 -> TCP.handler tcp pkt
+    | 6 ->
+        (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
+       does a copy (to strings). It's safe to transmit our [slice] to
+       [Utcp.handle_buf] and be interrupted by the scheduler. We also
+       can think about a [Utcp.handle_buf_string] which can avoid our
+       [Cstruct.of_string] (but IPv4.String appears only when we have
+       fragmented packets and it's not common).
+
+       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
+       and it permits to perform "fast" checksum validation. *)
+        let payload =
+          match payload with
+          | IPv4.Slice slice ->
+              let { Slice.buf; off; len } = slice in
+              Bstr.sub ~off ~len buf
+          | IPv4.String str -> Bstr.of_string str
+        in
+        let src = Ipaddr.V4 hdr.IPv4.src and dst = Ipaddr.V4 hdr.IPv4.dst in
+        TCP.handler tcp src dst payload
     | 17 -> UDP.handler udp pkt
     | _ -> ()
+
+let ipv6_handler tcp =
+  ();
+  fun ~protocol src dst payload ->
+    let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
+    let { Slice.off; len; buf } = payload in
+    let bstr = Bstr.sub ~off ~len buf in
+    match protocol with 6 -> TCP.handler tcp src dst bstr | _ -> ()
 
 type stack = {
     ethernet_daemon: Ethernet.daemon
@@ -621,6 +630,8 @@ let stack ~name ?gateway cidr =
       let tcp_daemon, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
       let udp = UDP.create ipv4 ipv6 in
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
+      IPv6.set_handler ipv6 (ipv6_handler tcp);
+      (* TODO(dinosaure): UDPv6 *)
       let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;
       let stack =

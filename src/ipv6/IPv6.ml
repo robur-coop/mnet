@@ -17,21 +17,32 @@ end
 
 let ( let* ) = Result.bind
 
+type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> SBstr.t -> unit
+
 type t = {
     eth: Ethernet.t
   ; mutable ndpv6: NDPv6.t
   ; lmtu: int
   ; tags: Logs.Tag.set
+  ; mutable handler: handler
   ; cnt: int Atomic.t
 }
 
-let create eth =
+let ignore ~protocol:_ _src _dst _payload = ()
+
+let create ?(handler = ignore) eth =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
   let ndpv6 = NDPv6.make ~lmtu ~mac in
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
-  Ok { eth; ndpv6; lmtu; tags; cnt }
+  Ok { eth; ndpv6; lmtu; tags; handler; cnt }
+
+let set_handler t handler =
+  Atomic.incr t.cnt;
+  t.handler <- handler;
+  if Atomic.get t.cnt > 1 then
+    Log.warn (fun m -> m ~tags:t.tags "IPv6 handler modified more than once")
 
 (*
 let segment_and_coalesce ~mtu seq =
@@ -184,6 +195,8 @@ let input t pkt =
       Log.err (fun m -> m "Invalid IPv6 packet: %a" NDPv6.pp_error err);
       let str = SBstr.to_string pkt.Ethernet.payload in
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+  | Ok (`Default (protocol, src, dst, payload)) ->
+      t.handler ~protocol src dst payload
   | Ok event ->
       let now = Mkernel.clock_monotonic () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in
