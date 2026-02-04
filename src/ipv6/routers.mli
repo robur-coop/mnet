@@ -19,6 +19,7 @@ type t
     {!type:RA.t}) used to delete entries that are no longer advertised. *)
 
 val make : int -> t
+val mem : t -> Ipaddr.V6.t -> bool
 
 val tick :
      t

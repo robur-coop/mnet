@@ -43,6 +43,7 @@ type action =
 
 val tick :
      t
+  -> mac:Macaddr.t
   -> now:int
   -> [> `NA of Ipaddr.V6.t * Ipaddr.V6.t * NA.t
      | `NS of Ipaddr.V6.t * Ipaddr.V6.t * NS.t ]
@@ -52,6 +53,6 @@ val lladdr : t -> Ipaddr.V6.t -> Macaddr.t option
 (** [lladdr t addr] tries to find the Link-Layer address of the given IPv6
     address [addr] from [t]. *)
 
-val query : t -> now:int -> Ipaddr.V6.t -> t * Macaddr.t option * action option
+val query : t -> mac:Macaddr.t -> now:int -> Ipaddr.V6.t -> t * Macaddr.t option * action option
 val is_reachable : t -> Ipaddr.V6.t -> bool
 val is_router : t -> Ipaddr.V6.t -> bool option

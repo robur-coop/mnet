@@ -25,6 +25,7 @@ module Routers = Lru.F.Make (Ipaddr.V6) (Router)
 type t = Routers.t
 
 let make capacity = Routers.empty capacity
+let mem t addr = Routers.mem addr t
 let _1s = 1_000_000_000
 let _9000s = 9000 * _1s
 
@@ -34,6 +35,15 @@ let rec trim acc routers =
     | Some ((addr, _), routers) -> trim (addr :: acc) routers
     | None -> (acc, routers)
   else (acc, routers)
+
+(* Remove expired routers and return the list of removed addresses *)
+let expire_routers ~now t =
+  let capacity = Routers.capacity t in
+  let fn addr { Router.expire_at; _ } (expired, t') =
+    if expire_at <= now then (addr :: expired, t')
+    else (expired, Routers.add addr (Routers.find addr t |> Option.get) t')
+  in
+  Routers.fold_k fn ([], Routers.empty capacity) t
 
 let tick t ~now = function
   | `RA (src, _dst, { RA.router_lifetime= 0; _ }) ->
@@ -49,8 +59,15 @@ let tick t ~now = function
           |> Routers.add src { expire_at; preference; lmtu }
         else Routers.add src { expire_at; preference; lmtu } t
       in
-      trim [] t'
-  | _ -> trim [] t
+      (* Also remove expired routers *)
+      let expired, t' = expire_routers ~now t' in
+      let deleted, t' = trim [] t' in
+      (List.rev_append expired deleted, t')
+  | _ ->
+      (* Remove expired routers on every tick *)
+      let expired, t = expire_routers ~now t in
+      let deleted, t = trim [] t in
+      (List.rev_append expired deleted, t)
 
 let select t ~is_reachable ipaddr =
   let fn key { Router.preference; lmtu; _ } acc =

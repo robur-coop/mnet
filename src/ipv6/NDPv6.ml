@@ -68,8 +68,39 @@ module Parser = struct
     in
     Ok { Neighbors.NA.router; solicited; override; target; tlla }
 
+  let decode_redirect sbstr =
+    let* () = guard `Drop @@ fun () -> SBstr.get_uint8 sbstr 1 = 0 in
+    (* Code = 0 *)
+    let target = SBstr.sub_string sbstr ~off:8 ~len:16 in
+    let* target = Ipaddr.V6.of_octets target in
+    let destination = SBstr.sub_string sbstr ~off:24 ~len:16 in
+    let* destination = Ipaddr.V6.of_octets destination in
+    (* RFC 4861 Section 8.1: Destination Address must not be multicast *)
+    let* () =
+      guard `Drop @@ fun () -> not (Ipaddr.V6.is_multicast destination)
+    in
+    Ok { Dsts.Redirect.target; destination }
+
+  let decode_destination_unreachable sbstr =
+    let code = SBstr.get_uint8 sbstr 1 in
+    (* Extract original destination from the included IPv6 header *)
+    let* () = guard `Drop @@ fun () -> SBstr.length sbstr >= 48 in
+    let destination = SBstr.sub_string sbstr ~off:32 ~len:16 in
+    let* destination = Ipaddr.V6.of_octets destination in
+    Ok { Dsts.Unreachable.code; destination }
+
+  let decode_packet_too_big sbstr =
+    let mtu = Int32.to_int (SBstr.get_int32_be sbstr 4) in
+    (* RFC 8201: MTU must be at least 1280 *)
+    let* () = guard `Drop @@ fun () -> mtu >= 1280 in
+    (* Extract original destination from the included IPv6 header *)
+    let* () = guard `Drop @@ fun () -> SBstr.length sbstr >= 48 in
+    let destination = SBstr.sub_string sbstr ~off:32 ~len:16 in
+    let* destination = Ipaddr.V6.of_octets destination in
+    Ok { Dsts.PTB.mtu; destination }
+
   let decode_ns sbstr =
-    let target = SBstr.sub_string sbstr ~off:6 ~len:16 in
+    let target = SBstr.sub_string sbstr ~off:8 ~len:16 in
     let* target = Ipaddr.V6.of_octets target in
     let* slla =
       let opts = SBstr.shift sbstr 24 in
@@ -81,6 +112,14 @@ module Parser = struct
 
   let decode_ra sbstr =
     let current_hop_limit = SBstr.get_uint8 sbstr 4 in
+    (* RFC 4191 Section 2.2: Router Preference is bits 3-4 of the flags byte.
+       00 = Medium (default), 01 = High, 10 = Low, 11 = Reserved (treat as 0) *)
+    let flags = SBstr.get_uint8 sbstr 5 in
+    let preference =
+      match (flags lsr 3) land 0x3 with
+      | 0x3 -> 0 (* Reserved, treat as Medium *)
+      | prf -> prf
+    in
     let router_lifetime = SBstr.get_uint16_be sbstr 6 in
     let reachable_time = SBstr.get_int32_be sbstr 8 in
     let reachable_time =
@@ -92,24 +131,26 @@ module Parser = struct
       if retrans_timer = 0l then None
       else Some (Int32.to_int retrans_timer / 1000)
     in
-    let* slla, prefix =
+    let* slla, lmtu, prefix =
       let opts = SBstr.shift sbstr 16 in
       let* opts = options opts in
       let fn = function `SLLA v -> Some v | _ -> None in
       let slla = List.find_map fn opts in
+      let fn = function `MTU v -> Some v | _ -> None in
+      let lmtu = List.find_map fn opts in
       let fn = function `PREFIX v -> Some v | _ -> None in
       let prefix = List.filter_map fn opts in
-      Ok (slla, prefix)
+      Ok (slla, lmtu, prefix)
     in
     Ok
       {
         Routers.RA.current_hop_limit
-      ; preference= 0 (* TODO *)
+      ; preference
       ; router_lifetime
       ; reachable_time
       ; retrans_timer
       ; slla
-      ; lmtu= None (* TODO *)
+      ; lmtu
       ; prefix
       }
 
@@ -133,7 +174,7 @@ module Parser = struct
   let decode_icmp ~src ~dst sbstr off =
     let payload = SBstr.shift sbstr off in
     let chk = checksum ~src ~dst payload in
-    let* () = guard `Invalid_ICMP_checksum @@ fun () -> chk == 0 in
+    let* () = guard `Invalid_ICMP_checksum @@ fun () -> chk = 0 in
     match SBstr.get_uint8 payload 0 with
     | 128 ->
         let uid = SBstr.get_uint16_be payload 4 in
@@ -146,6 +187,9 @@ module Parser = struct
            255. It must be dropped. It is the same of NS, NA and Redirect. *)
         let hlim = SBstr.get_uint8 sbstr 7 in
         if hlim <> 255 then Error `Drop
+          (* RFC 4861 6.1.2: Source Address MUST be the link-local address
+             assigned to the interface from which this message is sent. *)
+        else if not Ipaddr.V6.Prefix.(mem src link) then Error `Drop
         else
           let* ra = decode_ra payload in
           Ok (`RA (src, dst, ra))
@@ -169,13 +213,17 @@ module Parser = struct
     | 137 ->
         let hlim = SBstr.get_uint8 sbstr 7 in
         if hlim <> 255 then Error `Drop
+          (* RFC 4861 Section 8.1: Source must be link-local address of a router *)
+        else if not Ipaddr.V6.Prefix.(mem src link) then Error `Drop
         else
-          (* TODO(dinosaure): let _redirect = redirect payload in *)
-          Error `Drop
-    | 1 -> Error `Destination_unreachable
+          let* redirect = decode_redirect payload in
+          Ok (`Redirect (src, redirect))
+    | 1 ->
+        let* unreachable = decode_destination_unreachable payload in
+        Ok (`Destination_unreachable unreachable)
     | 2 ->
-        let mtu = Int32.to_int (SBstr.get_int32_be payload 4) in
-        if mtu < 1280 then Error `Drop else Ok (`Packet_too_big (src, dst, mtu))
+        let* ptb = decode_packet_too_big payload in
+        Ok (`Packet_too_big ptb)
     | 3 -> Error `Time_exceeded
     | 4 -> Error `Parameter_problem
     | n -> Error (`Unknown_ICMP_packet n)
@@ -252,9 +300,10 @@ type t = {
   ; queues: Packet.user's_packet list Ipaddr.V6.Map.t
   ; lmtu: int
   ; iid: string
+  ; mac: Macaddr.t
 }
 
-let make ~lmtu =
+let make ~lmtu ~mac =
   let neighbors = Neighbors.make 0x100 in
   let routers = Routers.make 16 in
   let prefixes = Prefixes.make 16 in
@@ -265,10 +314,10 @@ let make ~lmtu =
   let iid =
     let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
     let b = Char.code (Bytes.get buf 0) in
-    Bytes.set buf 0 (Char.chr ((b lor 0x02) land 0xFE));
+    Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xFE));
     Bytes.unsafe_to_string buf
   in
-  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid }
+  { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
 
 let src t ?src dst =
   match src with Some src -> src | None -> Addrs.select t.addrs dst
@@ -280,14 +329,15 @@ let push addr pkts queues =
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
+  | `Destination_unreachable of Dsts.Unreachable.t
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
-  | `Packet_too_big of Ipaddr.V6.t * Ipaddr.V6.t * int
+  | `Packet_too_big of Dsts.PTB.t
   | `Ping of Ipaddr.V6.t * Ipaddr.V6.t * int * int * SBstr.t
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
   | `Prefix of Prefixes.Pfx.t
-  | `Redirect of Dsts.Redirect.t
+  | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t
   | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Tick ]
@@ -341,7 +391,9 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
     let pkts = List.map fn user's_pkts in
     (t, pkts)
   else
-    let neighbors, lladdr, act = Neighbors.query t.neighbors ~now next_hop in
+    let neighbors, lladdr, act =
+      Neighbors.query t.neighbors ~mac:t.mac ~now next_hop
+    in
     let t = { t with neighbors } in
     let t, pkts = Option.fold ~none:(t, []) ~some:(process t) act in
     match lladdr with
@@ -355,8 +407,11 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
-  let pfxs = match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> [] in
-  let prefixes = Prefixes.tick t.prefixes ~now pfxs in (* NOTE(dinosaure): [Prefixes] only consumes prefixes's RA. *)
+  let pfxs =
+    match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> []
+  in
+  let prefixes = Prefixes.tick t.prefixes ~now pfxs in
+  (* NOTE(dinosaure): [Prefixes] only consumes prefixes's RA. *)
   let routers_to_delete, routers = Routers.tick t.routers ~now event in
   let dsts = Dsts.clean_old_routers routers_to_delete t.dsts in
   let addrs, pkts = Addrs.tick t.addrs ~now ~iid:t.iid event in
@@ -366,7 +421,15 @@ let tick t ~now (event : event) =
      [Neighbors.{Release_with,Cancel}] can change the state [t] (and particulary
      [t.queues]). We can therefore defer the [acts0] process and merge it with
      [acts1] without any implications for our state [t]. *)
-  let acts1, neighbors = Neighbors.tick t.neighbors ~now event in
+  let acts1, neighbors = Neighbors.tick t.neighbors ~mac:t.mac ~now event in
+  (* RFC 4861 Section 8.1: Redirect must come from a router we know about.
+     We validate the source before passing to Dsts.tick. *)
+  let event =
+    match event with
+    | `Redirect (src, _) when not (Routers.mem routers src) ->
+        `Tick (* Ignore redirect from unknown router *)
+    | _ -> event
+  in
   let dsts = Dsts.tick dsts ~now event in
   let t = { t with neighbors; routers; prefixes; addrs; dsts } in
   let t, pkts =
@@ -380,7 +443,6 @@ let tick t ~now (event : event) =
 
 type error =
   [ `Bad_version
-  | `Destination_unreachable
   | `Drop
   | `Drop_RS
   | `ICMP_error of int * int * int
@@ -393,7 +455,6 @@ type error =
 
 let pp_error ppf = function
   | `Bad_version -> Fmt.string ppf "Bad version"
-  | `Destination_unreachable -> Fmt.string ppf "Destination unreachable"
   | `Drop -> Fmt.string ppf "Drop"
   | `Drop_RS -> Fmt.string ppf "Drop RS"
   | `ICMP_error _ -> Fmt.pf ppf "ICMP error"

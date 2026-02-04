@@ -7,19 +7,20 @@ end
 
 type t
 
-val make : lmtu:int -> t
+val make : lmtu:int -> mac:Macaddr.t -> t
 val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =
   [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
+  | `Destination_unreachable of Dsts.Unreachable.t
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
-  | `Packet_too_big of Ipaddr.V6.t * Ipaddr.V6.t * int
+  | `Packet_too_big of Dsts.PTB.t
   | `Ping of Ipaddr.V6.t * Ipaddr.V6.t * int * int * SBstr.t
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
   | `Prefix of Prefixes.Pfx.t
-  | `Redirect of Dsts.Redirect.t
+  | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t (* src, redirect *)
   | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Tick ]
@@ -29,7 +30,9 @@ val tick : t -> now:int -> event -> t * Packet.t list
 val next_hop :
      t
   -> Ipaddr.V6.t
-  -> (t * Ipaddr.V6.t * int option, [> `Packet_too_big ]) result
+  -> ( t * Ipaddr.V6.t * int option
+     , [> `Packet_too_big | `Destination_unreachable of int ] )
+     result
 
 val send :
      t
@@ -41,7 +44,6 @@ val send :
 
 type error =
   [ `Bad_version
-  | `Destination_unreachable
   | `Drop
   | `Drop_RS
   | `ICMP_error of int * int * int

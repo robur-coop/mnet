@@ -2,7 +2,16 @@ module Redirect = struct
   type t = { target: Ipaddr.V6.t; destination: Ipaddr.V6.t }
 end
 
-type error = [ `Packet_too_big ]
+module Unreachable = struct
+  type t = { code: int; destination: Ipaddr.V6.t }
+end
+
+(* RFC 8201: Path MTU Discovery for IPv6 *)
+module PTB = struct
+  type t = { mtu: int; destination: Ipaddr.V6.t }
+end
+
+type error = [ `Packet_too_big | `Destination_unreachable of int ]
 
 module Dst = struct
   type t = { pmtu: int; next_hop: Ipaddr.V6.t; errored: error option }
@@ -39,7 +48,7 @@ let clean_old_routers routers t =
   { t with cache }
 
 let tick t ~now:_ = function
-  | `Redirect r -> begin
+  | `Redirect (_src, r) -> begin
       match Dsts.find r.Redirect.target t.cache with
       | Some { Dst.pmtu; _ } ->
           let next_hop = r.Redirect.destination in
@@ -52,6 +61,45 @@ let tick t ~now:_ = function
           let errored = None in
           let value = { Dst.pmtu= t.lmtu; next_hop; errored } in
           let cache = Dsts.add r.Redirect.target value t.cache in
+          { t with cache= Dsts.trim cache }
+    end
+  | `Destination_unreachable u -> begin
+      (* RFC 4443: Mark the destination as errored in the cache.
+         This prevents further attempts to send to this destination
+         until the entry expires or is cleared. *)
+      match Dsts.find u.Unreachable.destination t.cache with
+      | Some { Dst.pmtu; next_hop; _ } ->
+          let errored = Some (`Destination_unreachable u.Unreachable.code) in
+          let value = { Dst.pmtu; next_hop; errored } in
+          let cache = Dsts.add u.Unreachable.destination value t.cache in
+          { t with cache= Dsts.trim cache }
+      | None ->
+          (* No cached entry, create one with the error *)
+          let errored = Some (`Destination_unreachable u.Unreachable.code) in
+          let value =
+            { Dst.pmtu= t.lmtu; next_hop= u.Unreachable.destination; errored }
+          in
+          let cache = Dsts.add u.Unreachable.destination value t.cache in
+          { t with cache= Dsts.trim cache }
+    end
+  | `Packet_too_big ptb -> begin
+      (* RFC 8201: Path MTU Discovery for IPv6
+         Update the PMTU for the destination. The new PMTU should be
+         at least 1280 (minimum IPv6 MTU) and at most the current PMTU. *)
+      let new_pmtu = Int.max 1280 ptb.PTB.mtu in
+      match Dsts.find ptb.PTB.destination t.cache with
+      | Some { Dst.pmtu; next_hop; errored } ->
+          (* Only reduce PMTU, never increase from PTB *)
+          let pmtu = Int.min pmtu new_pmtu in
+          let value = { Dst.pmtu; next_hop; errored } in
+          let cache = Dsts.add ptb.PTB.destination value t.cache in
+          { t with cache= Dsts.trim cache }
+      | None ->
+          (* No cached entry, create one with the new PMTU *)
+          let value =
+            { Dst.pmtu= new_pmtu; next_hop= ptb.PTB.destination; errored= None }
+          in
+          let cache = Dsts.add ptb.PTB.destination value t.cache in
           { t with cache= Dsts.trim cache }
     end
   | _ -> t

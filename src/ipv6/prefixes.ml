@@ -27,18 +27,41 @@ let make capacity = Prefixes.empty capacity
  *)
 
 let _1s = 1_000_000_000
+let _2h = 2 * 60 * 60 (* 2 hours in seconds *)
 
-(* NOTE(dinosaure): RFC 4861, 6.2.5 — only prefixes with [on_link] set are
-   added to our list. Link-local prefixes are ignored. *)
+(* RFC 4862 Section 5.5.3: Rules for updating valid lifetime to prevent DoS
+   attacks where an attacker sends RAs with very short lifetimes.
+   1. If advertised_lifetime > 2 hours, accept it
+   2. If advertised_lifetime > remaining_lifetime, accept it
+   3. If remaining_lifetime <= 2 hours, ignore (keep current)
+   4. Otherwise, set to 2 hours
+
+   NOTE(dinosaure):
+   - [expire_at] is in nanoseconds
+   - [advertised] is in seconds
+   - [rem] is in seconds *)
+let expire_at ~now ~advertised existing =
+  match existing with
+  | None -> Some (now + (advertised * _1s))
+  | Some { Prefix.expire_at= None } -> Some (now + (advertised * _1s))
+  | Some { Prefix.expire_at= Some expire_at } ->
+      let rem = (expire_at - now) / _1s in
+      if advertised > _2h then Some (now + (advertised * _1s))
+      else if advertised > rem then Some (now + (advertised * _1s))
+      else if rem <= _2h then Some expire_at
+      else Some (now + (_2h * _1s))
+
 let fn ~now t pfx =
+  (* NOTE(dinosaure): RFC 4861, 6.2.5 — only prefixes with [on_link] set are
+     added to our list. Link-local prefixes are ignored. *)
   if Ipaddr.V6.Prefix.link = pfx.Pfx.prefix || not pfx.Pfx.on_link then t
   else
     match pfx.Pfx.valid_lifetime with
     | Some 0 -> Prefixes.remove pfx.Pfx.prefix t
     | Some lifetime ->
+        let existing = Prefixes.find pfx.Pfx.prefix t in
+        let expire_at = expire_at ~now ~advertised:lifetime existing in
         let t = Prefixes.remove pfx.Pfx.prefix t in
-        let expire_at = Some (now + lifetime * _1s) in
-        (* TODO(dinosaure): cap? RFC 4862, 5.5.3 *)
         Prefixes.add pfx.Pfx.prefix { Prefix.expire_at } t
     | None ->
         let t = Prefixes.remove pfx.Pfx.prefix t in

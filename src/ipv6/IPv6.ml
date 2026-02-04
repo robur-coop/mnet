@@ -27,7 +27,8 @@ type t = {
 
 let create eth =
   let lmtu = Ethernet.mtu eth in
-  let ndpv6 = NDPv6.make ~lmtu in
+  let mac = Ethernet.mac eth in
+  let ndpv6 = NDPv6.make ~lmtu ~mac in
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
   Ok { eth; ndpv6; lmtu; tags; cnt }
@@ -124,14 +125,16 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
     user's_fn bstr;
     let max = mtu - 48 in
     let rec go acc src_off =
-      if src_off - len <= 0 then List.rev acc
+      if len - src_off <= 0 then List.rev acc
       else
         let chunk = Int.min max (len - src_off) in
-        let _last = if src_off - chunk <= 0 then true else false in
+        let last = if src_off + chunk >= len then true else false in
         let fn dst =
           Bstr.set_uint8 dst 0 protocol;
           Bstr.set_uint8 dst 1 0;
-          Bstr.set_uint16_be dst 2 0;
+          let v = (src_off / 8) lsl 3 in
+          let v = if last then v else v lor 1 in
+          Bstr.set_uint16_be dst 2 v;
           Bstr.set_int32_be dst 4 uid;
           Bstr.blit bstr ~src_off dst ~dst_off:8 ~len:chunk
         in
@@ -141,16 +144,15 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
     go [] 0
   end
   else
-    let len = len + 40 in
     let fn = with_hdr ~src ~dst ~protocol ~len user's_fn in
-    [ { NDPv6.Packet.len; fn } ]
+    [ { NDPv6.Packet.len= len + 40; fn } ]
 
 let at_most_one = function [] | [ _ ] -> true | _ -> false
 
 let write eth { NDPv6.Packet.dst; len; fn } =
   let fn bstr = fn bstr; len in
   let protocol = Ethernet.IPv6 in
-  Ethernet.write_directly_into eth ~len:(20 + len) ~dst ~protocol fn
+  Ethernet.write_directly_into eth ~len ~dst ~protocol fn
 
 let write_directly t ~now ?src dst ~protocol ~len user's_fn =
   let src = NDPv6.src t.ndpv6 ?src dst in

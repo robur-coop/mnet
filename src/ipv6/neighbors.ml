@@ -63,10 +63,10 @@ module NS = struct
       begin match t.slla with
       | None -> ()
       | Some lladdr ->
-          Bstr.set_uint8 bstr 63 1;
           Bstr.set_uint8 bstr 64 1;
+          Bstr.set_uint8 bstr 65 1;
           let lladdr = Macaddr.to_octets lladdr in
-          Bstr.blit_from_string lladdr ~src_off:0 bstr ~dst_off:64 ~len:6
+          Bstr.blit_from_string lladdr ~src_off:0 bstr ~dst_off:66 ~len:6
       end;
       let cs0 = Cstruct.of_bigarray bstr ~off:8 ~len:32 in
       let cs1 = cs_of_len_and_protocol ~len:payload_len ~protocol:58 in
@@ -107,7 +107,6 @@ type t = Neighbors.t
 
 let make capacity = Neighbors.empty capacity
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
-
 let _1s = 1_000_000_000
 let _5s = 5_000_000_000
 let _30s = 30_000_000_000
@@ -123,7 +122,7 @@ type action =
    and we can use the [List.cons]/[List.rev] pair rather than [List.rev_append]
    when aggregating all actions for all our entries. *)
 
-let transition key (state, is_router) now event =
+let transition ~mac key (state, is_router) now event =
   let open Neighbor in
   match (state, event) with
   (* | INCOMPLETE | Retransmit timeout, | Retransmit NS    | INCOMPLETE
@@ -143,7 +142,8 @@ let transition key (state, is_router) now event =
         let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix key in
         assert (Ipaddr.V6.is_multicast dst);
         let lladdr = Ipaddr.V6.multicast_to_mac dst in
-        let ns = { NS.target= key; slla= Some lladdr } in
+        (* RFC 4861: SLLA must be the sender's link-layer address *)
+        let ns = { NS.target= key; slla= Some mac } in
         let pkt = NS.encode_into ~lladdr ~dst ns in
         let action = Some (Packet pkt) in
         (Some (Incomplete { expire_at; sent_probes }, is_router), action)
@@ -160,7 +160,8 @@ let transition key (state, is_router) now event =
   | Delay { lladdr; expire_at }, _ when expire_at <= now ->
       let expire_at = now + _1s in
       let sent_probes = 1 in
-      let ns = { NS.target= key; slla= Some lladdr } in
+      (* RFC 4861: SLLA must be the sender's link-layer address *)
+      let ns = { NS.target= key; slla= Some mac } in
       let pkt = NS.encode_into ~lladdr ~dst:key ns in
       let action = Some (Packet pkt) in
       (Some (Probe { lladdr; expire_at; sent_probes }, is_router), action)
@@ -177,7 +178,8 @@ let transition key (state, is_router) now event =
       else begin
         let expire_at = now + _1s in
         let sent_probes = sent_probes + 1 in
-        let ns = { NS.target= key; slla= Some lladdr } in
+        (* RFC 4861: SLLA must be the sender's link-layer address *)
+        let ns = { NS.target= key; slla= Some mac } in
         let pkt = NS.encode_into ~lladdr ~dst:key ns in
         let action = Some (Packet pkt) in
         (Some (Probe { lladdr; expire_at; sent_probes }, is_router), action)
@@ -266,8 +268,8 @@ let transition key (state, is_router) now event =
      |             | link-layer address |                   |
    *)
   | ( (Stale _ | Probe _ | Delay _ | Reachable _)
-    , `NA (_src, _dst, { NA.tlla= None; _ }) ) ->
-      (Some (state, true), None)
+    , `NA (_src, _dst, { NA.tlla= None; router; _ }) ) ->
+      (Some (state, router), None)
   (* | !INCOMPLETE | NA, Solicited=0, | - | unchanged
      |             | Override=0       |   |
    *)
@@ -304,10 +306,10 @@ let transition key (state, is_router) now event =
   | (Incomplete _ | Reachable _ | Delay _ | Probe _ | Stale _), _ ->
       (Some (state, is_router), None)
 
-let tick t ~now event =
+let tick t ~mac ~now event =
   let fn key value (actions, t') =
     let push = Option.fold ~none:actions ~some:(Fun.flip List.cons actions) in
-    match transition key value now event with
+    match transition ~mac key value now event with
     | Some value', action ->
         let t' = Neighbors.add key value' t' in
         (push action, t')
@@ -335,7 +337,7 @@ let is_reachable t addr =
 
 let is_router t addr = Option.map snd (Neighbors.find addr t)
 
-let query t ~now addr =
+let query t ~mac ~now addr =
   (* | - | Packet to send. | Create entry.          | INCOMPLETE
      |   |                 | Send multicast NS.     |
      |   |                 | Start retransmit timer |
@@ -348,7 +350,8 @@ let query t ~now addr =
       let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
       assert (Ipaddr.V6.is_multicast dst);
       let lladdr = Ipaddr.V6.multicast_to_mac dst in
-      let ns = { NS.target= addr; slla= Some lladdr } in
+      (* RFC 4861: SLLA must be the sender's link-layer address *)
+      let ns = { NS.target= addr; slla= Some mac } in
       let pkt = NS.encode_into ~lladdr ~dst ns in
       let action = Some (Packet pkt) in
       let t = Neighbors.add addr (state, false) t in

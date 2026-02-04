@@ -12,6 +12,6 @@ val write_directly :
   -> protocol:int
   -> len:int
   -> (Bstr.t -> unit)
-  -> (unit, [> `Packet_too_big | `Route_not_found ]) result
+  -> (unit, [> `Packet_too_big | `Destination_unreachable of int ]) result
 
 val input : t -> SBstr.t Ethernet.packet -> unit

@@ -163,7 +163,7 @@ module TCP = struct
         (* TODO(dinosaure): we should set MSS on the TCP layer and retry
            everything which was not ACKed. *)
         assert false
-    | Error `Route_not_found ->
+    | Error (`Destination_unreachable _) ->
         Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
         raise Net_unreach
 
