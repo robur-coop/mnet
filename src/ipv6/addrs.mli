@@ -1,6 +1,7 @@
 type t
+type ivar = Ipaddr.V6.Prefix.t option Miou.Computation.t
 
-val make : now:int -> iid:string -> int -> t * Neighbors.Packet.t
+val make : now:int -> iid:string -> int -> t * Neighbors.Packet.t * ivar
 
 val tick :
      t

@@ -519,15 +519,14 @@ let make ~now ~lmtu ~mac =
   let neighbors = Neighbors.make 0x100 in
   let routers = Routers.make 16 in
   let prefixes = Prefixes.make 16 in
-  let addrs, act = Addrs.make ~now ~iid 16 in
+  let addrs, act, ivar = Addrs.make ~now ~iid 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
   let queues = Ipaddr.V6.Map.empty in
   let t =
     { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
   in
-  let t, pkt' = process t (Neighbors.Packet act) in
-  let pkt = RS.encode_into ~mac (Addrs.select t.addrs) in
-  (t, pkt :: pkt')
+  let t, pkts' = process t (Neighbors.Packet act) in
+  (t, pkts', ivar)
 
 type error =
   [ `Bad_version

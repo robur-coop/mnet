@@ -5,9 +5,15 @@ module Packet : sig
   type user's_packet = { len: int; fn: Bstr.t -> unit }
 end
 
+module RS : sig
+  val encode_into : mac:Macaddr.t -> (Ipaddr.V6.t -> Ipaddr.V6.t) -> Packet.t
+end
+
 type t
 
-val make : now:int -> lmtu:int -> mac:Macaddr.t -> t * Packet.t list
+val make :
+  now:int -> lmtu:int -> mac:Macaddr.t -> t * Packet.t list * Addrs.ivar
+
 val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =

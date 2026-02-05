@@ -1,11 +1,17 @@
 let src = Logs.Src.create "mnet.ipv6.addrs"
 
 module Addr = struct
+  type ivar = Ipaddr.V6.Prefix.t option Miou.Computation.t
   type lifetime = { preferred: int; valid: int option }
   (* NOTE(dinosaure): these values are **relatives**. *)
 
   type t =
-    | Tentative of { lifetime: lifetime option; expire_at: int; dad_sent: int }
+    | Tentative of {
+          lifetime: lifetime option
+        ; expire_at: int
+        ; dad_sent: int
+        ; ivar: ivar
+      }
     | Preferred of { expire_at: int option; valid_lifetime: int option }
     | Deprecated of { expire_at: int option }
 
@@ -16,6 +22,7 @@ module Log = (val Logs.src_log src : Logs.LOG)
 module Addrs = Lru.F.Make (Ipaddr.V6.Prefix) (Addr)
 
 type t = Addrs.t
+type ivar = Addr.ivar
 
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 let _1s = 1_000_000_000
@@ -40,13 +47,14 @@ let tick t ~now ~iid event =
       let prefix = Ipaddr.V6.Prefix.make 128 addr in
       if Addrs.mem prefix t then t
       else
+        let ivar = Miou.Computation.create () in
         let lifetime =
           match pfx.preferred_lifetime with
           | None -> None
           | Some preferred -> Some { Addr.preferred; valid= pfx.valid_lifetime }
         in
         let state =
-          Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 0 }
+          Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 0; ivar }
         in
         Addrs.add prefix state t
   in
@@ -56,7 +64,9 @@ let tick t ~now ~iid event =
       let fn prefix state t =
         if Ipaddr.V6.Prefix.mem target prefix then
           match state with
-          | Addr.Tentative _ -> t
+          | Addr.Tentative { ivar; _ } ->
+              ignore (Miou.Computation.try_return ivar (Some prefix));
+              t
           | state -> Addrs.add prefix state t
         else Addrs.add prefix state t
       in
@@ -65,8 +75,8 @@ let tick t ~now ~iid event =
   | _ ->
       let fn prefix state (t, pkts) =
         match state with
-        | Addr.Tentative { lifetime; expire_at; dad_sent } when expire_at < now
-          ->
+        | Addr.Tentative { lifetime; expire_at; dad_sent; ivar }
+          when expire_at < now ->
             if dad_sent >= 1 (* DupAddrDetectTransmits *) then begin
               (* Tentative -> Preferred *)
               let expire_at =
@@ -80,6 +90,7 @@ let tick t ~now ~iid event =
                 | Some { Addr.valid; _ } -> valid
               in
               Log.debug (fun m -> m "%a preferred" Ipaddr.V6.Prefix.pp prefix);
+              ignore (Miou.Computation.try_return ivar (Some prefix));
               let state = Addr.Preferred { expire_at; valid_lifetime } in
               (Addrs.add prefix state t, pkts)
             end
@@ -91,7 +102,9 @@ let tick t ~now ~iid event =
               assert (Ipaddr.V6.is_multicast dst);
               let expire_at = now + _1s in
               let dad_sent = dad_sent + 1 in
-              let state = Addr.Tentative { lifetime; expire_at; dad_sent } in
+              let state =
+                Addr.Tentative { lifetime; expire_at; dad_sent; ivar }
+              in
               let t = Addrs.add prefix state t in
               let lladdr = Ipaddr.V6.multicast_to_mac dst in
               let ns = { Neighbors.NS.target= addr; slla= None } in
@@ -126,13 +139,14 @@ let make ~now ~iid capacity =
     Ipaddr.V6.of_octets_exn (Bytes.to_string buf)
   in
   let expire_at = now + _1s in
-  let entry = Addr.Tentative { lifetime= None; expire_at; dad_sent= 0 } in
+  let ivar = Miou.Computation.create () in
+  let entry = Addr.Tentative { lifetime= None; expire_at; dad_sent= 1; ivar } in
   let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
   let lladdr = Ipaddr.V6.multicast_to_mac dst in
   let ns = { Neighbors.NS.target= addr; slla= None } in
   let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
   let addrs = Addrs.add (Ipaddr.V6.Prefix.make 64 addr) entry addrs in
-  (addrs, pkt)
+  (addrs, pkt, ivar)
 
 exception Yes
 

@@ -39,11 +39,18 @@ let ignore ~protocol:_ _src _dst _payload = ()
 let _1s = 1_000_000_000
 
 let rec daemon t =
-  let now = Mkernel.clock_monotonic () in
-  let ndpv6, outs = NDPv6.tick t.ndpv6 ~now `Tick in
-  t.ndpv6 <- ndpv6;
-  List.iter (write t.eth) outs;
-  Mkernel.sleep _1s;
+  let () =
+    try
+      let now = Mkernel.clock_monotonic () in
+      let ndpv6, outs = NDPv6.tick t.ndpv6 ~now `Tick in
+      t.ndpv6 <- ndpv6;
+      List.iter (write t.eth) outs;
+      Mkernel.sleep _1s
+    with exn ->
+      Log.err (fun m ->
+          m "Unexpected exception from our IPv6 daemon: %s"
+            (Printexc.to_string exn))
+  in
   daemon t
 
 let kill = Miou.cancel
@@ -51,13 +58,19 @@ let kill = Miou.cancel
 let create ~now ?(handler = ignore) eth =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
-  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac in
+  let ndpv6, pkts, slaac = NDPv6.make ~now ~lmtu ~mac in
   List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
   let t = { eth; ndpv6; lmtu; tags; handler; cnt } in
   let daemon = Miou.async @@ fun () -> daemon t in
-  Ok (t, daemon)
+  match Miou.Computation.await_exn slaac with
+  | Some prefix ->
+      let select = NDPv6.src t.ndpv6 in
+      let out = NDPv6.RS.encode_into ~mac select in
+      write t.eth out;
+      Ok (t, daemon)
+  | None -> assert false (* TODO(dinosaure): retry with another [iid]? *)
 
 let set_handler t handler =
   Atomic.incr t.cnt;
