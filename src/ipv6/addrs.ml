@@ -24,6 +24,18 @@ module Addrs = Lru.F.Make (Ipaddr.V6.Prefix) (Addr)
 type t = Addrs.t
 type ivar = Addr.ivar
 
+exception Yes
+
+let is_my_addr t ipaddr =
+  let fn prefix state =
+    match state with
+    | Addr.Preferred _ | Addr.Deprecated _ ->
+        if Ipaddr.V6.(compare (Prefix.address prefix) ipaddr) = 0 then
+          raise_notrace Yes
+    | _ -> ()
+  in
+  match Addrs.iter_k fn t with exception Yes -> true | _ -> false
+
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 let _1s = 1_000_000_000
 
@@ -147,18 +159,6 @@ let make ~now ~iid capacity =
   let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
   let addrs = Addrs.add (Ipaddr.V6.Prefix.make 64 addr) entry addrs in
   (addrs, pkt, ivar)
-
-exception Yes
-
-let is_my_addr t ipaddr =
-  let fn prefix state =
-    match state with
-    | Addr.Preferred _ | Addr.Deprecated _ ->
-        if Ipaddr.V6.(compare (Prefix.address prefix) ipaddr) = 0 then
-          raise_notrace Yes
-    | _ -> ()
-  in
-  match Addrs.iter_k fn t with exception Yes -> true | _ -> false
 
 let select t dst =
   let dst_is_ll = Ipaddr.V6.Prefix.(mem dst link) in

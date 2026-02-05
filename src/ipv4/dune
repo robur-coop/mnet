@@ -1,10 +1,11 @@
 (library
  (name IPv4)
  (public_name mnet.ipv4)
- (modules diet ropes fragment IPv4 routing)
+ (modules IPv4 routing)
  (libraries
   mnet.ethernet
   mnet.arpv4
+  mnet.fragments
   utcp
   mirage-crypto-rng
   logs

@@ -136,6 +136,7 @@ let input ipv4 pkt payload =
   | Ok (Packet pkt, payload) -> begin
       match pkt.kind with
       | Packet.Echo_request ->
+          Log.debug (fun m -> m "Echo request");
           let pkt =
             { Packet.code= 0; kind= Echo_reply; checksum= 0; shdr= pkt.shdr }
           in

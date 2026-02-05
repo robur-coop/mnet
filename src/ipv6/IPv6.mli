@@ -2,7 +2,8 @@ module SBstr = Slice_bstr
 
 type t
 type daemon
-type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> SBstr.t -> unit
+type payload = Slice of SBstr.t | String of string
+type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> payload -> unit
 
 val create :
      now:int

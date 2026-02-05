@@ -331,7 +331,8 @@ let tick t ~mac ~now event =
   in
   (* NOTE(dinosaure): even if we can [fold_k] here (which performs better), we
      would like to keep the usage order to clean up then. *)
-  let actions, t' = Neighbors.fold fn ([], Neighbors.empty 0x7ff) t in
+  let capacity = Neighbors.capacity t in
+  let actions, t' = Neighbors.fold fn ([], Neighbors.empty capacity) t in
   (List.rev actions, Neighbors.trim t')
 
 let lladdr t addr =

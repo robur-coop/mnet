@@ -17,18 +17,32 @@ end
 
 let ( let* ) = Result.bind
 
-type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> SBstr.t -> unit
+module Key = struct
+  type t = { src: Ipaddr.V6.t; dst: Ipaddr.V6.t; uid: int; protocol: int }
+
+  let equal a b =
+    Ipaddr.V6.compare a.src b.src = 0
+    && Ipaddr.V6.compare a.dst b.dst = 0
+    && a.uid = b.uid
+
+  let hash t = Hashtbl.hash (t.src, t.dst, t.uid)
+end
+
+module Fragments = Fragments.Make (Key)
 
 type t = {
     eth: Ethernet.t
   ; mutable ndpv6: NDPv6.t
+  ; fragments: Fragments.t
   ; lmtu: int
   ; tags: Logs.Tag.set
   ; mutable handler: handler
   ; cnt: int Atomic.t
 }
 
-type daemon = unit Miou.t
+and payload = Fragments.payload = Slice of SBstr.t | String of string
+and handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> payload -> unit
+and daemon = unit Miou.t
 
 let write eth { NDPv6.Packet.dst; len; fn } =
   let fn bstr = fn bstr; len in
@@ -58,19 +72,14 @@ let kill = Miou.cancel
 let create ~now ?(handler = ignore) eth =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
-  let ndpv6, pkts, slaac = NDPv6.make ~now ~lmtu ~mac in
+  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac in
   List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
-  let t = { eth; ndpv6; lmtu; tags; handler; cnt } in
+  let fragments = Fragments.create () in
+  let t = { eth; ndpv6; lmtu; tags; handler; cnt; fragments } in
   let daemon = Miou.async @@ fun () -> daemon t in
-  match Miou.Computation.await_exn slaac with
-  | Some prefix ->
-      let select = NDPv6.src t.ndpv6 in
-      let out = NDPv6.RS.encode_into ~mac select in
-      write t.eth out;
-      Ok (t, daemon)
-  | None -> assert false (* TODO(dinosaure): retry with another [iid]? *)
+  Ok (t, daemon)
 
 let set_handler t handler =
   Atomic.incr t.cnt;
@@ -225,9 +234,22 @@ let input t pkt =
       let str = SBstr.to_string pkt.Ethernet.payload in
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (`Default (protocol, src, dst, payload)) ->
-      t.handler ~protocol src dst payload
-  | Ok (`TCP (src, dst, payload)) -> t.handler ~protocol:6 src dst payload
-  | Ok (`UDP (src, dst, payload)) -> t.handler ~protocol:17 src dst payload
+      t.handler ~protocol src dst (Slice payload)
+  | Ok (`TCP (src, dst, payload)) ->
+      t.handler ~protocol:6 src dst (Slice payload)
+  | Ok (`UDP (src, dst, payload)) ->
+      t.handler ~protocol:17 src dst (Slice payload)
+  | Ok
+      (`Fragment (src, dst, { NDPv6.Fragment.protocol; uid; off; last; payload }))
+    ->
+      let now = Mkernel.clock_monotonic () in
+      let key = { Key.src; dst; uid; protocol } in
+      let len = SBstr.length payload in
+      let pkt = Fragments.insert ~now t.fragments key ~off ~len ~last payload in
+      let fn ({ Key.src; dst; protocol; _ }, payload) =
+        t.handler ~protocol src dst payload
+      in
+      Option.iter fn pkt
   | Ok event ->
       let now = Mkernel.clock_monotonic () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in

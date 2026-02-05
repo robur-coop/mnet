@@ -568,6 +568,8 @@ let ethernet_handler arpv4 ipv4 ipv6 =
 let ipv4_handler icmpv4 udp tcp =
   ();
   fun ((hdr, payload) as pkt) ->
+    Log.debug (fun m ->
+        m "receive IPv4 packet (protocol: %d)" hdr.IPv4.protocol);
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
     | 6 ->
@@ -595,10 +597,21 @@ let ipv4_handler icmpv4 udp tcp =
 let ipv6_handler tcp =
   ();
   fun ~protocol src dst payload ->
+    let payload =
+      match payload with
+      | IPv6.Slice slice ->
+          let { Slice.buf; off; len } = slice in
+          Bstr.sub ~off ~len buf
+      | IPv6.String str -> Bstr.of_string str
+    in
     let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
-    let { Slice.off; len; buf } = payload in
-    let bstr = Bstr.sub ~off ~len buf in
-    match protocol with 6 -> TCP.handler tcp src dst bstr | _ -> ()
+    match protocol with
+    | 6 -> TCP.handler tcp src dst payload
+    | 58 ->
+        let str = Bstr.to_string payload in
+        Log.debug (fun m -> m "Receive a ICMPv6 packet");
+        Log.debug (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+    | _ -> ()
 
 type stack = {
     ethernet_daemon: Ethernet.daemon
