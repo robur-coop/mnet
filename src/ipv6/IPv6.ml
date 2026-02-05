@@ -69,10 +69,12 @@ let rec daemon t =
 
 let kill = Miou.cancel
 
-let create ~now ?(handler = ignore) eth =
+type mode = NDPv6.mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
+
+let create ~now ?(handler = ignore) eth mode =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
-  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac in
+  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac mode in
   List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
@@ -177,7 +179,8 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
     Mirage_crypto_rng.generate_into tmp ~off:0 4;
     let uid = Bytes.get_int32_ne tmp 0 in
     user's_fn bstr;
-    let max = mtu - 48 in
+    let max = (mtu - 48) / 8 * 8 in
+    (* must be multiple of 8 *)
     let rec go acc src_off =
       if len - src_off <= 0 then List.rev acc
       else
@@ -192,7 +195,7 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
           Bstr.set_int32_be dst 4 uid;
           Bstr.blit bstr ~src_off dst ~dst_off:8 ~len:chunk
         in
-        let fn = with_hdr ~src ~dst ~protocol:44 ~len:chunk fn in
+        let fn = with_hdr ~src ~dst ~protocol:44 ~len:(chunk + 8) fn in
         go ({ NDPv6.Packet.len= chunk + 48; fn } :: acc) (src_off + chunk)
     in
     go [] 0
@@ -233,12 +236,8 @@ let input t pkt =
       Log.err (fun m -> m "Invalid IPv6 packet: %a" NDPv6.pp_error err);
       let str = SBstr.to_string pkt.Ethernet.payload in
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
-  | Ok (`Default (protocol, src, dst, payload)) ->
+  | Ok (`Packet (protocol, src, dst, payload)) ->
       t.handler ~protocol src dst (Slice payload)
-  | Ok (`TCP (src, dst, payload)) ->
-      t.handler ~protocol:6 src dst (Slice payload)
-  | Ok (`UDP (src, dst, payload)) ->
-      t.handler ~protocol:17 src dst (Slice payload)
   | Ok
       (`Fragment (src, dst, { NDPv6.Fragment.protocol; uid; off; last; payload }))
     ->

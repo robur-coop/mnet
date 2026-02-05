@@ -524,6 +524,8 @@ end
 let pp_error ppf = function
   | `MTU_too_small -> Fmt.string ppf "MTU too small"
   | `Exn exn -> Fmt.pf ppf "exception: %s" (Printexc.to_string exn)
+  | `Destination_unreachable _ -> Fmt.string ppf "Destination unreachable"
+  | `Packet_too_big -> Fmt.string ppf "Packet too big"
 
 let ethernet_handler arpv4 ipv4 ipv6 =
   ();
@@ -594,7 +596,7 @@ let ipv4_handler icmpv4 udp tcp =
     | 17 -> UDP.handler udp pkt
     | _ -> ()
 
-let ipv6_handler tcp =
+let ipv6_handler ipv6 tcp =
   ();
   fun ~protocol src dst payload ->
     let payload =
@@ -604,13 +606,45 @@ let ipv6_handler tcp =
           Bstr.sub ~off ~len buf
       | IPv6.String str -> Bstr.of_string str
     in
-    let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
     match protocol with
-    | 6 -> TCP.handler tcp src dst payload
+    | 6 ->
+        let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
+        TCP.handler tcp src dst payload
     | 58 ->
-        let str = Bstr.to_string payload in
-        Log.debug (fun m -> m "Receive a ICMPv6 packet");
-        Log.debug (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+        let len = Bstr.length payload in
+        if len >= 8 then begin
+          match Bstr.get_uint8 payload 0 with
+          | 128 ->
+              Log.debug (fun m ->
+                  m "ICMPv6 Echo Request from %a" Ipaddr.V6.pp src);
+              let src = dst and dst = src in
+              let fn bstr =
+                Bstr.set_uint8 bstr 0 129;
+                Bstr.set_uint8 bstr 1 0;
+                Bstr.set_uint16_be bstr 2 0;
+                Bstr.blit payload ~src_off:4 bstr ~dst_off:4 ~len:(len - 4);
+                let hdr = Bytes.create 40 in
+                let src_octets = Ipaddr.V6.to_octets src in
+                let dst_octets = Ipaddr.V6.to_octets dst in
+                Bytes.blit_string src_octets 0 hdr 0 16;
+                Bytes.blit_string dst_octets 0 hdr 16 16;
+                Bytes.set_int32_be hdr 32 (Int32.of_int len);
+                Bytes.set_int32_be hdr 36 58l;
+                let hdr = Bytes.unsafe_to_string hdr in
+                let payload = Bstr.sub_string bstr ~off:0 ~len in
+                let chk = Utcp.Checksum.digest_strings [ hdr; payload ] in
+                Bstr.set_uint16_be bstr 2 chk
+              in
+              let ok = Fun.id
+              and error err =
+                Log.warn (fun m ->
+                    m "Impossible to pong %a: %a" Ipaddr.V6.pp dst pp_error err)
+              in
+              let now = Mkernel.clock_monotonic () in
+              IPv6.write_directly ipv6 ~now ~src dst ~protocol ~len fn
+              |> Result.fold ~ok ~error
+          | _ -> ()
+        end
     | _ -> ()
 
 type stack = {
@@ -629,7 +663,7 @@ let kill t =
   ARPv4.kill t.arpv4_daemon;
   Ethernet.kill t.ethernet_daemon
 
-let stack ~name ?gateway cidr =
+let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
@@ -641,12 +675,12 @@ let stack ~name ?gateway cidr =
       in
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
       let now = Mkernel.clock_monotonic () in
-      let* ipv6, ipv6_daemon = IPv6.create ~now eth in
+      let* ipv6, ipv6_daemon = IPv6.create ~now eth ipv6 in
       let icmpv4 = ICMPv4.handler ipv4 in
       let tcp_daemon, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
       let udp = UDP.create ipv4 ipv6 in
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
-      IPv6.set_handler ipv6 (ipv6_handler tcp);
+      IPv6.set_handler ipv6 (ipv6_handler ipv6 tcp);
       (* TODO(dinosaure): UDPv6 *)
       let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;

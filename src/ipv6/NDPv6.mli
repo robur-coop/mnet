@@ -13,13 +13,14 @@ module Fragment : sig
   type t = { uid: int; off: int; protocol: int; payload: SBstr.t; last: bool }
 end
 
+type mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
 type t
 
-val make : now:int -> lmtu:int -> mac:Macaddr.t -> t * Packet.t list
+val make : now:int -> lmtu:int -> mac:Macaddr.t -> mode -> t * Packet.t list
 val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
 
 type event =
-  [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
+  [ `Packet of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Destination_unreachable of Dsts.Unreachable.t
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
@@ -28,8 +29,6 @@ type event =
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
   | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t
-  | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
-  | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Fragment of Ipaddr.V6.t * Ipaddr.V6.t * Fragment.t
   | `Tick ]
 

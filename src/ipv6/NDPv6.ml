@@ -182,11 +182,7 @@ module Parser = struct
     let chk = checksum ~src ~dst payload in
     let* () = guard `Invalid_ICMP_checksum @@ fun () -> chk = 0 in
     match SBstr.get_uint8 payload 0 with
-    | 128 ->
-        let uid = SBstr.get_uint16_be payload 4 in
-        let seq = SBstr.get_uint16_be payload 6 in
-        Ok (`Ping (src, dst, uid, seq, SBstr.shift payload 8))
-    | 129 -> Ok (`Pong payload)
+    | 128 | 129 -> Ok (`Packet (58, src, dst, payload))
     | 133 -> Error `Drop_RS
     | 134 ->
         (* The packet does not come from a direct neighbour if [hlim] is not
@@ -251,10 +247,8 @@ module Parser = struct
         Ok (`Fragment (src, dst, frag))
     | 43 | 44 | 50 | 51 | 135 | 59 -> Error `Drop
     | 58 -> decode_icmp ~src ~dst sbstr off
-    | 17 -> Ok (`UDP (src, dst, SBstr.shift sbstr off))
-    | 6 -> Ok (`TCP (src, dst, SBstr.shift sbstr off))
     | n when 143 <= n && n <= 255 -> Error `Drop
-    | n -> Ok (`Default (n, src, dst, SBstr.shift sbstr off))
+    | protocol -> Ok (`Packet (protocol, src, dst, SBstr.shift sbstr off))
 
   and with_options ~src ~dst sbstr off =
     let payload = SBstr.shift sbstr off in
@@ -410,7 +404,7 @@ let push addr pkts queues =
   | None -> Ipaddr.V6.Map.add addr pkts queues
 
 type event =
-  [ `Default of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
+  [ `Packet of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Destination_unreachable of Dsts.Unreachable.t
   | `NA of Ipaddr.V6.t * Ipaddr.V6.t * NA.t
   | `NS of Ipaddr.V6.t * Ipaddr.V6.t * Neighbors.NS.t
@@ -419,13 +413,11 @@ type event =
   | `Pong of SBstr.t
   | `RA of Ipaddr.V6.t * Ipaddr.V6.t * Routers.RA.t
   | `Redirect of Ipaddr.V6.t * Dsts.Redirect.t
-  | `TCP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
-  | `UDP of Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t
   | `Fragment of Ipaddr.V6.t * Ipaddr.V6.t * Fragment.t
   | `Tick ]
 
 let pp_event ppf = function
-  | `Default (protocol, src, dst, payload) ->
+  | `Packet (protocol, src, dst, payload) ->
       let { Slice.off; len; buf } = payload in
       let bstr = Bstr.sub ~off ~len buf in
       let str = Bstr.to_string bstr in
@@ -461,7 +453,6 @@ let pp_event ppf = function
       Fmt.pf ppf "redirect:%a -> %a" Ipaddr.V6.pp src Dsts.Redirect.pp r
   | `Tick -> Fmt.string ppf "tick"
   | `Fragment _ -> Fmt.string ppf "Fragment"
-  | `TCP _ | `UDP _ -> Fmt.string ppf "Layer 3 protocol"
 
 let next_hop t addr =
   if Ipaddr.V6.is_multicast addr || Prefixes.is_local t.prefixes addr then
@@ -591,17 +582,38 @@ let tick t ~now (event : event) =
   in
   (t, pkts)
 
-let make ~now ~lmtu ~mac =
-  let iid =
-    let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
-    let b = Char.code (Bytes.get buf 0) in
-    Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xFE));
-    Bytes.unsafe_to_string buf
+type mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
+
+let iid_of_mac mac =
+  let octets = Macaddr.to_octets mac in
+  let buf = Bytes.create 8 in
+  Bytes.set buf 0 (Char.chr (Char.code octets.[0] lxor 0x02));
+  Bytes.set buf 1 octets.[1];
+  Bytes.set buf 2 octets.[2];
+  Bytes.set buf 3 '\xff';
+  Bytes.set buf 4 '\xfe';
+  Bytes.set buf 5 octets.[3];
+  Bytes.set buf 6 octets.[4];
+  Bytes.set buf 7 octets.[5];
+  Bytes.unsafe_to_string buf
+
+let anonymous_iid () =
+  let buf = Bytes.of_string (Mirage_crypto_rng.generate 8) in
+  let b = Char.code (Bytes.get buf 0) in
+  Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xfe));
+  Bytes.unsafe_to_string buf
+
+let make ~now ~lmtu ~mac mode =
+  let iid, addr =
+    match mode with
+    | Random -> (anonymous_iid (), None)
+    | EUI64 -> (iid_of_mac mac, None)
+    | Static prefix -> (iid_of_mac mac, Some prefix)
   in
   let neighbors = Neighbors.make 0x100 in
   let routers = Routers.make 16 in
   let prefixes = Prefixes.make 16 in
-  let addrs, act, ivar = Addrs.make ~now ~iid 16 in
+  let addrs, act = Addrs.make ~now ~iid ?addr 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
   let queues = Ipaddr.V6.Map.empty in
   let t =

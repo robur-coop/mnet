@@ -119,6 +119,7 @@ type stack
 val stack :
      name:string
   -> ?gateway:Ipaddr.V4.t
+  -> ?ipv6:IPv6.mode
   -> Ipaddr.V4.Prefix.t
   -> (stack * TCP.state * UDP.state) Mkernel.arg
 
