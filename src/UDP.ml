@@ -159,7 +159,7 @@ let sendto state ~dst ?src_port ~port:dst_port ?(off = 0) ?len payload =
     | Some src_port -> src_port
     | None -> String.get_uint16_ne (Mirage_crypto_rng.generate 2) 0
   in
-  let src = IPv4.src state.ipv4 in
+  let src = IPv4.src state.ipv4 ~dst in
   let pkt = { Packet.src_port; dst_port; length= len } in
   let str = Packet.encode ~src ~dst pkt ~off ~len payload in
   let writer = IPv4.Writer.of_strings state.ipv4 [ str; payload ] in
@@ -171,7 +171,7 @@ let sendfn state ~dst ?src_port ~port:dst_port ~len fn =
     | Some src_port -> src_port
     | None -> String.get_uint16_ne (Mirage_crypto_rng.generate 2) 0
   in
-  let src = IPv4.src state.ipv4 in
+  let src = IPv4.src state.ipv4 ~dst in
   let pkt = { Packet.src_port; dst_port; length= len } in
   let fn bstr =
     let sum = Packet.encode_into ~src ~dst pkt bstr in

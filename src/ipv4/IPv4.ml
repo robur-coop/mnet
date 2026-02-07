@@ -242,7 +242,7 @@ let max t =
   let mtu = Ethernet.mtu t.eth in
   mtu - 20
 
-let src t = Ipaddr.V4.Prefix.address t.cidr
+let src t ~dst:_ = Ipaddr.V4.Prefix.address t.cidr
 
 let fixed pkt user's_fn len bstr =
   Packet.unsafe_encode_into pkt bstr;

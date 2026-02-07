@@ -37,20 +37,21 @@ let tick t ~now ~iid event =
     match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> []
   in
   (* RFC 4862 5.5.2, RFC 7217 *)
-  let fn t (pfx : Prefixes.Pfx.t) =
+  let fn (t, pkts) (pfx : Prefixes.Pfx.t) =
     if
       (not pfx.autonomous)
       || Ipaddr.V6.Prefix.bits pfx.prefix <> 64
       || pfx.valid_lifetime = Some 0
-    then t
-    else
+    then (t, pkts)
+    else begin
+      Log.debug (fun m -> m "prefix from RA: %a" Ipaddr.V6.Prefix.pp pfx.prefix);
       let network = Ipaddr.V6.to_octets (Ipaddr.V6.Prefix.address pfx.prefix) in
       let buf = Bytes.create 16 in
       Bytes.blit_string network 0 buf 0 8;
       Bytes.blit_string iid 0 buf 8 8;
       let addr = Ipaddr.V6.of_octets_exn (Bytes.unsafe_to_string buf) in
       let prefix = Ipaddr.V6.Prefix.make 128 addr in
-      if Addrs.mem prefix t then t
+      if Addrs.mem prefix t then (t, pkts)
       else
         let lifetime =
           match pfx.preferred_lifetime with
@@ -58,11 +59,13 @@ let tick t ~now ~iid event =
           | Some preferred -> Some { Addr.preferred; valid= pfx.valid_lifetime }
         in
         let state =
-          Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 0 }
+          Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 1 }
         in
-        Addrs.add prefix state t
+        (* TODO(dinosaure): send NS. *)
+        (Addrs.add prefix state t, pkts)
+    end
   in
-  let t = List.fold_left fn t pfxs in
+  let t, pkts = List.fold_left fn (t, []) pfxs in
   match event with
   | `NA (_src, _dst, { Neighbors.NA.target; _ }) ->
       let fn prefix state t =
@@ -73,12 +76,13 @@ let tick t ~now ~iid event =
         else Addrs.add prefix state t
       in
       let capacity = Addrs.capacity t in
-      (Addrs.fold_k fn (Addrs.empty capacity) t, [])
+      (Addrs.fold_k fn (Addrs.empty capacity) t, pkts)
   | _ ->
       let fn prefix state (t, pkts) =
         match state with
         | Addr.Tentative { lifetime; expire_at; dad_sent } when expire_at < now
           ->
+            Log.debug (fun m -> m "tentative for %a" Ipaddr.V6.Prefix.pp prefix);
             if dad_sent >= 1 (* DupAddrDetectTransmits *) then begin
               (* Tentative -> Preferred *)
               let expire_at =
@@ -96,6 +100,9 @@ let tick t ~now ~iid event =
               (Addrs.add prefix state t, pkts)
             end
             else begin
+              Log.debug (fun m ->
+                  m "retry %a (dad sent: %d)" Ipaddr.V6.Prefix.pp prefix
+                    dad_sent);
               let addr = Ipaddr.V6.Prefix.address prefix in
               let dst =
                 Ipaddr.V6.Prefix.network_address solicited_node_prefix addr
@@ -126,7 +133,7 @@ let tick t ~now ~iid event =
         | state -> (Addrs.add prefix state t, pkts)
       in
       let capacity = Addrs.capacity t in
-      Addrs.fold_k fn (Addrs.empty capacity, []) t
+      Addrs.fold_k fn (Addrs.empty capacity, pkts) t
 
 let make ~now ~iid ?addr capacity =
   let addrs = Addrs.empty capacity in

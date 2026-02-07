@@ -15,6 +15,7 @@ val create :
 
 val kill : daemon -> unit
 val set_handler : t -> handler -> unit
+val src : t -> dst:Ipaddr.V6.t -> Ipaddr.V6.t
 
 val write_directly :
      t

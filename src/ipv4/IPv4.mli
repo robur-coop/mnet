@@ -40,7 +40,7 @@ val create :
   -> (t, [> `MTU_too_small ]) result
 
 val max : t -> int
-val src : t -> Ipaddr.V4.t
+val src : t -> dst:Ipaddr.V4.t -> Ipaddr.V4.t
 
 module Writer : sig
   type ipv4 = t

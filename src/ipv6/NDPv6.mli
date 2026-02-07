@@ -52,7 +52,6 @@ val send :
 type error =
   [ `Bad_version
   | `Drop
-  | `Drop_RS
   | `ICMP_error of int * int * int
   | `Invalid_ICMP_checksum
   | `Msg of string

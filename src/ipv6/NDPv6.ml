@@ -183,7 +183,7 @@ module Parser = struct
     let* () = guard `Invalid_ICMP_checksum @@ fun () -> chk = 0 in
     match SBstr.get_uint8 payload 0 with
     | 128 | 129 -> Ok (`Packet (58, src, dst, payload))
-    | 133 -> Error `Drop_RS
+    | 133 -> Error `Drop
     | 134 ->
         (* The packet does not come from a direct neighbour if [hlim] is not
            255. It must be dropped. It is the same of [`NS], [`NA] and
@@ -519,7 +519,6 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
-  Log.debug (fun m -> m "%a" pp_event event);
   (* NOTE(dinosaure): [Prefixes] only consumes prefixes's RA. *)
   let pfxs =
     match event with `RA (_, _, ra) -> ra.Routers.RA.prefix | _ -> []
@@ -626,7 +625,6 @@ let make ~now ~lmtu ~mac mode =
 type error =
   [ `Bad_version
   | `Drop
-  | `Drop_RS
   | `ICMP_error of int * int * int
   | `Invalid_ICMP_checksum
   | `Msg of string
@@ -638,7 +636,6 @@ type error =
 let pp_error ppf = function
   | `Bad_version -> Fmt.string ppf "Bad version"
   | `Drop -> Fmt.string ppf "Drop"
-  | `Drop_RS -> Fmt.string ppf "Drop RS"
   | `ICMP_error _ -> Fmt.pf ppf "ICMP error"
   | `Invalid_ICMP_checksum -> Fmt.string ppf "Invalid ICMP checksum"
   | `Msg msg -> Fmt.string ppf msg

@@ -11,7 +11,7 @@ module TCP : sig
   val create : name:string -> IPv4.t -> IPv6.t -> daemon * state
   val kill : daemon -> unit
 
-  val connect : state -> Ipaddr.V4.t * int -> flow
+  val connect : state -> Ipaddr.t * int -> flow
   (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
   val get : flow -> (string list, [> `Eof | `Refused ]) result

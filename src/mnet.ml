@@ -98,10 +98,11 @@ module TCP = struct
     ; ipv4: IPv4.t
     ; ipv6: IPv6.t
     ; queue: Utcp.output Queue.t
-    ; mutex: Miou.Mutex.t
-    ; condition: Miou.Condition.t
     ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
     ; accept: (int, accept) Hashtbl.t
+    ; mutex: Miou.Mutex.t
+    ; condition: Miou.Condition.t
+    ; kill: bool ref
   }
 
   and accept = Await of flow Miou.Computation.t | Pending of flow Queue.t
@@ -127,7 +128,9 @@ module TCP = struct
     in
     let pkt = IPv4.Writer.into t.ipv4 ~len fn in
     match IPv4.attempt_to_discover_destination t.ipv4 dst with
-    | None -> Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
+    | None ->
+        Log.warn (fun m -> m "A packet is kept in our internal queue");
+        Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
     | Some macaddr ->
         IPv4.write_directly t.ipv4 ~src (dst, macaddr) ~protocol:6 pkt
 
@@ -326,6 +329,10 @@ module TCP = struct
             m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
         raise Closed_by_peer
 
+  let is_active_close = function
+    | Utcp.State.Fin_wait_1 | Utcp.State.Fin_wait_2 | Utcp.State.Closing -> true
+    | _ -> false
+
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
     match Utcp.close t.state.tcp (now ()) t.flow with
@@ -333,6 +340,9 @@ module TCP = struct
         t.state.tcp <- tcp;
         List.iter (write_without_interruption_ip t.state) segs;
         t.closed <- true
+        (* TODO(dinosaure): You should wait until the connection status is
+           [Fin_wait_1], [Fin_wait_2], or [Closing] to be sure that the
+           connection has been properly terminated. *)
     | Error `Not_found -> ()
     | Error (`Msg msg) ->
         Log.err (fun m ->
@@ -379,9 +389,9 @@ module TCP = struct
         | Pending q ->
             if Queue.length q < 1024 then Queue.push flow q
               (* TODO(dinosaure): we only accept 1024 pending established
-                     connections. We should respond to the client if we reach
-                     this limit.
-                     XXX(hannes): not convinced by this hard limit. *)
+                 connections. We should respond to the client if we reach
+                 this limit.
+                 XXX(hannes): not convinced by this hard limit. *)
         | exception Not_found ->
             let q = Queue.create () in
             Queue.push flow q;
@@ -403,46 +413,78 @@ module TCP = struct
     Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
     List.iter (fun out -> Queue.push out state.queue) segs
 
+  exception Timeout
+
+  let with_timeout ts fn =
+    let prm0 = Miou.async @@ fun () -> Mkernel.sleep ts; raise Timeout in
+    let prm1 = Miou.async @@ fn in
+    match Miou.await_first [ prm0; prm1 ] with
+    | Error Timeout -> `Timeout
+    | Error exn -> raise exn
+    | Ok value -> value
+
+  let or_killed (state : state) () =
+    Miou.Mutex.protect state.mutex @@ fun () ->
+    while not !(state.kill) do
+      Miou.Condition.wait state.condition state.mutex
+    done;
+    `Kill
+
   let rec transfer state acc =
     match Queue.pop state.queue with
     | exception Queue.Empty -> acc
     | out -> transfer state (out :: acc)
 
   let rec daemon state n =
-    let handler's_outs = transfer state [] in
-    let pending_outs = List.of_seq (Queue.to_seq state.outs) in
-    Queue.clear state.outs;
-    let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
-    state.tcp <- tcp;
-    let outs = List.rev_append pending_outs outs in
-    let outs = List.rev_append handler's_outs outs in
-    let fn out =
-      Log.debug (fun m -> m "write new TCP packet from daemon");
-      try write_ip state.ipv4 state.ipv6 out with
-      | Net_unreach ->
-          let _, dst, _ = out in
-          Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
-      | exn ->
-          let src, dst, _ = out in
-          Log.err (fun m ->
-              m "Unexpected exception (%a -> %a): %s" Ipaddr.pp src Ipaddr.pp
-                dst (Printexc.to_string exn))
-    in
-    List.iter fn outs;
-    let fn (_id, err, rcv, snd) =
-      let err =
-        match err with
-        | `Retransmission_exceeded -> `Msg "retransmission exceeded"
-        | `Timer_2msl -> `Eof
-        | `Timer_connection_established -> `Eof
-        | `Timer_fin_wait_2 -> `Eof
-      in
-      let err = Error err in
-      Notify.signal err rcv; Notify.signal err snd
-    in
-    List.iter fn drops;
-    Mkernel.sleep 100_000_000;
-    daemon state (n + 1)
+    match with_timeout 100_000_000 (or_killed state) with
+    | `Kill ->
+        let handler's_outs = transfer state [] in
+        let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+        let _tcp, _drop, outs = Utcp.timer state.tcp (now ()) in
+        let outs = List.rev_append pending_outs outs in
+        let outs = List.rev_append handler's_outs outs in
+        Log.debug (fun m ->
+            m "Write %d remaining TCP packet(s)" (List.length outs));
+        let fn out =
+          try write_ip state.ipv4 state.ipv6 out with
+          | Net_unreach -> ()
+          | _exn -> ()
+        in
+        List.iter fn outs
+    | `Timeout ->
+        let handler's_outs = transfer state [] in
+        let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+        Queue.clear state.outs;
+        let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
+        state.tcp <- tcp;
+        let outs = List.rev_append pending_outs outs in
+        let outs = List.rev_append handler's_outs outs in
+        let fn out =
+          Log.debug (fun m -> m "write new TCP packet from daemon");
+          try write_ip state.ipv4 state.ipv6 out with
+          | Net_unreach ->
+              let _, dst, _ = out in
+              Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
+          | exn ->
+              let src, dst, _ = out in
+              Log.err (fun m ->
+                  m "Unexpected exception (%a -> %a): %s" Ipaddr.pp src
+                    Ipaddr.pp dst (Printexc.to_string exn))
+        in
+        List.iter fn outs;
+        let fn (_id, err, rcv, snd) =
+          let err =
+            match err with
+            | `Retransmission_exceeded -> `Msg "retransmission exceeded"
+            | `Timer_2msl -> `Eof
+            | `Timer_connection_established -> `Eof
+            | `Timer_fin_wait_2 -> `Eof
+          in
+          let err = Error err in
+          Notify.signal err rcv; Notify.signal err snd
+        in
+        List.iter fn drops;
+        daemon state (n + 1)
 
   type listen = Listen of int [@@unboxed]
 
@@ -450,34 +492,44 @@ module TCP = struct
   let accept state (Listen port) =
     match Hashtbl.find state.accept port with
     | exception Not_found ->
+        Log.debug (fun m -> m "Add waiter for *:%d" port);
         let c = Miou.Computation.create () in
         Hashtbl.add state.accept port (Await c);
         Miou.Computation.await_exn c
     | Await c ->
-        Log.debug (fun m ->
-            m "listen on %a:%d: multiple waiters" Ipaddr.V4.pp
-              (IPv4.src state.ipv4) port);
+        Log.debug (fun m -> m "Waiter already exists for *:%d" port);
         Miou.Computation.await_exn c
-    | Pending q -> (
+    | Pending q -> begin
+        Log.debug (fun m ->
+            m "Pending established connections (%d)" (Queue.length q));
         match Queue.pop q with
         | exception Queue.Empty ->
             let c = Miou.Computation.create () in
             Hashtbl.replace state.accept port (Await c);
             Miou.Computation.await_exn c
-        | flow -> flow)
+        | flow -> flow
+      end
 
   let listen state port =
     let tcp = Utcp.start_listen state.tcp port in
     state.tcp <- tcp;
     Listen port
 
-  type daemon = unit Miou.t
+  type daemon = {
+      condition: Miou.Condition.t
+    ; mutex: Miou.Mutex.t
+    ; prm: unit Miou.t
+    ; kill: bool ref
+  }
 
   let create ~name ipv4 ipv6 =
     let tcp = Utcp.empty Notify.create name Mirage_crypto_rng.generate in
     let mutex = Miou.Mutex.create () in
     let condition = Miou.Condition.create () in
     let accept = Hashtbl.create 0x10 in
+    let mutex = Miou.Mutex.create () in
+    let condition = Miou.Condition.create () in
+    let kill = ref false in
     let state =
       {
         tcp
@@ -488,16 +540,27 @@ module TCP = struct
       ; condition
       ; accept
       ; outs= Queue.create ()
+      ; kill
       }
     in
     let prm = Miou.async (fun () -> daemon state 0) in
-    (prm, state)
+    let daemon = { condition; mutex; prm; kill } in
+    (daemon, state)
 
-  let kill = Miou.cancel
+  let kill (daemon : daemon) =
+    begin
+      Miou.Mutex.protect daemon.mutex @@ fun () ->
+      daemon.kill := true;
+      Miou.Condition.broadcast daemon.condition
+    end;
+    Miou.await_exn daemon.prm
 
   let connect state (dst, dst_port) =
-    let src = Ipaddr.V4 (IPv4.src state.ipv4) in
-    let dst = Ipaddr.V4 dst in
+    let src =
+      match dst with
+      | Ipaddr.V4 dst -> Ipaddr.V4 (IPv4.src state.ipv4 ~dst)
+      | Ipaddr.V6 dst -> Ipaddr.V6 (IPv6.src state.ipv6 ~dst)
+    in
     let tcp, flow, c, seg =
       Utcp.connect ~src ~dst ~dst_port state.tcp (now ())
     in
@@ -571,19 +634,20 @@ let ipv4_handler icmpv4 udp tcp =
   ();
   fun ((hdr, payload) as pkt) ->
     Log.debug (fun m ->
-        m "receive IPv4 packet (protocol: %d)" hdr.IPv4.protocol);
+        m "receive IPv4 packet %a -> %a (protocol: %d)" Ipaddr.V4.pp
+          hdr.IPv4.src Ipaddr.V4.pp hdr.IPv4.dst hdr.IPv4.protocol);
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
     | 6 ->
-        (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
-       does a copy (to strings). It's safe to transmit our [slice] to
-       [Utcp.handle_buf] and be interrupted by the scheduler. We also
-       can think about a [Utcp.handle_buf_string] which can avoid our
-       [Cstruct.of_string] (but IPv4.String appears only when we have
-       fragmented packets and it's not common).
+        (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it does
+           a copy (to strings). It's safe to transmit our [slice] to
+           [Utcp.handle_buf] and be interrupted by the scheduler. We also can
+           think about a [Utcp.handle_buf_string] which can avoid our
+           [Cstruct.of_string] (but IPv4.String appears only when we have
+           fragmented packets and it's not common).
 
-       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
-       and it permits to perform "fast" checksum validation. *)
+           The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
+           and it permits to perform "fast" checksum validation. *)
         let payload =
           match payload with
           | IPv4.Slice slice ->
@@ -599,6 +663,9 @@ let ipv4_handler icmpv4 udp tcp =
 let ipv6_handler ipv6 tcp =
   ();
   fun ~protocol src dst payload ->
+    Log.debug (fun m ->
+        m "receive IPv6 packet %a -> %a (protocol: %d)" Ipaddr.V6.pp src
+          Ipaddr.V6.pp dst protocol);
     let payload =
       match payload with
       | IPv6.Slice slice ->
