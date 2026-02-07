@@ -84,8 +84,10 @@ let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let src = Option.value ~default:t.mac packet.src in
   let tags = Logs.Tag.add Tags.mac src Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
+  (* NOTE(dinosaure): clean-up our buffer. *)
   Packet.encode_into pkt ~off:0 t.bstr_oc;
   let bstr = Bstr.sub t.bstr_oc ~off:14 ~len:(Bstr.length t.bstr_oc - 14) in
+  Bstr.memset bstr ~off:0 ~len:(Bstr.length bstr) '\000';
   let plus' = fn bstr in
   Option.iter (fun plus -> assert (plus = plus')) plus;
   Log.debug (fun m ->
