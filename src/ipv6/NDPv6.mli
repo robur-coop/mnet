@@ -18,6 +18,7 @@ type t
 
 val make : now:int -> lmtu:int -> mac:Macaddr.t -> mode -> t * Packet.t list
 val src : t -> ?src:Ipaddr.V6.t -> Ipaddr.V6.t -> Ipaddr.V6.t
+val addresses : t -> Ipaddr.V6.Prefix.t list
 
 type event =
   [ `Packet of int * Ipaddr.V6.t * Ipaddr.V6.t * SBstr.t

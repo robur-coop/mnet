@@ -398,6 +398,8 @@ type t = {
 let src t ?src dst =
   match src with Some src -> src | None -> Addrs.select t.addrs dst
 
+let addresses t = Addrs.addresses t.addrs
+
 let push addr pkts queues =
   match Ipaddr.V6.Map.find_opt addr queues with
   | Some pkts' -> Ipaddr.V6.Map.add addr (List.rev_append pkts pkts') queues
@@ -455,7 +457,10 @@ let pp_event ppf = function
   | `Fragment _ -> Fmt.string ppf "Fragment"
 
 let next_hop t addr =
-  if Ipaddr.V6.is_multicast addr || Prefixes.is_local t.prefixes addr then
+  if Ipaddr.V6.is_multicast addr
+     || Ipaddr.V6.Prefix.(mem addr link)
+     || Prefixes.is_local t.prefixes addr
+  then
     (* on-link *)
     Ok (t, addr, Some t.lmtu)
   else

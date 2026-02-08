@@ -155,7 +155,7 @@ module TCP = struct
   let write_ipv6 ipv6 (src, dst, seg) =
     let len = Utcp.Segment.length seg in
     let fn bstr =
-      let cs = Cstruct.of_bigarray bstr in
+      let cs = Cstruct.of_bigarray ~off:0 ~len bstr in
       let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
       Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
     in
@@ -721,7 +721,16 @@ type stack = {
   ; udp: UDP.state
   ; ipv6_daemon: IPv6.daemon
   ; tcp_daemon: TCP.daemon
+  ; ipv4: IPv4.t
+  ; ipv6: IPv6.t
 }
+
+let addresses t =
+  let ipv4s = IPv4.addresses t.ipv4 in
+  let ipv6s = IPv6.addresses t.ipv6 in
+  let ipv4s = List.map (fun v -> Ipaddr.V4 v) ipv4s in
+  let ipv6s = List.map (fun v -> Ipaddr.V6 v) ipv6s in
+  List.rev_append ipv6s ipv4s
 
 let kill t =
   TCP.kill t.tcp_daemon;
@@ -759,6 +768,8 @@ let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
         ; icmpv4
         ; ipv6_daemon
         ; tcp_daemon
+        ; ipv4
+        ; ipv6
         }
       in
       Ok (stack, tcp, udp)

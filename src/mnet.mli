@@ -123,4 +123,5 @@ val stack :
   -> Ipaddr.V4.Prefix.t
   -> (stack * TCP.state * UDP.state) Mkernel.arg
 
+val addresses : stack -> Ipaddr.Prefix.t list
 val kill : stack -> unit

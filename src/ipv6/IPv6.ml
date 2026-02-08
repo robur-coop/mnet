@@ -130,6 +130,7 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
 
 let at_most_one = function [] | [ _ ] -> true | _ -> false
 let src t ~dst = NDPv6.src t.ndpv6 dst
+let addresses t = NDPv6.addresses t.ndpv6
 
 let write_directly t ~now ?src dst ~protocol ~len user's_fn =
   let src = NDPv6.src t.ndpv6 ?src dst in

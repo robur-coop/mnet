@@ -29,6 +29,14 @@ let is_my_addr t ipaddr =
   in
   match Addrs.iter_k fn t with exception Yes -> true | _ -> false
 
+let addresses t =
+  let fn prefix state addrs =
+    match state with
+    | Addr.Preferred _ | Addr.Deprecated _ -> prefix :: addrs
+    | _ -> addrs
+  in
+  Addrs.fold_k fn [] t
+
 let solicited_node_prefix = Ipaddr.V6.Prefix.of_string_exn "ff02::1:ff00:0/104"
 let _1s = 1_000_000_000
 

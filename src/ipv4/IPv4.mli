@@ -41,6 +41,7 @@ val create :
 
 val max : t -> int
 val src : t -> dst:Ipaddr.V4.t -> Ipaddr.V4.t
+val addresses : t -> Ipaddr.V4.Prefix.t list
 
 module Writer : sig
   type ipv4 = t

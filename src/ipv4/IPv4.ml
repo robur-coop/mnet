@@ -137,6 +137,7 @@ type t = {
 }
 
 let tags { tags; _ } = tags
+let addresses { cidr; _ } = [ cidr ]
 
 module Writer = struct
   type ipv4 = t
