@@ -246,7 +246,7 @@ module Parser = struct
         let uid = Int32.to_int (SBstr.get_int32_be frag 4) in
         let frag = { Fragment.protocol; off; last= not more; uid; payload } in
         Ok (`Fragment (src, dst, frag))
-    | 43 | 44 | 50 | 51 | 135 | 59 -> Error `Drop
+    | 43 | 50 | 51 | 135 | 59 -> Error `Drop
     | 58 -> decode_icmp ~src ~dst sbstr off
     | n when 143 <= n && n <= 255 -> Error `Drop
     | protocol -> Ok (`Packet (protocol, src, dst, SBstr.shift sbstr off))
@@ -330,10 +330,6 @@ module RS = struct
         let slla = Macaddr.to_octets mac in
         Bstr.blit_from_string slla ~src_off:0 bstr ~dst_off:2 ~len:6
       end;
-      let cs0 = Cstruct.of_bigarray bstr ~off:8 ~len:32 in
-      let cs1 =
-        Neighbors.cs_of_len_and_protocol ~len:payload_len ~protocol:58
-      in
       let payload = SBstr.make bstr ~off:40 ~len:payload_len in
       let chk = Parser.checksum ~src ~dst payload in
       Bstr.set_uint16_be bstr 42 chk
@@ -419,7 +415,7 @@ type event =
   | `Fragment of Ipaddr.V6.t * Ipaddr.V6.t * Fragment.t
   | `Tick ]
 
-let pp_event ppf = function
+let _pp_event ppf = function
   | `Packet (protocol, src, dst, payload) ->
       let { Slice.off; len; buf } = payload in
       let bstr = Bstr.sub ~off ~len buf in

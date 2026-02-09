@@ -179,13 +179,17 @@ module TCP = struct
     | Ipaddr.V4 _, Ipaddr.V6 _ ->
         failwith "Impossible to write an IPv6 packet from an IPv4 host"
     | Ipaddr.V6 _, Ipaddr.V4 _ ->
-        failwith "Impossible to write an IPv4 packet from an IPv4 host"
+        failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
   let write_without_interruption_ip state (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst ->
         write_without_interruption_ipv4 state (src, dst, seg)
     | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state.ipv6 (src, dst, seg)
+    | Ipaddr.V4 _, Ipaddr.V6 _ ->
+        failwith "Impossible to write an IPv6 packet from an IPv4 host"
+    | Ipaddr.V6 _, Ipaddr.V4 _ ->
+        failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
   type result = Eof | Refused
 
@@ -330,10 +334,6 @@ module TCP = struct
         Log.err (fun m ->
             m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
         raise Closed_by_peer
-
-  let is_active_close = function
-    | Utcp.State.Fin_wait_1 | Utcp.State.Fin_wait_2 | Utcp.State.Closing -> true
-    | _ -> false
 
   let close t =
     if t.closed then Fmt.invalid_arg "Connection already closed";
@@ -526,8 +526,6 @@ module TCP = struct
 
   let create ~name ipv4 ipv6 =
     let tcp = Utcp.empty Notify.create name Mirage_crypto_rng.generate in
-    let mutex = Miou.Mutex.create () in
-    let condition = Miou.Condition.create () in
     let accept = Hashtbl.create 0x10 in
     let mutex = Miou.Mutex.create () in
     let condition = Miou.Condition.create () in
