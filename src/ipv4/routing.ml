@@ -1,5 +1,3 @@
-module ARPv4 = Arp
-
 let broadcast = Ok Macaddr.broadcast
 
 let macaddr_of_multicast ipaddr =

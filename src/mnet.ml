@@ -1,11 +1,8 @@
 let src = Logs.Src.create "mnet"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-module Ethernet = Ethernet
-module ARPv4 = Arp
-module IPv4 = Ipv4
-module ICMPv4 = Icmpv4
-module UDPv4 = Udpv4
+module IPv4 = IPv4
+module IPv6 = IPv6
 
 exception Net_unreach
 exception Closed_by_peer
@@ -91,8 +88,8 @@ end
 (* NOTE(dinosaure): μTCP is actually well-abstracted about IPv4 and IPv6 but we
    only have IPv4 implementation. We should handle easily the IPv6 at this
    layer I think. *)
-module TCPv4 = struct
-  let src = Logs.Src.create "mnet.tcpv4"
+module TCP = struct
+  let src = Logs.Src.create "mnet.tcp"
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -101,11 +98,13 @@ module TCPv4 = struct
   type state = {
       mutable tcp: w Utcp.state
     ; ipv4: IPv4.t
+    ; ipv6: IPv6.t
     ; queue: Utcp.output Queue.t
-    ; mutex: Miou.Mutex.t
-    ; condition: Miou.Condition.t
     ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
     ; accept: (int, accept) Hashtbl.t
+    ; mutex: Miou.Mutex.t
+    ; condition: Miou.Condition.t
+    ; kill: bool ref
   }
 
   and accept = Await of flow Miou.Computation.t | Pending of flow Queue.t
@@ -131,7 +130,9 @@ module TCPv4 = struct
     in
     let pkt = IPv4.Writer.into t.ipv4 ~len fn in
     match IPv4.attempt_to_discover_destination t.ipv4 dst with
-    | None -> Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
+    | None ->
+        Log.warn (fun m -> m "A packet is kept in our internal queue");
+        Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) t.outs
     | Some macaddr ->
         IPv4.write_directly t.ipv4 ~src (dst, macaddr) ~protocol:6 pkt
 
@@ -153,16 +154,42 @@ module TCPv4 = struct
         Log.err (fun m -> m "%a is unreachable" Ipaddr.V4.pp dst);
         raise Net_unreach
 
-  let write_ip ipv4 (src, dst, seg) =
+  let write_ipv6 ipv6 (src, dst, seg) =
+    let len = Utcp.Segment.length seg in
+    let fn bstr =
+      let cs = Cstruct.of_bigarray ~off:0 ~len bstr in
+      let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
+      Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    in
+    let now = Mkernel.clock_monotonic () in
+    match IPv6.write_directly ~now ipv6 ~src dst ~protocol:6 ~len fn with
+    | Ok () -> ()
+    | Error `Packet_too_big ->
+        (* TODO(dinosaure): we should set MSS on the TCP layer and retry
+           everything which was not ACKed. *)
+        assert false
+    | Error (`Destination_unreachable _) ->
+        Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
+        raise Net_unreach
+
+  let write_ip ipv4 ipv6 (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
-    | _ -> failwith "IPv6 not implemented"
+    | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 ipv6 (src, dst, seg)
+    | Ipaddr.V4 _, Ipaddr.V6 _ ->
+        failwith "Impossible to write an IPv6 packet from an IPv4 host"
+    | Ipaddr.V6 _, Ipaddr.V4 _ ->
+        failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
-  let write_without_interruption_ip t (src, dst, seg) =
+  let write_without_interruption_ip state (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst ->
-        write_without_interruption_ipv4 t (src, dst, seg)
-    | _ -> failwith "IPv6 not implemented"
+        write_without_interruption_ipv4 state (src, dst, seg)
+    | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state.ipv6 (src, dst, seg)
+    | Ipaddr.V4 _, Ipaddr.V6 _ ->
+        failwith "Impossible to write an IPv6 packet from an IPv4 host"
+    | Ipaddr.V6 _, Ipaddr.V4 _ ->
+        failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
   type result = Eof | Refused
 
@@ -184,17 +211,17 @@ module TCPv4 = struct
     match Utcp.recv t.state.tcp (now ()) t.flow with
     | Ok (tcp, [], c, segs) -> begin
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         match Notify.await c with
         | Ok () -> begin
             match Utcp.recv t.state.tcp (now ()) t.flow with
             | Ok (tcp, [], _c, segs) ->
                 t.state.tcp <- tcp;
-                List.iter (write_ip t.state.ipv4) segs;
+                List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
                 get t
             | Ok (tcp, data, _c, segs) ->
                 t.state.tcp <- tcp;
-                List.iter (write_ip t.state.ipv4) segs;
+                List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
                 Ok data
             | Error `Not_found -> Error Refused
             | Error `Eof -> Error Eof
@@ -213,7 +240,7 @@ module TCPv4 = struct
       end
     | Ok (tcp, data, _c, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         Ok data
     | Error `Eof -> Error Eof
     | Error (`Msg msg) ->
@@ -264,7 +291,7 @@ module TCPv4 = struct
       match len with None -> Bytes.length buf - off | Some len -> len
     in
     if off < 0 || len < 0 || off > Bytes.length buf - len then
-      invalid_arg "TCPv4.really_read";
+      invalid_arg "TCP.really_read";
     if len > 0 then really_read t off len buf
 
   let rec write t str off len =
@@ -276,7 +303,7 @@ module TCPv4 = struct
         raise Closed_by_peer
     | Ok (tcp, bytes_sent, c, segs) -> begin
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs;
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
         Log.debug (fun m -> m ~tags:t.tags "write %d byte(s)" bytes_sent);
         if bytes_sent < len then
           let result = Notify.await c in
@@ -315,6 +342,9 @@ module TCPv4 = struct
         t.state.tcp <- tcp;
         List.iter (write_without_interruption_ip t.state) segs;
         t.closed <- true
+        (* TODO(dinosaure): You should wait until the connection status is
+           [Fin_wait_1], [Fin_wait_2], or [Closing] to be sure that the
+           connection has been properly terminated. *)
     | Error `Not_found -> ()
     | Error (`Msg msg) ->
         Log.err (fun m ->
@@ -324,7 +354,7 @@ module TCPv4 = struct
     match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
     | Ok (tcp, segs) ->
         t.state.tcp <- tcp;
-        List.iter (write_ip t.state.ipv4) segs
+        List.iter (write_ip t.state.ipv4 t.state.ipv6) segs
     | Error (`Msg msg) ->
         Log.err (fun m ->
             m ~tags:t.tags "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
@@ -335,27 +365,10 @@ module TCPv4 = struct
   let _eof = Error `Eof
   let _ok = Ok ()
 
-  let handler state (pkt, payload) =
-    let src = Ipaddr.V4 pkt.IPv4.src in
-    let dst = Ipaddr.V4 pkt.IPv4.dst in
+  let handler state src dst payload =
     Log.debug (fun m ->
-        m "New TCPv4 packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
-    (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it
-       does a copy (to strings). It's safe to transmit our [slice] to
-       [Utcp.handle_buf] and be interrupted by the scheduler. We also
-       can think about a [Utcp.handle_buf_string] which can avoid our
-       [Cstruct.of_string] (but IPv4.String appears only when we have
-       fragmented packets and it's not common).
-
-       The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
-       and it permits to perform "fast" checksum validation. *)
-    let cs =
-      match payload with
-      | IPv4.Slice slice ->
-          let { Slice.buf; off; len } = slice in
-          Cstruct.of_bigarray ~off ~len buf
-      | IPv4.String str -> Cstruct.of_string str
-    in
+        m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
+    let cs = Cstruct.of_bigarray payload in
     Log.debug (fun m ->
         m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
     let tcp, ev, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
@@ -365,7 +378,7 @@ module TCPv4 = struct
         let (_, src_port), (ipaddr, port) = Utcp.peers flow in
         Log.debug (fun m ->
             m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-        let tags = Ipv4.tags state.ipv4 in
+        let tags = IPv4.tags state.ipv4 in
         let tags = Logs.Tag.add Tags.tcp (ipaddr, port) tags in
         let buffer = Buffer.create 0x7ff in
         let flow = { state; tags; flow; buffer; closed= false } in
@@ -373,14 +386,14 @@ module TCPv4 = struct
         | Await c ->
             Hashtbl.remove state.accept src_port;
             Log.debug (fun m ->
-                m "transmit the new incoming TCPv4 connection to the handler");
+                m "transmit the new incoming TCP connection to the handler");
             ignore (Miou.Computation.try_return c flow)
         | Pending q ->
             if Queue.length q < 1024 then Queue.push flow q
               (* TODO(dinosaure): we only accept 1024 pending established
-                     connections. We should respond to the client if we reach
-                     this limit.
-                     XXX(hannes): not convinced by this hard limit. *)
+                 connections. We should respond to the client if we reach
+                 this limit.
+                 XXX(hannes): not convinced by this hard limit. *)
         | exception Not_found ->
             let q = Queue.create () in
             Queue.push flow q;
@@ -402,46 +415,78 @@ module TCPv4 = struct
     Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
     List.iter (fun out -> Queue.push out state.queue) segs
 
+  exception Timeout
+
+  let with_timeout ts fn =
+    let prm0 = Miou.async @@ fun () -> Mkernel.sleep ts; raise Timeout in
+    let prm1 = Miou.async @@ fn in
+    match Miou.await_first [ prm0; prm1 ] with
+    | Error Timeout -> `Timeout
+    | Error exn -> raise exn
+    | Ok value -> value
+
+  let or_killed (state : state) () =
+    Miou.Mutex.protect state.mutex @@ fun () ->
+    while not !(state.kill) do
+      Miou.Condition.wait state.condition state.mutex
+    done;
+    `Kill
+
   let rec transfer state acc =
     match Queue.pop state.queue with
     | exception Queue.Empty -> acc
     | out -> transfer state (out :: acc)
 
   let rec daemon state n =
-    let handler's_outs = transfer state [] in
-    let pending_outs = List.of_seq (Queue.to_seq state.outs) in
-    Queue.clear state.outs;
-    let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
-    state.tcp <- tcp;
-    let outs = List.rev_append pending_outs outs in
-    let outs = List.rev_append handler's_outs outs in
-    let fn out =
-      Log.debug (fun m -> m "write new TCPv4 packet from daemon");
-      try write_ip state.ipv4 out with
-      | Net_unreach ->
-          let _, dst, _ = out in
-          Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
-      | exn ->
-          let src, dst, _ = out in
-          Log.err (fun m ->
-              m "Unexpected exception (%a -> %a): %s" Ipaddr.pp src Ipaddr.pp
-                dst (Printexc.to_string exn))
-    in
-    List.iter fn outs;
-    let fn (_id, err, rcv, snd) =
-      let err =
-        match err with
-        | `Retransmission_exceeded -> `Msg "retransmission exceeded"
-        | `Timer_2msl -> `Eof
-        | `Timer_connection_established -> `Eof
-        | `Timer_fin_wait_2 -> `Eof
-      in
-      let err = Error err in
-      Notify.signal err rcv; Notify.signal err snd
-    in
-    List.iter fn drops;
-    Mkernel.sleep 100_000_000;
-    daemon state (n + 1)
+    match with_timeout 100_000_000 (or_killed state) with
+    | `Kill ->
+        let handler's_outs = transfer state [] in
+        let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+        let _tcp, _drop, outs = Utcp.timer state.tcp (now ()) in
+        let outs = List.rev_append pending_outs outs in
+        let outs = List.rev_append handler's_outs outs in
+        Log.debug (fun m ->
+            m "Write %d remaining TCP packet(s)" (List.length outs));
+        let fn out =
+          try write_ip state.ipv4 state.ipv6 out with
+          | Net_unreach -> ()
+          | _exn -> ()
+        in
+        List.iter fn outs
+    | `Timeout ->
+        let handler's_outs = transfer state [] in
+        let pending_outs = List.of_seq (Queue.to_seq state.outs) in
+        Queue.clear state.outs;
+        let tcp, drops, outs = Utcp.timer state.tcp (now ()) in
+        state.tcp <- tcp;
+        let outs = List.rev_append pending_outs outs in
+        let outs = List.rev_append handler's_outs outs in
+        let fn out =
+          Log.debug (fun m -> m "write new TCP packet from daemon");
+          try write_ip state.ipv4 state.ipv6 out with
+          | Net_unreach ->
+              let _, dst, _ = out in
+              Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
+          | exn ->
+              let src, dst, _ = out in
+              Log.err (fun m ->
+                  m "Unexpected exception (%a -> %a): %s" Ipaddr.pp src
+                    Ipaddr.pp dst (Printexc.to_string exn))
+        in
+        List.iter fn outs;
+        let fn (_id, err, rcv, snd) =
+          let err =
+            match err with
+            | `Retransmission_exceeded -> `Msg "retransmission exceeded"
+            | `Timer_2msl -> `Eof
+            | `Timer_connection_established -> `Eof
+            | `Timer_fin_wait_2 -> `Eof
+          in
+          let err = Error err in
+          Notify.signal err rcv; Notify.signal err snd
+        in
+        List.iter fn drops;
+        daemon state (n + 1)
 
   type listen = Listen of int [@@unboxed]
 
@@ -449,60 +494,80 @@ module TCPv4 = struct
   let accept state (Listen port) =
     match Hashtbl.find state.accept port with
     | exception Not_found ->
+        Log.debug (fun m -> m "Add waiter for *:%d" port);
         let c = Miou.Computation.create () in
         Hashtbl.add state.accept port (Await c);
         Miou.Computation.await_exn c
     | Await c ->
-        Log.debug (fun m ->
-            m "listen on %a:%d: multiple waiters" Ipaddr.V4.pp
-              (IPv4.src state.ipv4) port);
+        Log.debug (fun m -> m "Waiter already exists for *:%d" port);
         Miou.Computation.await_exn c
-    | Pending q -> (
+    | Pending q -> begin
+        Log.debug (fun m ->
+            m "Pending established connections (%d)" (Queue.length q));
         match Queue.pop q with
         | exception Queue.Empty ->
             let c = Miou.Computation.create () in
             Hashtbl.replace state.accept port (Await c);
             Miou.Computation.await_exn c
-        | flow -> flow)
+        | flow -> flow
+      end
 
   let listen state port =
     let tcp = Utcp.start_listen state.tcp port in
     state.tcp <- tcp;
     Listen port
 
-  type daemon = unit Miou.t
+  type daemon = {
+      condition: Miou.Condition.t
+    ; mutex: Miou.Mutex.t
+    ; prm: unit Miou.t
+    ; kill: bool ref
+  }
 
-  let create ~name ipv4 =
+  let create ~name ipv4 ipv6 =
     let tcp = Utcp.empty Notify.create name Mirage_crypto_rng.generate in
+    let accept = Hashtbl.create 0x10 in
     let mutex = Miou.Mutex.create () in
     let condition = Miou.Condition.create () in
-    let accept = Hashtbl.create 0x10 in
+    let kill = ref false in
     let state =
       {
         tcp
       ; ipv4
+      ; ipv6
       ; queue= Queue.create ()
       ; mutex
       ; condition
       ; accept
       ; outs= Queue.create ()
+      ; kill
       }
     in
     let prm = Miou.async (fun () -> daemon state 0) in
-    (prm, state)
+    let daemon = { condition; mutex; prm; kill } in
+    (daemon, state)
 
-  let kill = Miou.cancel
+  let kill (daemon : daemon) =
+    begin
+      Miou.Mutex.protect daemon.mutex @@ fun () ->
+      daemon.kill := true;
+      Miou.Condition.broadcast daemon.condition
+    end;
+    Miou.await_exn daemon.prm
 
   let connect state (dst, dst_port) =
-    let src = Ipaddr.V4 (IPv4.src state.ipv4) in
-    let dst = Ipaddr.V4 dst in
+    let src =
+      match dst with
+      | Ipaddr.V4 dst -> Ipaddr.V4 (IPv4.src state.ipv4 ~dst)
+      | Ipaddr.V6 dst -> Ipaddr.V6 (IPv6.src state.ipv6 ~dst)
+    in
     let tcp, flow, c, seg =
       Utcp.connect ~src ~dst ~dst_port state.tcp (now ())
     in
-    let tags = Ipv4.tags state.ipv4 in
+    let tags = IPv4.tags state.ipv4 in
     let tags = Logs.Tag.add Tags.tcp (dst, dst_port) tags in
     state.tcp <- tcp;
-    write_ip state.ipv4 seg;
+    write_ip state.ipv4 state.ipv6 seg;
     Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
     match Notify.await c with
     | Ok () ->
@@ -522,8 +587,10 @@ end
 let pp_error ppf = function
   | `MTU_too_small -> Fmt.string ppf "MTU too small"
   | `Exn exn -> Fmt.pf ppf "exception: %s" (Printexc.to_string exn)
+  | `Destination_unreachable _ -> Fmt.string ppf "Destination unreachable"
+  | `Packet_too_big -> Fmt.string ppf "Packet too big"
 
-let ethernet_handler arpv4 ipv4 =
+let ethernet_handler arpv4 ipv4 ipv6 =
   ();
   (* NOTE(dinosaure): about the handler and the packet received. The latter is
      in the form of a [Bstr.t] that physically corresponds to the [Bstr.t] used
@@ -559,34 +626,120 @@ let ethernet_handler arpv4 ipv4 =
     match pkt.Ethernet.protocol with
     | Ethernet.ARPv4 -> ARPv4.transfer arpv4 pkt
     | Ethernet.IPv4 -> IPv4.input ipv4 pkt
-    | _ -> Ethernet.uninteresting_packet ()
+    | Ethernet.IPv6 -> IPv6.input ipv6 pkt
   in
   handler
 
-let ipv4_handler icmpv4 udpv4 tcpv4 =
+let ipv4_handler icmpv4 udp tcp =
   ();
-  fun ((hdr, _) as pkt) ->
+  fun ((hdr, payload) as pkt) ->
+    Log.debug (fun m ->
+        m "receive IPv4 packet %a -> %a (protocol: %d)" Ipaddr.V4.pp
+          hdr.IPv4.src Ipaddr.V4.pp hdr.IPv4.dst hdr.IPv4.protocol);
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
-    | 6 -> TCPv4.handler tcpv4 pkt
-    | 17 -> UDPv4.handler udpv4 pkt
+    | 6 ->
+        (* NOTE(dinosaure): µTCP does not take the ownership on [cs] but it does
+           a copy (to strings). It's safe to transmit our [slice] to
+           [Utcp.handle_buf] and be interrupted by the scheduler. We also can
+           think about a [Utcp.handle_buf_string] which can avoid our
+           [Cstruct.of_string] (but IPv4.String appears only when we have
+           fragmented packets and it's not common).
+
+           The use of [Cstruct.t]/[Slice.t]/[Bigarray.Array1.t] is opportunistic
+           and it permits to perform "fast" checksum validation. *)
+        let payload =
+          match payload with
+          | IPv4.Slice slice ->
+              let { Slice.buf; off; len } = slice in
+              Bstr.sub ~off ~len buf
+          | IPv4.String str -> Bstr.of_string str
+        in
+        let src = Ipaddr.V4 hdr.IPv4.src and dst = Ipaddr.V4 hdr.IPv4.dst in
+        TCP.handler tcp src dst payload
+    | 17 -> UDP.handler udp pkt
     | _ -> ()
 
-type stackv4 = {
+let ipv6_handler ipv6 tcp =
+  ();
+  fun ~protocol src dst payload ->
+    Log.debug (fun m ->
+        m "receive IPv6 packet %a -> %a (protocol: %d)" Ipaddr.V6.pp src
+          Ipaddr.V6.pp dst protocol);
+    let payload =
+      match payload with
+      | IPv6.Slice slice ->
+          let { Slice.buf; off; len } = slice in
+          Bstr.sub ~off ~len buf
+      | IPv6.String str -> Bstr.of_string str
+    in
+    match protocol with
+    | 6 ->
+        let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
+        TCP.handler tcp src dst payload
+    | 58 ->
+        let len = Bstr.length payload in
+        if len >= 8 then begin
+          match Bstr.get_uint8 payload 0 with
+          | 128 ->
+              Log.debug (fun m ->
+                  m "ICMPv6 Echo Request from %a" Ipaddr.V6.pp src);
+              let src = dst and dst = src in
+              let fn bstr =
+                Bstr.set_uint8 bstr 0 129;
+                Bstr.set_uint8 bstr 1 0;
+                Bstr.set_uint16_be bstr 2 0;
+                Bstr.blit payload ~src_off:4 bstr ~dst_off:4 ~len:(len - 4);
+                let hdr = Bytes.create 40 in
+                let src_octets = Ipaddr.V6.to_octets src in
+                let dst_octets = Ipaddr.V6.to_octets dst in
+                Bytes.blit_string src_octets 0 hdr 0 16;
+                Bytes.blit_string dst_octets 0 hdr 16 16;
+                Bytes.set_int32_be hdr 32 (Int32.of_int len);
+                Bytes.set_int32_be hdr 36 58l;
+                let hdr = Bytes.unsafe_to_string hdr in
+                let payload = Bstr.sub_string bstr ~off:0 ~len in
+                let chk = Utcp.Checksum.digest_strings [ hdr; payload ] in
+                Bstr.set_uint16_be bstr 2 chk
+              in
+              let ok = Fun.id
+              and error err =
+                Log.warn (fun m ->
+                    m "Impossible to pong %a: %a" Ipaddr.V6.pp dst pp_error err)
+              in
+              let now = Mkernel.clock_monotonic () in
+              IPv6.write_directly ipv6 ~now ~src dst ~protocol ~len fn
+              |> Result.fold ~ok ~error
+          | _ -> ()
+        end
+    | _ -> ()
+
+type stack = {
     ethernet_daemon: Ethernet.daemon
   ; arpv4_daemon: ARPv4.daemon
   ; icmpv4: ICMPv4.daemon
-  ; udpv4: UDPv4.state
-  ; tcpv4_daemon: TCPv4.daemon
+  ; udp: UDP.state
+  ; ipv6_daemon: IPv6.daemon
+  ; tcp_daemon: TCP.daemon
+  ; ipv4: IPv4.t
+  ; ipv6: IPv6.t
 }
 
+let addresses t =
+  let ipv4s = IPv4.addresses t.ipv4 in
+  let ipv6s = IPv6.addresses t.ipv6 in
+  let ipv4s = List.map (fun v -> Ipaddr.V4 v) ipv4s in
+  let ipv6s = List.map (fun v -> Ipaddr.V6 v) ipv6s in
+  List.rev_append ipv6s ipv4s
+
 let kill t =
-  TCPv4.kill t.tcpv4_daemon;
+  TCP.kill t.tcp_daemon;
+  IPv6.kill t.ipv6_daemon;
   ICMPv4.kill t.icmpv4;
   ARPv4.kill t.arpv4_daemon;
   Ethernet.kill t.ethernet_daemon
 
-let stackv4 ~name ?gateway cidr =
+let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
@@ -596,21 +749,30 @@ let stackv4 ~name ?gateway cidr =
       let* arpv4_daemon, arpv4 =
         ARPv4.create ~ipaddr:(Ipaddr.V4.Prefix.address cidr) eth
       in
-      Log.debug (fun m -> m "✓ ARPv4 daemon launched");
       let* ipv4 = IPv4.create eth arpv4 ?gateway cidr in
-      Log.debug (fun m -> m "✓ IPv4 stack created");
+      let now = Mkernel.clock_monotonic () in
+      let* ipv6, ipv6_daemon = IPv6.create ~now eth ipv6 in
       let icmpv4 = ICMPv4.handler ipv4 in
-      Log.debug (fun m -> m "✓ ICMPv4 daemon launched");
-      let tcpv4_daemon, tcpv4 = TCPv4.create ~name:"uniker.ml" ipv4 in
-      let udpv4 = UDPv4.create ipv4 in
-      Log.debug (fun m -> m "✓ TCPv4 daemon launched");
-      IPv4.set_handler ipv4 (ipv4_handler icmpv4 udpv4 tcpv4);
-      let fn = ethernet_handler arpv4 ipv4 in
+      let tcp_daemon, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
+      let udp = UDP.create ipv4 ipv6 in
+      IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
+      IPv6.set_handler ipv6 (ipv6_handler ipv6 tcp);
+      (* TODO(dinosaure): UDPv6 *)
+      let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;
-      let stackv4 =
-        { ethernet_daemon= daemon; arpv4_daemon; udpv4; icmpv4; tcpv4_daemon }
+      let stack =
+        {
+          ethernet_daemon= daemon
+        ; arpv4_daemon
+        ; udp
+        ; icmpv4
+        ; ipv6_daemon
+        ; tcp_daemon
+        ; ipv4
+        ; ipv6
+        }
       in
-      Ok (stackv4, tcpv4, udpv4)
+      Ok (stack, tcp, udp)
     in
     let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
     match connect mac with

@@ -1,8 +1,6 @@
-module IPv4 = Ipv4
-
 type state
 
-val create : IPv4.t -> state
+val create : IPv4.t -> IPv6.t -> state
 
 val recvfrom :
      state

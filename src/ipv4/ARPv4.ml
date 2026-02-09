@@ -54,60 +54,25 @@ end
 
 let mac0 = Macaddr.of_octets_exn (String.make 6 '\000')
 
-type w = Macaddr.t Miou.Computation.t
+module Entry = struct
+  type ivar = Macaddr.t Miou.Computation.t
 
-type entry =
-  | Static of Macaddr.t * bool
-  | Dynamic of Macaddr.t * int
-  | Pending of w * int
+  type t =
+    | Static of Macaddr.t
+    | Dynamic of { addr: Macaddr.t; epoch: int }
+    | Pending of { ivar: ivar; retry: int }
 
-module V = struct
-  type t = unit
-
-  let weight (_ : t) = 1
+  let is_disposable = function Dynamic _ -> true | _ -> false
 end
 
-module K = struct
+module Key = struct
   include Ipaddr.V4
 
   let equal a b = Ipaddr.V4.compare a b = 0
   let hash = Hashtbl.hash
 end
 
-module Entries = struct
-  module Lru = Lru.M.Make (K) (V)
-
-  type t = { entries: (Ipaddr.V4.t, entry) Hashtbl.t; dynamic: Lru.t }
-
-  let create size = { entries= Hashtbl.create size; dynamic= Lru.create size }
-
-  let add t ipaddr entry =
-    Hashtbl.replace t.entries ipaddr entry;
-    let () =
-      match entry with
-      | Dynamic _ -> Lru.add ipaddr () t.dynamic
-      | _ -> Lru.remove ipaddr t.dynamic
-    in
-    while Lru.weight t.dynamic > Lru.capacity t.dynamic do
-      match Lru.lru t.dynamic with
-      | Some (ipaddr', ()) ->
-          Hashtbl.remove t.entries ipaddr';
-          Lru.remove ipaddr' t.dynamic
-      | None -> ()
-    done
-
-  let find t ipaddr =
-    Lru.promote ipaddr t.dynamic;
-    Hashtbl.find t.entries ipaddr
-
-  let remove t ipaddr =
-    Hashtbl.remove t.entries ipaddr;
-    Lru.remove ipaddr t.dynamic
-
-  let fold fn t acc = Hashtbl.fold fn t.entries acc
-  let reset t = Hashtbl.reset t.entries
-  let iter fn t = Hashtbl.iter fn t.entries
-end
+module Entries = Table.Make (Key) (Entry)
 
 type t = {
     entries: Entries.t
@@ -123,22 +88,18 @@ type t = {
 }
 
 let alias t ipaddr =
-  let () =
-    match Entries.find t.entries ipaddr with
-    | exception Not_found -> ()
-    | Pending (c, _) -> ignore (Miou.Computation.try_return c t.macaddr)
-    | _ -> ()
-  in
-  Entries.add t.entries ipaddr (Static (t.macaddr, true));
-  let pkt =
-    {
-      Packet.operation= Packet.Request
-    ; src_mac= t.macaddr
-    ; dst_mac= mac0
-    ; src_ip= ipaddr
-    ; dst_ip= ipaddr
-    }
-  in
+  begin match Entries.find t.entries ipaddr with
+  | exception Not_found -> ()
+  | Pending { ivar; _ } -> ignore (Miou.Computation.try_return ivar t.macaddr)
+  | _ -> ()
+  end;
+  Entries.add t.entries ipaddr (Static t.macaddr);
+  let operation = Packet.Request in
+  let src_mac = t.macaddr in
+  let dst_mac = mac0 in
+  let src_ip = ipaddr in
+  let dst_ip = ipaddr in
+  let pkt = { Packet.operation; src_mac; dst_mac; src_ip; dst_ip } in
   (pkt, Macaddr.broadcast)
 
 let write t (arp, dst) =
@@ -151,26 +112,19 @@ let guard err fn = if fn () then Ok () else Error err
 let macaddr t = t.macaddr
 
 let request t dst_ip =
+  let operation = Packet.Request in
+  let src_mac = t.macaddr in
   let dst_mac = Macaddr.broadcast in
-  ( {
-      Packet.operation= Request
-    ; src_mac= t.macaddr
-    ; dst_mac
-    ; src_ip= t.ipaddr
-    ; dst_ip
-    }
-  , dst_mac )
+  let src_ip = t.ipaddr in
+  ({ Packet.operation; src_mac; dst_mac; src_ip; dst_ip }, dst_mac)
 
 let reply arp macaddr =
-  let pkt =
-    {
-      Packet.operation= Packet.Reply
-    ; src_mac= macaddr
-    ; dst_mac= arp.Packet.src_mac
-    ; src_ip= arp.Packet.dst_ip
-    ; dst_ip= arp.Packet.src_ip
-    }
-  in
+  let operation = Packet.Reply in
+  let src_mac = macaddr in
+  let dst_mac = arp.Packet.src_mac in
+  let src_ip = arp.Packet.dst_ip in
+  let dst_ip = arp.Packet.src_ip in
+  let pkt = { Packet.operation; src_mac; dst_mac; src_ip; dst_ip } in
   (pkt, arp.Packet.src_mac)
 
 exception Timeout
@@ -186,11 +140,12 @@ let tick t =
   let epoch = t.epoch in
   let fn k v (pkts, to_remove, timeouts) =
     match v with
-    | Dynamic (_, tick) when tick <= epoch -> (pkts, k :: to_remove, timeouts)
-    | Dynamic (_, tick) when tick <= epoch + 1 ->
+    | Entry.Dynamic { epoch= epoch'; _ } when epoch' <= epoch ->
+        (pkts, k :: to_remove, timeouts)
+    | Dynamic { epoch= epoch'; _ } when epoch' <= epoch + 1 ->
         (request t k :: pkts, to_remove, timeouts)
-    | Pending (w, retry) ->
-        if retry <= t.epoch then (pkts, k :: to_remove, w :: timeouts)
+    | Pending { ivar; retry } ->
+        if retry <= t.epoch then (pkts, k :: to_remove, ivar :: timeouts)
         else (request t k :: pkts, to_remove, timeouts)
     | _ -> (pkts, to_remove, timeouts)
   in
@@ -210,33 +165,33 @@ let handle_request t arp =
         Ipaddr.V4.pp dst);
   match Entries.find t.entries dst with
   | exception Not_found -> ()
-  | Static (macaddr, true) -> write t (reply arp macaddr)
+  | Static macaddr -> write t (reply arp macaddr)
   | _ -> ()
 
 let handle_reply t src macaddr =
-  let entry = Dynamic (macaddr, t.epoch + t.timeout) in
+  let entry = Entry.Dynamic { addr= macaddr; epoch= t.epoch + t.timeout } in
   Log.debug (fun m ->
       let tags = Ethernet.tags t.eth in
       m ~tags "handle ARPv4 reply packet from %a:%a" Macaddr.pp macaddr
         Ipaddr.V4.pp src);
   match Entries.find t.entries src with
   | exception Not_found -> ()
-  | Static (_, adv) ->
-      if adv && Macaddr.compare macaddr mac0 == 0 then
+  | Static _ ->
+      if Macaddr.compare macaddr mac0 == 0 then
         Log.debug (fun m ->
             let tags = Ethernet.tags t.eth in
             m ~tags "ignoring gratuitious ARP from %a using %a" Macaddr.pp
               macaddr Ipaddr.V4.pp src)
-  | Dynamic (macaddr', _) ->
+  | Dynamic { addr= macaddr'; _ } ->
       if Macaddr.compare macaddr macaddr' != 0 then
         Log.debug (fun m ->
             let tags = Ethernet.tags t.eth in
             m ~tags "set %a from %a to %a" Ipaddr.V4.pp src Macaddr.pp macaddr'
               Macaddr.pp macaddr);
       Entries.add t.entries src entry
-  | Pending (c, _) ->
+  | Pending { ivar; _ } ->
       Log.debug (fun m -> m "%a is-at %a" Ipaddr.V4.pp src Macaddr.pp macaddr);
-      ignore (Miou.Computation.try_return c macaddr);
+      ignore (Miou.Computation.try_return ivar macaddr);
       Entries.add t.entries src entry
 
 let input t pkt =
@@ -268,28 +223,30 @@ let pp_error ppf = function
 let query t ipaddr =
   match Entries.find t.entries ipaddr with
   | exception Not_found ->
-      let w = Miou.Computation.create () in
-      let pending = Pending (w, t.epoch + t.retries) in
+      let ivar = Miou.Computation.create () in
+      let retry = t.epoch + t.retries in
+      let pending = Entry.Pending { ivar; retry } in
       Entries.add t.entries ipaddr pending;
       write t (request t ipaddr);
-      Miou.Computation.await w |> Result.map_error to_error
-  | Pending (w, _) -> Miou.Computation.await w |> Result.map_error to_error
-  | Static (macaddr, _) | Dynamic (macaddr, _) -> Ok macaddr
+      Miou.Computation.await ivar |> Result.map_error to_error
+  | Pending { ivar; _ } ->
+      Miou.Computation.await ivar |> Result.map_error to_error
+  | Static addr | Dynamic { addr; _ } -> Ok addr
 
 let ask t ipaddr =
   match Entries.find t.entries ipaddr with
   | exception Not_found -> None
   | Pending _ -> None
-  | Static (macaddr, _) | Dynamic (macaddr, _) -> Some macaddr
+  | Static addr | Dynamic { addr; _ } -> Some addr
 
 let ips t =
-  let fn k v acc = match v with Static (_, true) -> k :: acc | _ -> acc in
+  let fn k v acc = match v with Entry.Static _ -> k :: acc | _ -> acc in
   Entries.fold fn t.entries []
 
 let add_ip t ipaddr =
   match ips t with
   | [] ->
-      let fn _ = function Pending (w, _) -> clear w | _ -> () in
+      let fn _ = function Entry.Pending { ivar; _ } -> clear ivar | _ -> () in
       Entries.iter fn t.entries;
       Entries.reset t.entries;
       (* TODO(dinosaure): reset the dynamic cache *)
@@ -298,12 +255,12 @@ let add_ip t ipaddr =
 
 let set_ips t = function
   | [] ->
-      let fn _ = function Pending (w, _) -> clear w | _ -> () in
+      let fn _ = function Entry.Pending { ivar; _ } -> clear ivar | _ -> () in
       Entries.iter fn t.entries;
       Entries.reset t.entries (* TODO(dinosaure): reset the dynamic cache. *)
   | ipaddr :: rest ->
       Entries.iter
-        (fun _ -> function Pending (w, _) -> clear w | _ -> ())
+        (fun _ -> function Pending { ivar; _ } -> clear ivar | _ -> ())
         t.entries;
       Entries.reset t.entries;
       (* TODO(dinosaure): reset the dynamic cache. *)

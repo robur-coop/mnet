@@ -1,23 +1,20 @@
-module Ethernet = Ethernet
-module ARPv4 = Arp
-module IPv4 = Ipv4
-module ICMPv4 = Icmpv4
-module UDPv4 = Udpv4
+module IPv4 = IPv4
+module IPv6 = IPv6
 
 exception Net_unreach
 exception Closed_by_peer
 exception Connection_refused
 
-module TCPv4 : sig
+module TCP : sig
   type state
   type flow
   type daemon
 
-  val handler : state -> IPv4.packet * IPv4.payload -> unit
-  val create : name:string -> IPv4.t -> daemon * state
+  val handler : state -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
+  val create : name:string -> IPv4.t -> IPv6.t -> daemon * state
   val kill : daemon -> unit
 
-  val connect : state -> Ipaddr.V4.t * int -> flow
+  val connect : state -> Ipaddr.t * int -> flow
   (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
   val get : flow -> (string list, [> `Eof | `Refused ]) result
@@ -102,11 +99,11 @@ module TCPv4 : sig
 
       {[
         let handler flow =
-          let finally = Mnet.TCPv4.close in
+          let finally = Mnet.TCP.close in
           let r = Miou.Ownership.create ~finally flow in
           Miou.Ownership.own r;
           ...
-          Mnet.TCPv4.close flow;
+          Mnet.TCP.close flow;
           Miou.Ownership.disown r
       ]} *)
 
@@ -120,12 +117,14 @@ module TCPv4 : sig
   val accept : state -> listen -> flow
 end
 
-type stackv4
+type stack
 
-val stackv4 :
+val stack :
      name:string
   -> ?gateway:Ipaddr.V4.t
+  -> ?ipv6:IPv6.mode
   -> Ipaddr.V4.Prefix.t
-  -> (stackv4 * TCPv4.state * UDPv4.state) Mkernel.arg
+  -> (stack * TCP.state * UDP.state) Mkernel.arg
 
-val kill : stackv4 -> unit
+val addresses : stack -> Ipaddr.Prefix.t list
+val kill : stack -> unit

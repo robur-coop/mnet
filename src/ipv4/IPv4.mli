@@ -1,6 +1,3 @@
-module Ethernet = Ethernet
-module ARPv4 = Arp
-
 module Flag : sig
   type t = DF | MF
 end
@@ -43,7 +40,8 @@ val create :
   -> (t, [> `MTU_too_small ]) result
 
 val max : t -> int
-val src : t -> Ipaddr.V4.t
+val src : t -> dst:Ipaddr.V4.t -> Ipaddr.V4.t
+val addresses : t -> Ipaddr.V4.Prefix.t list
 
 module Writer : sig
   type ipv4 = t
@@ -52,15 +50,6 @@ module Writer : sig
   val of_string : ipv4 -> string -> t
   val of_strings : ipv4 -> string list -> t
   val into : ipv4 -> len:int -> (Bstr.t -> unit) -> t
-
-  type ('p, 'q, 'a) m
-  type z
-  type 'a s
-
-  val ( let* ) : ('p, 'q, 'a) m -> ('a -> ('q, 'r, 'b) m) -> ('p, 'r, 'b) m
-  val ( let+ ) : ('p s, 'q s, 'a) m -> (Bstr.t -> int) -> ('p, 'q s, 'a) m
-  val return : 'a -> ('p, 'p, 'a) m
-  val unknown : (z, 'n s, unit) m -> t
 end
 
 val write_directly :
@@ -71,6 +60,9 @@ val write_directly :
   -> protocol:int
   -> Writer.t
   -> unit
+(** [write_directly ipv4 ?ttl ?src (dst, macaddr) ~protocol w] writes a new IPv4
+    packet [w] {b effectively} (without interruption) (fragmented or not) to the
+    specified destination [macaddr]. *)
 
 val write :
      t
@@ -80,9 +72,17 @@ val write :
   -> protocol:int
   -> Writer.t
   -> (unit, [> `Route_not_found ]) result
-(** [write ?ttl ?src dst protocol w] writes a new IPv4 packet [w] (fragmented or
-    not) to the specified destination [dst]. *)
+(** [write ipv4 ?ttl ?src dst protocol w] writes a new IPv4 packet [w]
+    (fragmented or not) to the specified destination [dst]. This function may
+    have an interruption to discover the route to send the given packet to [dst]
+    (an underlying cache exists for such discovery). *)
 
 val attempt_to_discover_destination : t -> Ipaddr.V4.t -> Macaddr.t option
+(** [attempt_to_discover_destination ipv4 dst] attempts to return the MAC
+    address to which we must send a packet if we wish to send it to [dst]. *)
+
 val input : t -> Slice_bstr.t Ethernet.packet -> unit
+(** [input ipv4 pkt] is the function to install as an IPv4 handler for an
+    Ethernet {i daemon}. *)
+
 val set_handler : t -> (packet * payload -> unit) -> unit

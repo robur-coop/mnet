@@ -1,4 +1,5 @@
 let src = Logs.Src.create "mnet.ipv4"
+let guard err fn = if fn () then Ok () else Error err
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
@@ -49,8 +50,6 @@ module Packet = struct
     | `Invalid_checksum -> Fmt.string ppf "bad checksum"
     | `Msg msg -> Fmt.string ppf msg
 
-  let guard err fn = if fn () then Ok () else Error err
-
   let decode slice =
     let ( let* ) = Result.bind in
     let version_and_ihl = SBstr.get_uint8 slice 0 in
@@ -68,10 +67,9 @@ module Packet = struct
     let checksum = SBstr.get_uint16_be slice 10 in
     let chk =
       let { Slice.buf; off; _ } = slice in
-      Bstr.set_uint16_be buf (off + 10) 0;
       Utcp.Checksum.digest ~off ~len:(ihl * 4) buf
     in
-    let* () = guard `Invalid_checksum @@ fun () -> checksum == chk in
+    let* () = guard `Invalid_checksum @@ fun () -> chk = 0 in
     let src = Ipaddr.V4.of_int32 (SBstr.get_int32_be slice 12) in
     let dst = Ipaddr.V4.of_int32 (SBstr.get_int32_be slice 16) in
     let opt =
@@ -115,98 +113,7 @@ module Key = struct
   let hash = Hashtbl.hash
 end
 
-module Value = struct
-  type t = { to_expire: int; fragment: Fragment.t; count: int }
-
-  let weight { fragment; _ } = Fragment.weight fragment
-end
-
-module Cache = Lru.M.Make (Key) (Value)
-
-module Fragments = struct
-  let src = Logs.Src.create "mnet.fragments"
-
-  module Log = (val Logs.src_log src : Logs.LOG)
-
-  type t = { cache: Cache.t; to_expire: int }
-
-  let max_expiration = Int64.to_int (Duration.of_sec 10)
-
-  let create ?(to_expire = max_expiration) () =
-    { cache= Cache.create (1024 * 256); to_expire }
-
-  let catch ~on_exn fn = try fn () with exn -> on_exn exn
-
-  type payload = Slice of SBstr.t | String of string
-
-  let insert t (pkt : Packet.complete Packet.packet) slice =
-    let src = pkt.Packet.src
-    and dst = pkt.Packet.dst
-    and protocol = pkt.Packet.protocol
-    and uid = pkt.Packet.uid
-    and off = pkt.Packet.off * 8
-    and len = pkt.Packet.checksum_and_length.length - 20
-    and limit = not (List.exists (( == ) Flag.MF) pkt.Packet.flags) in
-    let key = { Key.src; dst; protocol; uid } in
-    let now = Mkernel.clock_monotonic () in
-    match (off, limit, Cache.find key t.cache) with
-    | 0, true, None ->
-        Some (key, Slice (Slice_bstr.sub slice ~off:0 ~len))
-        (* unfragmented packed *)
-    | _, _, None ->
-        (* NOTE(dinosaure): we have an new fragment which is not recorded
-           into our cache. We [add] this new fragment and [trim] our
-           cache to avoid an OOM. *)
-        let fragment = Fragment.singleton ~off ~len ~limit slice in
-        let value =
-          { Value.to_expire= now + t.to_expire; count= 1; fragment }
-        in
-        Cache.add key value t.cache;
-        Cache.trim t.cache;
-        None
-    | _, _, Some { count; _ } when count > 16 ->
-        (* NOTE(dinosaure): from @hannesm, if we have more than 16
-           fragments, we just delete our entry from our cache. *)
-        Cache.remove key t.cache; None
-    | _, _, Some { to_expire; _ } when to_expire < now ->
-        (* NOTE(dinosaure): from @hannesm, if we found an entry and get a new
-           fragment [max_expiration]ns (10secs), we delete the old entry
-           and create a new one. *)
-        let fragment = Fragment.singleton ~off ~len ~limit slice in
-        let value =
-          { Value.to_expire= now + t.to_expire; count= 1; fragment }
-        in
-        Cache.add key value t.cache;
-        None
-    | _, _, Some { fragment; count; to_expire } ->
-        (* NOTE(dinosaure): the basic execution path. If the fragment does not
-           fit into our entry, we remove it. Otherwise, we insert the new
-           incoming fragment. If the resulted entry is fullfilled, we returns
-           the result. Otherwise, we update our cache with our new entry and
-           [trim] our cache to avoid an OOM.
-
-           NOTE(dinosaure): [Cache.add] does a promotion of our entry into our
-           cache also. *)
-        let on_exn _exn = Cache.remove key t.cache; None in
-        catch ~on_exn @@ fun () ->
-        let str = SBstr.sub_string ~off:0 ~len slice in
-        let fragment = Fragment.insert fragment ~off ~limit str in
-        if Fragment.is_complete fragment then begin
-          Log.debug (fun m -> m "fragment is complete");
-          let str = Fragment.reassemble_exn fragment in
-          Cache.remove key t.cache;
-          Some (key, String str)
-        end
-        else begin
-          let value = { Value.fragment; count= count + 1; to_expire } in
-          Cache.add key value t.cache;
-          Cache.trim t.cache;
-          None
-        end
-end
-
-module Ethernet = Ethernet
-module ARPv4 = Arp
+module Fragments = Fragments.Make (Key)
 
 type packet = Key.t = {
     src: Ipaddr.V4.t
@@ -225,32 +132,21 @@ type t = {
   ; cache: Fragments.t
   ; mutable handler: packet * payload -> unit
   ; tags: Logs.Tag.set
+  ; cnt: int Atomic.t
 }
 
 let tags { tags; _ } = tags
+let addresses { cidr; _ } = [ cidr ]
 
 module Writer = struct
-  type z = |
-  type 'a s = |
-  type 'a peano = Zero : z peano | Succ : 'a peano -> 'a s peano
-
-  [@@@warning "-27"]
-  [@@@warning "-37"]
-
-  type ('p, 'q, 'a) m =
-    | Bind : ('p, 'q, 'a) m * ('a -> ('q, 'r, 'b) m) -> ('p, 'r, 'b) m
-    | Return : 'a -> ('p, 'p, 'a) m
-    | Write : ('n s, 'm s, 'a) m * (Bstr.t -> int) -> ('n, 'm s, 'a) m
-
   type ipv4 = t
 
   type t =
     | Fixed of { total_length: int; fn: Bstr.t -> unit }
       (* invariant: [total_length <= mtu - 20] *)
     | Fragmented of { total_length: int; fn: (Bstr.t -> unit) Seq.t }
-      (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
+  (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
          until the last element (which contains remaining unaligned bytes. *)
-    | Unknown : (z, 'n s, unit) m -> t
 
   let of_string t str =
     let mtu = Ethernet.mtu t.eth in
@@ -270,6 +166,8 @@ module Writer = struct
       in
       Fragmented { total_length; fn= go 0 }
 
+  (* TODO(dinosaure): it should be possible to make a Seq.t version of this
+     function to be able to fragment correctly a /stream/. *)
   let chunk chunk_size ?(str_off = 0) sstr =
     let rec go acc str_off chunk_size sstr =
       if chunk_size == 0 then (List.rev acc, str_off, sstr)
@@ -328,53 +226,14 @@ module Writer = struct
     if 20 + total_length > Ethernet.mtu t.eth then
       invalid_arg "IPv4.Writer.into: too huge IPv4 packet";
     Fixed { total_length; fn }
-
-  let unknown : type n. (z, n s, unit) m -> t = fun m -> Unknown m
-  let ( let* ) x fn = Bind (x, fn)
-  let ( let+ ) x fn = Write (x, fn)
-  let return x = Return x
-
-  type 'a user's_fn =
-    | Some : (Bstr.t -> int) -> 'a s user's_fn
-    | None : z user's_fn
-
-  type out = (Bstr.t -> int) -> unit
-
-  let rec go : type a p q.
-         out:out
-      -> p peano
-      -> p user's_fn
-      -> (p, q, a) m
-      -> q peano * q user's_fn * a =
-   fun ~out s user's_fn0 m ->
-    match (m, s) with
-    | Return x, _ -> (s, user's_fn0, x)
-    | Bind (m, fn), s ->
-        let s, user's_fn1, x = go ~out s user's_fn0 m in
-        go ~out s user's_fn1 (fn x)
-    | Write (m, user's_fn1), s ->
-        let () =
-          match user's_fn0 with None -> () | Some user's_fn0 -> out user's_fn0
-        in
-        go ~out (Succ s) (Some user's_fn1) m
 end
-
-let guard err fn = if fn () then Ok () else Error err
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
   let tags = Ethernet.tags eth in
   let tags = Logs.Tag.add Tags.ipv4 cidr tags in
-  let t =
-    {
-      eth
-    ; arp
-    ; cidr
-    ; gateway
-    ; cache= Fragments.create ?to_expire ()
-    ; handler
-    ; tags
-    }
-  in
+  let cache = Fragments.create ?to_expire () in
+  let cnt = Atomic.make 0 in
+  let t = { eth; arp; cidr; gateway; cache; handler; tags; cnt } in
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
@@ -383,7 +242,7 @@ let max t =
   let mtu = Ethernet.mtu t.eth in
   mtu - 20
 
-let src t = Ipaddr.V4.Prefix.address t.cidr
+let src t ~dst:_ = Ipaddr.V4.Prefix.address t.cidr
 
 let fixed pkt user's_fn len bstr =
   Packet.unsafe_encode_into pkt bstr;
@@ -448,43 +307,6 @@ let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
               go (off + size) (total_length - size) next
       in
       go 0 total_length (fn ())
-  | Writer.Unknown m ->
-      let uid = Mirage_crypto_rng.generate 2 in
-      let uid = String.get_uint16_be uid 0 in
-      let off = ref 0 in
-      let out ~last user's_fn =
-        let fn bstr =
-          let flags = if last then Flag._none else Flag._mf in
-          let pkt =
-            {
-              Packet.src
-            ; dst
-            ; uid
-            ; flags
-            ; off= !off lsr 3
-            ; ttl
-            ; protocol
-            ; checksum_and_length= Packet.Partial
-            ; opt= SBstr.empty
-            }
-          in
-          Packet.unsafe_encode_into pkt bstr;
-          let user's_payload = Bstr.shift bstr 20 in
-          let len = user's_fn user's_payload in
-          Bstr.set_uint16_be bstr 2 (20 + len);
-          let len = (len + 0b111) / 8 * 8 in
-          off := !off + len;
-          let chk = Utcp.Checksum.digest ~off:0 ~len:20 bstr in
-          Bstr.set_uint16_be bstr 10 chk;
-          20 + len
-        in
-        let protocol = Ethernet.IPv4 in
-        Ethernet.write_directly_into t.eth ~dst:macaddr ~protocol fn
-      in
-      let _, Writer.Some user's_fn, () =
-        Writer.go ~out:(out ~last:false) Writer.Zero Writer.None m
-      in
-      out ~last:true user's_fn
 
 let write t ?(ttl = 38) ?src dst ~protocol p =
   Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
@@ -519,17 +341,27 @@ let input t pkt =
            || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
            || Ipaddr.V4.(compare dst (Prefix.broadcast t.cidr)) == 0)
       then begin
+        let now = Mkernel.clock_monotonic () in
+        let key =
+          let src = ipv4.Packet.src
+          and dst = ipv4.Packet.dst
+          and protocol = ipv4.Packet.protocol
+          and uid = ipv4.Packet.uid in
+          { Key.src; dst; protocol; uid }
+        and off = ipv4.Packet.off * 8
+        and len = ipv4.Packet.checksum_and_length.length - 20
+        and last = not (List.exists (( = ) Flag.MF) ipv4.Packet.flags) in
         Log.debug (fun m ->
-            m ~tags:t.tags "Incoming IPv4 packet from %a" Ipaddr.V4.pp
-              ipv4.Packet.src);
-        let pkt = Fragments.insert t.cache ipv4 payload in
+            m ~tags:t.tags
+              "Incoming IPv4 packet %a -> %a (off:%d, len:%d, last:%b)"
+              Ipaddr.V4.pp ipv4.Packet.src Ipaddr.V4.pp ipv4.Packet.dst off len
+              last);
+        let pkt = Fragments.insert ~now t.cache key ~off ~len ~last payload in
         Option.iter t.handler pkt
       end
 
-let _cnt = Atomic.make 0
-
 let set_handler t handler =
-  Atomic.incr _cnt;
+  Atomic.incr t.cnt;
   t.handler <- handler;
-  if Atomic.get _cnt > 1 then
+  if Atomic.get t.cnt > 1 then
     Log.warn (fun m -> m ~tags:t.tags "IPv4 handler modified more than once")

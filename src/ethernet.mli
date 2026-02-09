@@ -10,6 +10,13 @@ module Packet : sig
   val encode_into : t -> ?off:int -> Bstr.t -> unit
 end
 
+type 'net hypercalls = {
+    device: 'net
+  ; swr: 'net -> ?off:int -> ?len:int -> Bstr.t -> unit
+  ; srd: 'net -> ?off:int -> ?len:int -> Bstr.t -> int
+}
+
+type extern = External : 'net hypercalls -> extern [@@unboxed]
 type t
 type daemon
 

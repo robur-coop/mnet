@@ -91,7 +91,7 @@ let insert t ~off ?(limit = false) str =
   | Unsized ropes, false ->
       Log.debug (fun m -> m "+%d byte(s) %@ %d" (String.length str) off);
       let ropes = Ropes.insert ~off str ropes in
-      (* NOTE(dinosaure): actually, we  can increase the ropes without limit.
+      (* NOTE(dinosaure): actually, we can increase the ropes without limit.
          This is also the case with [mirage-tcpip], which has no mechanism to
          limit the [payload]. Not sure if you should put a limit or not. *)
       Unsized ropes

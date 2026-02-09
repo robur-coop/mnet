@@ -53,6 +53,8 @@ type t = {
   ; tags: Logs.Tag.set
   ; bstr_ic: Bstr.t
   ; bstr_oc: Bstr.t
+  ; extern: extern option
+  ; cnt: int Atomic.t
 }
 
 and 'a packet = {
@@ -60,6 +62,14 @@ and 'a packet = {
   ; dst: Macaddr.t
   ; protocol: Packet.protocol
   ; payload: 'a
+}
+
+and extern = External : 'net hypercalls -> extern [@@unboxed]
+
+and 'net hypercalls = {
+    device: 'net
+  ; swr: 'net -> ?off:int -> ?len:int -> Bstr.t -> unit
+  ; srd: 'net -> ?off:int -> ?len:int -> Bstr.t -> int
 }
 
 and handler = Slice_bstr.t packet -> unit
@@ -74,8 +84,10 @@ let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let src = Option.value ~default:t.mac packet.src in
   let tags = Logs.Tag.add Tags.mac src Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
+  (* NOTE(dinosaure): clean-up our buffer. *)
   Packet.encode_into pkt ~off:0 t.bstr_oc;
   let bstr = Bstr.sub t.bstr_oc ~off:14 ~len:(Bstr.length t.bstr_oc - 14) in
+  Bstr.memset bstr ~off:0 ~len:(Bstr.length bstr) '\000';
   let plus' = fn bstr in
   Option.iter (fun plus -> assert (plus = plus')) plus;
   Log.debug (fun m ->
@@ -85,8 +97,15 @@ let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
       m ~tags "@[<hov>%a@]"
         (Hxd_string.pp Hxd.default)
         (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus')));
-  (* TODO(dinosaure): use [Mkernel.Net.write_into]. *)
-  Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus') t.bstr_oc
+  (* TODO(dinosaure): we must figure out about the impact of such branch. We
+     also should compare when we directly use [Mkernel.net.write] or if we can
+     wrap [read]/[write] into an [External] value (to simplify the API). *)
+  match t.extern with
+  | None ->
+      (* TODO(dinosaure): use [Mkernel.Net.write_into]. *)
+      Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus') t.bstr_oc
+  | Some (External { device; swr; _ }) ->
+      swr device ~off:0 ~len:(14 + plus') t.bstr_oc
 
 let of_interest t dst =
   Macaddr.compare dst t.mac == 0 || Macaddr.is_unicast dst == false
@@ -113,7 +132,11 @@ let handler t bstr ~len =
     | Ok _ -> ()
 
 let rec daemon t =
-  let len = Mkernel.Net.read_bigstring t.net t.bstr_ic in
+  let len =
+    match t.extern with
+    | None -> Mkernel.Net.read_bigstring t.net t.bstr_ic
+    | Some (External { device; srd; _ }) -> srd device t.bstr_ic
+  in
   handler t t.bstr_ic ~len; daemon t
 
 let write_directly_into t ?len ?src ~dst ~protocol fn =
@@ -136,20 +159,21 @@ let create ?(mtu = 1500) ?(handler = uninteresting_packet) mac net =
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
   let tags = Logs.Tag.empty in
   let tags = Logs.Tag.add Tags.mac mac tags in
-  let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc } in
+  let extern = None in
+  let cnt = Atomic.make 0 in
+  let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc; extern; cnt } in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (daemon, t)
 
-let _cnt = Atomic.make 0
 let mtu { mtu; _ } = mtu
 let macaddr { mac; _ } = mac
 let tags { tags; _ } = tags
 
 let set_handler t handler =
-  Atomic.incr _cnt;
+  Atomic.incr t.cnt;
   t.handler <- handler;
   let tags = t.tags in
-  if Atomic.get _cnt > 1 then
+  if Atomic.get t.cnt > 1 then
     Log.warn (fun m -> m ~tags "Ethernet handler modified more than once")
 
 let extend_handler_with t handler =
