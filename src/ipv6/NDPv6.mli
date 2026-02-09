@@ -57,6 +57,7 @@ type error =
   | `Invalid_ICMP_checksum
   | `Msg of string
   | `Parameter_problem
+  | `Invalid_option
   | `Time_exceeded
   | `Truncated
   | `Unknown_ICMP_packet of int ]

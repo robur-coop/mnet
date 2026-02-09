@@ -67,10 +67,9 @@ module Packet = struct
     let checksum = SBstr.get_uint16_be slice 10 in
     let chk =
       let { Slice.buf; off; _ } = slice in
-      Bstr.set_uint16_be buf (off + 10) 0;
       Utcp.Checksum.digest ~off ~len:(ihl * 4) buf
     in
-    let* () = guard `Invalid_checksum @@ fun () -> checksum == chk in
+    let* () = guard `Invalid_checksum @@ fun () -> chk = 0 in
     let src = Ipaddr.V4.of_int32 (SBstr.get_int32_be slice 12) in
     let dst = Ipaddr.V4.of_int32 (SBstr.get_int32_be slice 16) in
     let opt =

@@ -1,6 +1,8 @@
 let src = Logs.Src.create "mnet"
 
 module Log = (val Logs.src_log src : Logs.LOG)
+module IPv4 = IPv4
+module IPv6 = IPv6
 
 exception Net_unreach
 exception Closed_by_peer
@@ -179,11 +181,11 @@ module TCP = struct
     | Ipaddr.V6 _, Ipaddr.V4 _ ->
         failwith "Impossible to write an IPv4 packet from an IPv4 host"
 
-  let write_without_interruption_ip t (src, dst, seg) =
+  let write_without_interruption_ip state (src, dst, seg) =
     match (src, dst) with
     | Ipaddr.V4 src, Ipaddr.V4 dst ->
-        write_without_interruption_ipv4 t (src, dst, seg)
-    | _ -> failwith "IPv6 not implemented"
+        write_without_interruption_ipv4 state (src, dst, seg)
+    | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state.ipv6 (src, dst, seg)
 
   type result = Eof | Refused
 

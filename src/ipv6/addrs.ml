@@ -59,7 +59,16 @@ let tick t ~now ~iid event =
       Bytes.blit_string iid 0 buf 8 8;
       let addr = Ipaddr.V6.of_octets_exn (Bytes.unsafe_to_string buf) in
       let prefix = Ipaddr.V6.Prefix.make 128 addr in
-      if Addrs.mem prefix t then (t, pkts)
+      (* NOTE(dinosaure): if the user already set a static IPv6, we don't try to
+         generate a new one from the given Router Advertisement. *)
+      let already_has_addr =
+        let fn p _state =
+          if Ipaddr.V6.Prefix.mem (Ipaddr.V6.Prefix.address p) pfx.prefix then
+            raise_notrace Yes
+        in
+        match Addrs.iter_k fn t with exception Yes -> true | _ -> false
+      in
+      if already_has_addr then (t, pkts)
       else
         let lifetime =
           match pfx.preferred_lifetime with
@@ -69,8 +78,11 @@ let tick t ~now ~iid event =
         let state =
           Addr.Tentative { lifetime; expire_at= now + _1s; dad_sent= 1 }
         in
-        (* TODO(dinosaure): send NS. *)
-        (Addrs.add prefix state t, pkts)
+        let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
+        let lladdr = Ipaddr.V6.multicast_to_mac dst in
+        let ns = { Neighbors.NS.target= addr; slla= None } in
+        let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
+        (Addrs.add prefix state t, pkt :: pkts)
     end
   in
   let t, pkts = List.fold_left fn (t, []) pfxs in
@@ -162,16 +174,20 @@ let make ~now ~iid ?addr capacity =
   let ns = { Neighbors.NS.target= on_link_addr; slla= None } in
   let pkt = Neighbors.NS.encode_into ~lladdr ~dst ns in
   let addrs = Addrs.add (Ipaddr.V6.Prefix.make 64 on_link_addr) entry addrs in
-  (* If static address provided, add it directly as Preferred (no DAD needed
-     since it's manually configured) *)
-  let addrs =
+  let addrs, pkts =
     match addr with
-    | None -> addrs
+    | None -> (addrs, [ pkt ])
     | Some prefix ->
+        let addr = Ipaddr.V6.Prefix.address prefix in
         let state = Addr.Preferred { expire_at= None; valid_lifetime= None } in
-        Addrs.add prefix state addrs
+        let addrs = Addrs.add prefix state addrs in
+        let dst = Ipaddr.V6.Prefix.network_address solicited_node_prefix addr in
+        let lladdr = Ipaddr.V6.multicast_to_mac dst in
+        let ns = { Neighbors.NS.target= addr; slla= None } in
+        let pkt' = Neighbors.NS.encode_into ~lladdr ~dst ns in
+        (addrs, [ pkt; pkt' ])
   in
-  (addrs, pkt)
+  (addrs, pkts)
 
 let select t dst =
   let dst_is_ll = Ipaddr.V6.Prefix.(mem dst link) in

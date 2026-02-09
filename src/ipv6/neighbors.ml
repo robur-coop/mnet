@@ -205,7 +205,8 @@ let transition ~mac key (state, is_router) now event =
   | Incomplete _, `NA (_src, _dst, { NA.solicited= true; tlla= Some lladdr; _ })
     ->
       let expire_at = now + _30s in
-      (Some (Reachable { lladdr; expire_at }, is_router), None)
+      ( Some (Reachable { lladdr; expire_at }, is_router)
+      , Some (Release_with (key, lladdr)) )
   (* | INCOMPLETE | NA, Solicited=0, | Record link-layer    | STALE
      |            | Override=any     | address. Send queued |
      |            |                  | packets.             |
@@ -227,7 +228,7 @@ let transition ~mac key (state, is_router) now event =
   | ( Reachable { lladdr; _ }
     , `NA (_src, _dst, { NA.solicited= true; tlla= Some lladdr'; _ }) ) ->
       if Macaddr.compare lladdr lladdr' != 0 then
-        (Some (Stale lladdr', is_router), None)
+        (Some (Stale lladdr, is_router), None)
       else (Some (state, is_router), None)
   (* | !INCOMPLETE  | NA, Solicited=1,     | - | REACHABLE
      |              | Override=0           |   |

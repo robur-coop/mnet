@@ -59,18 +59,18 @@ let clean_old_routers routers t =
 
 let tick t ~now:_ = function
   | `Redirect (_src, r) -> begin
-      match Dsts.find r.Redirect.target t.cache with
+      match Dsts.find r.Redirect.destination t.cache with
       | Some { Dst.pmtu; _ } ->
-          let next_hop = r.Redirect.destination in
+          let next_hop = r.Redirect.target in
           let errored = None in
           let value = { Dst.pmtu; next_hop; errored } in
-          let cache = Dsts.add r.Redirect.target value t.cache in
+          let cache = Dsts.add r.Redirect.destination value t.cache in
           { t with cache= Dsts.trim cache }
       | None ->
-          let next_hop = r.Redirect.destination in
+          let next_hop = r.Redirect.target in
           let errored = None in
           let value = { Dst.pmtu= t.lmtu; next_hop; errored } in
-          let cache = Dsts.add r.Redirect.target value t.cache in
+          let cache = Dsts.add r.Redirect.destination value t.cache in
           { t with cache= Dsts.trim cache }
     end
   | `Destination_unreachable u -> begin

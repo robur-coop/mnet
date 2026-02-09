@@ -1,3 +1,6 @@
+module IPv4 = IPv4
+module IPv6 = IPv6
+
 exception Net_unreach
 exception Closed_by_peer
 exception Connection_refused

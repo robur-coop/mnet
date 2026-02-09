@@ -14,6 +14,7 @@ module Parser = struct
   let rec options acc sbstr =
     if SBstr.length sbstr >= 2 then
       let len = SBstr.get_uint8 sbstr 1 * 8 in
+      let* () = guard `Invalid_option @@ fun () -> len >= 2 in
       let opt = SBstr.sub sbstr ~off:0 ~len in
       let rem = SBstr.shift sbstr len in
       match (SBstr.get_uint8 opt 0, SBstr.get_uint8 opt 1) with
@@ -457,9 +458,10 @@ let pp_event ppf = function
   | `Fragment _ -> Fmt.string ppf "Fragment"
 
 let next_hop t addr =
-  if Ipaddr.V6.is_multicast addr
-     || Ipaddr.V6.Prefix.(mem addr link)
-     || Prefixes.is_local t.prefixes addr
+  if
+    Ipaddr.V6.is_multicast addr
+    || Ipaddr.V6.Prefix.(mem addr link)
+    || Prefixes.is_local t.prefixes addr
   then
     (* on-link *)
     Ok (t, addr, Some t.lmtu)
@@ -617,13 +619,19 @@ let make ~now ~lmtu ~mac mode =
   let neighbors = Neighbors.make 0x100 in
   let routers = Routers.make 16 in
   let prefixes = Prefixes.make 16 in
-  let addrs, act = Addrs.make ~now ~iid ?addr 16 in
+  let addrs, acts = Addrs.make ~now ~iid ?addr 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
   let queues = Ipaddr.V6.Map.empty in
   let t =
     { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
   in
-  let t, pkts' = process t (Neighbors.Packet act) in
+  let t, pkts' =
+    let fn (t, pkts) act =
+      let t, pkts' = process t (Neighbors.Packet act) in
+      (t, List.rev_append pkts' pkts)
+    in
+    List.fold_left fn (t, []) acts
+  in
   let pkt = RS.encode_into ~mac (Addrs.select t.addrs) in
   (t, pkt :: pkts')
 
@@ -634,6 +642,7 @@ type error =
   | `Invalid_ICMP_checksum
   | `Msg of string
   | `Parameter_problem
+  | `Invalid_option
   | `Time_exceeded
   | `Truncated
   | `Unknown_ICMP_packet of int ]
@@ -645,6 +654,7 @@ let pp_error ppf = function
   | `Invalid_ICMP_checksum -> Fmt.string ppf "Invalid ICMP checksum"
   | `Msg msg -> Fmt.string ppf msg
   | `Parameter_problem -> Fmt.string ppf "Parameter problem"
+  | `Invalid_option -> Fmt.string ppf "Invalid option"
   | `Time_exceeded -> Fmt.string ppf "Time exceeded"
   | `Truncated -> Fmt.string ppf "Truncated"
   | `Unknown_ICMP_packet n -> Fmt.pf ppf "Unknown ICMP packet (%d)" n

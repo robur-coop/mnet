@@ -5,7 +5,7 @@ val make :
   -> iid:string
   -> ?addr:Ipaddr.V6.Prefix.t
   -> int
-  -> t * Neighbors.Packet.t
+  -> t * Neighbors.Packet.t list
 
 val tick :
      t
