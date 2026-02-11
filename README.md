@@ -28,6 +28,30 @@ let run _ cidr gateway =
   ...
 ```
 
+## End-to-end tests
+
+`mnet` attempts to provide end-to-end testing, meaning that we try to run real
+unikernels in order to test our implementation in a real deployment context.
+This requires **sudo access** (in order to create the necessary tap interfaces)
+as well as the ability to launch a unikernel (be part of the kvm group on a
+Linux system).
+
+Testing `mnet` also requires that `opam` take the version you are developing.
+You must therefore also ensure that you _pin_ your version of mnet in order to
+build the unikernels with it (otherwise, opam will take the upstream version).
+
+Finally, these tests only run in a specific profile: the `unikernels` profile.
+They can be launched as follows:
+```shell
+$ git clone https://github.com/robur-coop/mnet
+$ opam pin add -y .
+$ sudo true
+$ dune runtest --profile=unikernels
+```
+
+These tests are lengthy because they attempt to compile the unikernels and
+launch them.
+
 [mkernel]: https://git.robur.coop/robur/mkernel
 [utcp]: https://github.com/robur-coop/utcp
 [solo5]: https://github.com/solo5/solo5

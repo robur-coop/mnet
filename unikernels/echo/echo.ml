@@ -25,7 +25,7 @@ let rec clean_up orphans = match Miou.care orphans with
 
 let rec terminate orphans = match Miou.care orphans with
   | None -> ()
-  | Some None -> Miou.yield (); terminate orphans
+  | Some None -> Mkernel.sleep 100_000_000; terminate orphans
   | Some (Some prm) ->
       Miou.await_exn prm;
       terminate orphans
@@ -35,6 +35,8 @@ let _1s = 1_000_000_000
 let run _quiet cidrv4 gateway cidrv6 mode =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6:cidrv6 cidrv4 ])
   @@ fun rng (daemon, tcp, _udp) () ->
+  let hed, he = Mnet_happy_eyeballs.create tcp in
+  let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
   let@ () = fun () -> Mnet.kill daemon in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
   match mode with
@@ -50,11 +52,12 @@ let run _quiet cidrv4 gateway cidrv6 mode =
           go orphans listen limit in
       let orphans = Miou.orphans () in
       go orphans (Mnet.TCP.listen tcp port) limit;
+      Logs.debug (fun m -> m "Terminate our unikernel");
       terminate orphans
   | `Client (edn, length) ->
       let result = match edn with
-        | `Ipaddr edn -> Ok (edn, Mnet.TCP.connect tcp edn)
-        | `Domain _domain_name -> assert false in
+        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip he [ edn ]
+        | `Domain domain_name -> Mnet_happy_eyeballs.connect_host he domain_name [ 9000 ] in
       let result = Result.map_error (fun (`Msg msg) -> msg) result in
       let _, flow = Result.error_to_failure result in
       let@ () = fun () -> Mnet.TCP.close flow in
@@ -83,9 +86,7 @@ let run _quiet cidrv4 gateway cidrv6 mode =
           go (length - recv) ctx0
         else (Hash.get ctx0, Hash.get ctx1) in
       let hash0, hash1 = go Hash.empty Hash.empty length 0 in
-      if Hash.equal hash0 hash1 = false then exit 1;
-      Fmt.pr "recv: %a\n%!" Hash.pp hash0;
-      Fmt.pr "send: %a\n%!" Hash.pp hash1
+      if Hash.equal hash0 hash1 = false then exit 1
 
 let run_client _quiet cidrv4 gateway cidrv6 edn length =
   run _quiet cidrv4 gateway cidrv6 (`Client (edn, length))

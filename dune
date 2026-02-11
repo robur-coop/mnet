@@ -1,0 +1,9 @@
+(rule
+ (targets echo.hvt)
+ (enabled_if (= %{profile} unikernels))
+ (deps (source_tree unikernels))
+ (action
+  (no-infer
+   (progn
+    (run make -C unikernels all)
+    (copy unikernels/echo.hvt echo.hvt)))))
