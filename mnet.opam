@@ -20,6 +20,7 @@ depends: [
   "macaddr"
   "hxd"
   "tls"
+  "happy-eyeballs"
 ]
 build: [
   ["dune" "subst"] {dev}
