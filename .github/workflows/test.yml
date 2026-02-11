@@ -1,0 +1,33 @@
+name: mnet
+on: [push, pull_request]
+jobs:
+  tests:
+    name: Tests
+    strategy:
+      matrix:
+        ocaml-version: [5.3.0, 5.4.0]
+        operating-system: [ubuntu-latest]
+    runs-on: ${{ matrix.operating-system }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Use OCaml ${{ matrix.ocaml-version }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+          opam-local-packages: |
+            *.opam
+      - name: Install dependencies
+        run: opam install --deps-only -t mnet
+      - name: Build
+        run: opam exec -- dune build -p mnet
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update
+          sudo apt-get install -y libvirt-clients libvirt-daemon-system libvirt-daemon virtinst bridge-utils qemu-kvm qemu-system-x86
+          sudo usermod -a -G kvm,libvirt $USER
+      - name: Test
+        run: opam exec -- dune runtest --profile=unikernels
