@@ -290,6 +290,7 @@ let read_or_sync ?(delay = 1_500_000_000) t =
       In (Queue.create ())
 
 let arp ?(delay = 1_500_000_000) t =
+  Log.debug (fun m -> m "tick");
   let rec go rem =
     let t0 = now () in
     match read_or_sync ~delay:rem t with
