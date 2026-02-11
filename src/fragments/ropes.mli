@@ -8,21 +8,21 @@
     The rope has two states:
     - {!type:unknown}: the total size is not yet known (the last fragment has
       not arrived).
-    - {!type:fixed}: the total size is known, allowing final conversion to
-      bytes via {!val:to_bytes}.
+    - {!type:fixed}: the total size is known, allowing final conversion to bytes
+      via {!val:to_bytes}.
 
     {2 Invariant.}
 
     Fragments must not overlap. Inserting a fragment that overlaps with an
     existing one raises {!exception:Overlap}. *)
 
-type fixed = |
 (** Uninhabited type used as a phantom marker for ropes whose total size is
     known. *)
+type fixed = |
 
-type unknown = |
 (** Uninhabited type used as a phantom marker for ropes whose total size is not
     yet known. *)
+type unknown = |
 
 type 'a t =
   | Str : string -> fixed t
@@ -35,19 +35,22 @@ type 'a t =
       ; r_len: 'a size
     }
       -> 'a t
-(** A rope parameterized by its size state (['a] is either {!type:fixed} or
-    {!type:unknown}).
+      (** A rope parameterized by its size state (['a] is either {!type:fixed}
+          or {!type:unknown}).
 
-    - [Str s]: a leaf containing the string [s] (always {!type:fixed}).
-    - [Unknown size]: an empty rope with the given size information.
-    - [App]: an internal node joining a left (fixed-size) subtree and a right
-      subtree. [weight] is the total number of bytes stored in the left subtree
-      and is used to navigate to the correct insertion point. *)
+          - [Str s]: a leaf containing the string [s] (always {!type:fixed}).
+          - [Unknown size]: an empty rope with the given size information.
+          - [App]: an internal node joining a left (fixed-size) subtree and a
+            right subtree. [weight] is the total number of bytes stored in the
+            left subtree and is used to navigate to the correct insertion point.
+      *)
 
-and 'a size = Length : int -> fixed size | Limitless : unknown size
-(** The size of a rope.
-    - [Length n]: the rope has a known total size of [n] bytes.
-    - [Limitless]: the total size is not yet known. *)
+and 'a size =
+  | Length : int -> fixed size
+  | Limitless : unknown size
+      (** The size of a rope.
+          - [Length n]: the rope has a known total size of [n] bytes.
+          - [Limitless]: the total size is not yet known. *)
 
 exception Out_of_bounds
 (** Raised by {!val:insert} if the fragment extends beyond the rope's known

@@ -5,9 +5,9 @@
     track which byte ranges of a fragmented packet have been received.
 
     For example, after receiving fragments at offsets [0..99] and [200..299],
-    the DIET contains the intervals [\[0, 99\]] and [\[200, 299\]]. When the
-    missing fragment [100..199] arrives, the intervals merge into a single
-    [\[0, 299\]], signalling that reassembly is complete. *)
+    the DIET contains the intervals [[0, 99]] and [[200, 299]]. When the missing
+    fragment [100..199] arrives, the intervals merge into a single [[0, 299]],
+    signalling that reassembly is complete. *)
 
 type t
 (** An immutable set of non-overlapping intervals. *)
@@ -16,7 +16,7 @@ val empty : t
 (** The empty set (no intervals). *)
 
 val add : off:int -> len:int -> t -> t
-(** [add ~off ~len t] adds the interval [\[off, off + len - 1\]] to the set.
+(** [add ~off ~len t] adds the interval [[off, off + len - 1]] to the set.
     Adjacent or overlapping intervals are automatically merged. *)
 
 val diff : t -> t -> t

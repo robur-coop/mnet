@@ -1,7 +1,9 @@
 (rule
  (targets echo.hvt)
- (enabled_if (= %{profile} unikernels))
- (deps (source_tree unikernels))
+ (enabled_if
+  (= %{profile} unikernels))
+ (deps
+  (source_tree unikernels))
  (action
   (no-infer
    (progn

@@ -8,8 +8,8 @@
 
     IPv6 addresses can be configured in three ways via {!type:mode}:
     - {!constructor:Random}: a random Interface Identifier is generated.
-    - {!constructor:EUI64}: the Interface Identifier is derived from the device's
-      MAC address using the EUI-64 algorithm (the default).
+    - {!constructor:EUI64}: the Interface Identifier is derived from the
+      device's MAC address using the EUI-64 algorithm (the default).
     - {!constructor:Static}: a user-specified IPv6 prefix is used directly.
 
     Regardless of the mode, the stack always has a Link-Local address
@@ -19,9 +19,9 @@
     {2 Path MTU discovery.}
 
     IPv6 does not allow routers to fragment packets. The sender must discover
-    the Path MTU and fragment at the source if needed. This module caches
-    PMTU values discovered via ICMPv6 "Packet Too Big" messages. When the PMTU
-    is unknown, fragmentation defaults to 1280 bytes (the IPv6 minimum MTU). *)
+    the Path MTU and fragment at the source if needed. This module caches PMTU
+    values discovered via ICMPv6 "Packet Too Big" messages. When the PMTU is
+    unknown, fragmentation defaults to 1280 bytes (the IPv6 minimum MTU). *)
 
 module SBstr = Slice_bstr
 
@@ -36,23 +36,32 @@ type daemon
     advertisements, and manages neighbor reachability. Must be terminated with
     {!val:kill}. *)
 
-type payload = Slice of SBstr.t | String of string
-(** The payload of a received IPv6 packet. Like {!type:IPv4.payload}:
-    - {!constructor:Slice}: non-fragmented, zero-copy from the Ethernet frame.
-    - {!constructor:String}: reassembled from fragments (involves copying). *)
+type payload =
+  | Slice of SBstr.t
+  | String of string
+      (** The payload of a received IPv6 packet. Like {!type:IPv4.payload}:
+          - {!constructor:Slice}: non-fragmented, zero-copy from the Ethernet
+            frame.
+          - {!constructor:String}: reassembled from fragments (involves
+            copying). *)
 
 type handler = protocol:int -> Ipaddr.V6.t -> Ipaddr.V6.t -> payload -> unit
 (** The type of a function that processes received IPv6 packets.
     - [~protocol]: the upper-layer protocol number (6 = TCP, 58 = ICMPv6).
-    - The two [Ipaddr.V6.t] arguments are source and destination respectively. *)
+    - The two [Ipaddr.V6.t] arguments are source and destination respectively.
+*)
 
-type mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
-(** How to configure the IPv6 Interface Identifier.
-    - [Random]: generate a random identifier (changes on each boot).
-    - [EUI64]: derive the identifier from the MAC address. This is deterministic
-      and is the default mode.
-    - [Static prefix]: use the given IPv6 prefix directly. The address is the
-      prefix combined with the Interface Identifier derived from the prefix. *)
+type mode =
+  | Random
+  | EUI64
+  | Static of Ipaddr.V6.Prefix.t
+      (** How to configure the IPv6 Interface Identifier.
+          - [Random]: generate a random identifier (changes on each boot).
+          - [EUI64]: derive the identifier from the MAC address. This is
+            deterministic and is the default mode.
+          - [Static prefix]: use the given IPv6 prefix directly. The address is
+            the prefix combined with the Interface Identifier derived from the
+            prefix. *)
 
 (** {1 Initialization} *)
 
@@ -114,9 +123,9 @@ val write_directly :
     The function handles fragmentation automatically based on the discovered
     PMTU. If the PMTU is unknown, fragmentation defaults to 1280 bytes.
 
-    This function has no interruptions (no Miou effects). If a route to [dst]
-    is already known, the packet is sent immediately. If not, it is queued
-    until NDP resolves the next-hop's link-layer address.
+    This function has no interruptions (no Miou effects). If a route to [dst] is
+    already known, the packet is sent immediately. If not, it is queued until
+    NDP resolves the next-hop's link-layer address.
 
     - [?src] overrides the source IPv6 address.
     - [dst] is the destination IPv6 address.

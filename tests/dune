@@ -1,9 +1,12 @@
 (cram
- (enabled_if (= %{profile} unikernels))
+ (enabled_if
+  (= %{profile} unikernels))
  (deps echo.hvt))
 
 (rule
  (targets echo.hvt)
  (deps ../echo.hvt)
- (enabled_if (= %{profile} unikernels))
- (action (copy %{deps} %{targets})))
+ (enabled_if
+  (= %{profile} unikernels))
+ (action
+  (copy %{deps} %{targets})))

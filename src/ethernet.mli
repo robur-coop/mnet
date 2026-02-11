@@ -2,8 +2,8 @@
 
     This module implements the lowest layer of the {!module:Mnet} network stack.
     It manages reading and writing Ethernet frames on a network device, decoding
-    the protocol field to dispatch incoming frames to the appropriate upper-layer
-    handler (ARP, IPv4, or IPv6).
+    the protocol field to dispatch incoming frames to the appropriate
+    upper-layer handler (ARP, IPv4, or IPv6).
 
     {2 Daemon model.}
 
@@ -25,8 +25,10 @@
 (** {1 Packet decoding} *)
 
 module Packet : sig
-  type protocol = ARPv4 | IPv4 | IPv6
-  (** The Ethernet protocol field (EtherType). *)
+  type protocol =
+    | ARPv4
+    | IPv4
+    | IPv6  (** The Ethernet protocol field (EtherType). *)
 
   type t = { src: Macaddr.t; dst: Macaddr.t; protocol: protocol option }
   (** A decoded Ethernet header. [protocol] is [None] if the EtherType is not
@@ -60,9 +62,9 @@ type 'net hypercalls = {
     - [srd]: read (receive) a frame from the device, returning the number of
       bytes read *)
 
-type extern = External : 'net hypercalls -> extern [@@unboxed]
 (** An existentially-typed wrapper around {!type:hypercalls}, allowing the
     Ethernet layer to work with any device type. *)
+type extern = External : 'net hypercalls -> extern [@@unboxed]
 
 (** {1 Types} *)
 
@@ -71,14 +73,16 @@ type t
     frame-writing capabilities. *)
 
 type daemon
-(** The background task that reads frames from the device and dispatches them
-    to registered handlers. Must be terminated with {!val:kill}. *)
+(** The background task that reads frames from the device and dispatches them to
+    registered handlers. Must be terminated with {!val:kill}. *)
 
 val mac : t -> Macaddr.t
 (** [mac t] returns the MAC address of the network device. *)
 
-type protocol = Packet.protocol = ARPv4 | IPv4 | IPv6
-(** Re-export of {!type:Packet.protocol}. *)
+type protocol = Packet.protocol =
+  | ARPv4
+  | IPv4
+  | IPv6  (** Re-export of {!type:Packet.protocol}. *)
 
 type 'a packet = {
     src: Macaddr.t option
@@ -95,13 +99,13 @@ type 'a packet = {
 type handler = Slice_bstr.t packet -> unit
 (** The type of a function that processes incoming Ethernet frames. A handler
     receives the decoded packet (with its payload as a slice of the original
-    frame) and should process it or call {!val:uninteresting_packet} to pass
-    it along. *)
+    frame) and should process it or call {!val:uninteresting_packet} to pass it
+    along. *)
 
 val set_handler : t -> handler -> unit
-(** [set_handler t handler] replaces the current handler with [handler]. This
-    is typically called once during initialization to install the combined
-    ARP + IPv4 + IPv6 handler. *)
+(** [set_handler t handler] replaces the current handler with [handler]. This is
+    typically called once during initialization to install the combined ARP +
+    IPv4 + IPv6 handler. *)
 
 val extend_handler_with : t -> handler -> unit
 (** [extend_handler_with t handler] adds [handler] to the handler chain. If
@@ -123,10 +127,10 @@ val write_directly_into :
   -> protocol:protocol
   -> (Bstr.t -> int)
   -> unit
-(** [write_directly_into t ~dst ~protocol fn] allocates a frame buffer,
-    writes the Ethernet header (source MAC, [dst], and [protocol]), then calls
-    [fn buf] where [buf] starts after the Ethernet header. [fn] should write
-    the payload and return the number of payload bytes written.
+(** [write_directly_into t ~dst ~protocol fn] allocates a frame buffer, writes
+    the Ethernet header (source MAC, [dst], and [protocol]), then calls [fn buf]
+    where [buf] starts after the Ethernet header. [fn] should write the payload
+    and return the number of payload bytes written.
 
     - [?len] is a hint for the total frame size (including the Ethernet header).
     - [?src] overrides the source MAC address (defaults to the device's own MAC
@@ -144,8 +148,8 @@ val create :
   -> Macaddr.t
   -> Mkernel.Net.t
   -> (daemon * t, [> `MTU_too_small ]) result
-(** [create ?mtu ?handler ?hypercalls mac net] creates an Ethernet layer for
-    the given network device [net] with MAC address [mac].
+(** [create ?mtu ?handler ?hypercalls mac net] creates an Ethernet layer for the
+    given network device [net] with MAC address [mac].
 
     - [?mtu] overrides the device MTU. Returns [`MTU_too_small] if the MTU is
       too small to carry even the smallest valid frame.
@@ -154,9 +158,9 @@ val create :
     - [?hypercalls] provides custom I/O operations. If omitted, the default
       Mkernel network device operations are used.
 
-    {b Note:} The handler runs within the daemon's read loop, not in a
-    separate Miou task. It must not attempt to write frames on the same device
-    or a deadlock will occur. *)
+    {b Note:} The handler runs within the daemon's read loop, not in a separate
+    Miou task. It must not attempt to write frames on the same device or a
+    deadlock will occur. *)
 
 val kill : daemon -> unit
 (** [kill daemon] terminates the background frame-reading task. After calling
