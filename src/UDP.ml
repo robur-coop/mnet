@@ -113,7 +113,9 @@ let fill state ~peer ~pkt payload =
       Hashtbl.remove state.readers pkt.Packet.dst_port
 (* TODO(dinosaure): we need to check that [Miou.Computation.try_return] does not
    re-schedule. If it's the case, it's safe to [Hashtbl.remove]. Otherwise, we must
-   aggregate everything into a list, remove and apply our [fn] to the list. *)
+   aggregate everything into a list, remove and apply our [fn] to the list.
+
+   Deeply, [try_return] mostly fills the scheduler of tasks without interruption. *)
 
 let handler_ipv4 state (pkt, payload) =
   let peer = Ipaddr.V4 pkt.IPv4.src in

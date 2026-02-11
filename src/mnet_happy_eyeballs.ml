@@ -222,6 +222,7 @@ let rec clean_up prms =
   | Some None | None -> Miou.yield ()
 
 let rec go t ~prms he =
+  Log.debug (fun m -> m "happy-eyeballs tick");
   clean_up prms;
   let he, cont, actions = HE.timer he (now ()) in
   List.iter (handle_one_action ~prms t) actions;

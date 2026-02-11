@@ -128,10 +128,6 @@ let write_without_interruption_ipv4 state (src, dst, seg) =
 
 let write_ipv4 ipv4 (src, dst, seg) =
   let len = Utcp.Segment.length seg in
-  Log.debug (fun m ->
-      m "write-out %d byte(s) to %a"
-        (20 (* ipv4 packet *) + len)
-        Ipaddr.V4.pp dst);
   let fn bstr =
     let cs = Cstruct.of_bigarray bstr in
     let src = Ipaddr.V4 src and dst = Ipaddr.V4 dst in
@@ -424,6 +420,7 @@ let rec transfer state acc =
   | out -> transfer state (out :: acc)
 
 let rec daemon state n =
+  Log.debug (fun m -> m "tick");
   match with_timeout 100_000_000 (or_killed state) with
   | `Kill ->
       let handler's_outs = transfer state [] in
