@@ -9,3 +9,4 @@
 [ ! -d "vendors/mkernel" ] && opam source mkernel --dir vendors/mkernel
 [ ! -d "vendors/mnet" ] && opam source mnet --dir vendors/mnet
 [ ! -d "vendors/utcp" ] && opam source utcp --dir vendors/utcp
+[ ! -d "vendors/flux" ] && opam source flux --dir vendors/flux

@@ -10,6 +10,7 @@
   hxd.string
   mirage-crypto-rng-mkernel
   digestif
+  flux
   re
   gmp
   cmdliner

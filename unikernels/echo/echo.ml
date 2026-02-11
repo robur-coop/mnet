@@ -5,32 +5,76 @@ let ( let@ ) finally fn = Fun.protect ~finally fn
 let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
 
-let handler flow =
-  let buf = Bytes.create 0x7ff in
-  let rec go () =
+let source_of_flow ?(close= ignore) flow =
+  let init () = (flow, Bytes.create 0x7ff)
+  and pull (flow, buf) =
     match Mnet.TCP.read flow buf with
-    | 0 -> ()
+    | exception _ | 0 -> None
     | len ->
-      let str = Bytes.sub_string buf 0 len in
-      Mnet.TCP.write flow str;
-      go () in
-  go ();
+        let str = Bytes.sub_string buf 0 len in
+        Some (str, (flow, buf))
+  and stop (flow, _) = close flow in
+  Flux.Source { init; pull; stop }
+
+let sink_of_flow ?(close= ignore) flow =
+  let init () = flow
+  and push flow str = Mnet.TCP.write flow str; Miou.yield (); flow
+  and full = Fun.const false
+  and stop flow = close flow in
+  Flux.Sink { init; push; full; stop }
+
+let source_of_rng ?g () =
+  let init () = Bytes.create 0x7ff
+  and pull buf =
+    Mirage_crypto_rng.generate_into ?g buf (Bytes.length buf);
+    Some (Bytes.to_string buf, buf)
+  and stop _ = () in
+  Flux.Source { init; pull; stop }
+
+let sha1 =
+  let open Digestif in
+  let init () = (0, SHA1.empty)
+  and push (len, ctx) str = (len + String.length str, SHA1.feed_string ctx str)
+  and full = Fun.const false
+  and stop (len, ctx) = len, SHA1.get ctx in
+  Flux.Sink { init; push; full; stop }
+
+let take length =
+  let flow (Flux.Sink k) =
+    let init () = (k.init (), 0)
+    and push (acc, rem) str =
+      let len = Int.min (length - rem) (String.length str) in
+      let str = String.sub str 0 len in
+      (k.push acc str, rem + len)
+    and full (acc, rem) = k.full acc || rem = length
+    and stop (acc, _) = k.stop acc in
+    Flux.Sink { init; push; full; stop } in
+  { Flux.flow }
+
+let handler flow =
+  let from = source_of_flow flow in
+  let via = Flux.Flow.identity in
+  let into = sink_of_flow flow in
+  let (), src = Flux.Stream.run ~from ~via ~into in
+  Option.iter Flux.Source.dispose src;
   Mnet.TCP.close flow
 
 let rec clean_up orphans = match Miou.care orphans with
   | None | Some None -> ()
   | Some (Some prm) ->
-      Miou.await_exn prm;
+      let result = Miou.await prm in
+      let fn err = Logs.err (fun m -> m "Unexpected error: %S" (Printexc.to_string err)) in
+      Result.iter_error fn result;
       clean_up orphans
 
 let rec terminate orphans = match Miou.care orphans with
   | None -> ()
   | Some None -> Mkernel.sleep 100_000_000; terminate orphans
   | Some (Some prm) ->
-      Miou.await_exn prm;
+      let result = Miou.await prm in
+      let fn err = Logs.err (fun m -> m "Unexpected error: %S" (Printexc.to_string err)) in
+      Result.iter_error fn result;
       terminate orphans
-
-let _1s = 1_000_000_000
 
 let run _quiet cidrv4 gateway cidrv6 mode =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6:cidrv6 cidrv4 ])
@@ -52,41 +96,42 @@ let run _quiet cidrv4 gateway cidrv6 mode =
           go orphans listen limit in
       let orphans = Miou.orphans () in
       go orphans (Mnet.TCP.listen tcp port) limit;
-      Logs.debug (fun m -> m "Terminate our unikernel");
       terminate orphans
   | `Client (edn, length) ->
       let result = match edn with
         | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip he [ edn ]
         | `Domain domain_name -> Mnet_happy_eyeballs.connect_host he domain_name [ 9000 ] in
-      let result = Result.map_error (fun (`Msg msg) -> msg) result in
-      let _, flow = Result.error_to_failure result in
+      let flow = match result with
+        | Ok (_, flow) -> flow
+        | Error (`Msg msg) -> failwith msg in
       let@ () = fun () -> Mnet.TCP.close flow in
       let buf = Bytes.create 0x7ff in
-      let rec go ctx0 ctx1 rem recv =
-        if rem > 0 then begin
-          Mirage_crypto_rng.generate_into buf (Bytes.length buf);
-          let len = Int.min (Bytes.length buf) rem in
-          Mnet.TCP.write flow (Bytes.to_string buf) ~off:0 ~len;
-          let rem = rem - len in
-          let ctx1 = Hash.feed_bytes ctx1 ~off:0 ~len buf in
-          let len = Mnet.TCP.read flow buf in
-          let ctx0 = Hash.feed_bytes ctx0 ~off:0 ~len buf in
-          go ctx0 ctx1 rem (recv + len)
-        end else if length - recv > 0 then
-          let rec go rem ctx0 =
-            if rem > 0 then
-              match Mnet.TCP.read flow buf with
-              | exception Mnet.TCP.Closed_by_peer
-              | 0 -> (Hash.get ctx0, Hash.get ctx1)
-              | len ->
-                let ctx0 = Hash.feed_bytes ctx0 ~off:0 ~len buf in
-                go (rem - len) ctx0
-            else (Hash.get ctx0, Hash.get ctx1) in
-          Mnet.TCP.shutdown flow `write;
-          go (length - recv) ctx0
-        else (Hash.get ctx0, Hash.get ctx1) in
-      let hash0, hash1 = go Hash.empty Hash.empty length 0 in
-      if Hash.equal hash0 hash1 = false then exit 1
+      let rec go ctx0 ctx1 rem0 rem1  =
+        let len = Int.min rem0 (Bytes.length buf) in
+        Mirage_crypto_rng.generate_into buf len;
+        Mnet.TCP.write flow (Bytes.to_string buf) ~off:0 ~len;
+        let ctx0 = Digestif.SHA1.feed_bytes ctx0 buf ~off:0 ~len in
+        let rem0 = rem0 - len in
+        let len = Mnet.TCP.read flow buf in
+        let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in
+        let rem1 = rem1 - len in
+        if rem0 <= 0 && rem1 <= 0
+        then Digestif.SHA1.(get ctx0, get ctx1)
+        else if rem0 > 0 then go ctx0 ctx1 rem0 rem1
+        else (* if rem1 > 0 *)
+          let () = Mnet.TCP.shutdown flow `write in
+          remaining (Digestif.SHA1.get ctx0) ctx1 rem1 
+      and remaining hash0 ctx1 rem1 =
+        match Mnet.TCP.read flow buf with
+        | 0 -> hash0, Digestif.SHA1.get ctx1
+        | len ->
+            let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in
+            let rem1 = rem1 - len in
+            if rem1 > 0 then remaining hash0 ctx1 rem1
+            else hash0, Digestif.SHA1.get ctx1
+      in
+      let hash0, hash1 = go Digestif.SHA1.empty Digestif.SHA1.empty length length in
+      if not (Digestif.SHA1.equal hash0 hash1) then exit 1
 
 let run_client _quiet cidrv4 gateway cidrv6 edn length =
   run _quiet cidrv4 gateway cidrv6 (`Client (edn, length))

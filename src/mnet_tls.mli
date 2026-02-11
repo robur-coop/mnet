@@ -1,8 +1,23 @@
-(** Effectful operations using [Mkernel] for pure TLS.
+(** TLS sessions over {!module:Mnet} TCP connections.
 
-    The pure TLS is state and buffer in, state and buffer out. This module uses
-    Miou (and its unikernel layer via [Mkernel]) for communication over the
-    network. *)
+    This module wraps {{:https://github.com/mirleft/ocaml-tls} ocaml-tls} (a
+    pure OCaml TLS implementation) with the effectful I/O provided by
+    {!module:Mnet.TCP}. It provides the same read/write/close interface as
+    {!module:Mnet.TCP} but with transparent encryption.
+
+    A TLS session is created from an existing {!type:Mnet.TCP.flow} using either
+    {!val:client_of_fd} (for outgoing connections) or {!val:server_of_fd} (for
+    incoming connections). The TLS handshake is performed during creation.
+
+    {[
+      let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 443) in
+      let tls_config = Tls.Config.client ~authenticator () in
+      let tls = Mnet_tls.client_of_fd tls_config flow in
+      Mnet_tls.write tls "GET / HTTP/1.1\r\n\r\n";
+      let buf = Bytes.create 4096 in
+      let len = Mnet_tls.read tls buf in
+      Mnet_tls.close tls
+    ]} *)
 
 exception Tls_alert of Tls.Packet.alert_type
 exception Tls_failure of Tls.Engine.failure
@@ -16,17 +31,14 @@ val file_descr : t -> Mnet.TCP.flow
     {i socket}. *)
 
 val read : t -> ?off:int -> ?len:int -> bytes -> int
-(** [read fd buf ~off ~len] reads up to [len] bytes (defaults to
-    [Bytes.length buf - off] from the given TLS {i socket} [fd], storing them in
+(** [read t buf ~off ~len] reads up to [len] bytes (defaults to
+    [Bytes.length buf - off]) from the given TLS session [t], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
     It returns the actual number of characters read, between 0 and [len]
     (inclusive).
 
-    @raise Unix_error
-      raised by the system call {!val:Unix.read}. The function handles
-      {!val:Unix.EINTR}, {!val:Unix.EAGAIN} and {!val:Unix.EWOULDBLOCK}
-      exceptions and redo the system call.
-
+    @raise Tls_alert if a TLS alert is received during the read.
+    @raise Tls_failure if a TLS protocol error occurs.
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
