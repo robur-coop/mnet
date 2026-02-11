@@ -147,7 +147,8 @@ let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
 
-let create ?(mtu = 1500) ?(handler = uninteresting_packet) mac net =
+let create ?(mtu = 1500) ?(handler = uninteresting_packet) ?hypercalls:extern
+    mac net =
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> mtu > 14 in
   (* enough for Ethernet packets *)
@@ -159,7 +160,6 @@ let create ?(mtu = 1500) ?(handler = uninteresting_packet) mac net =
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
   let tags = Logs.Tag.empty in
   let tags = Logs.Tag.add Tags.mac mac tags in
-  let extern = None in
   let cnt = Atomic.make 0 in
   let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc; extern; cnt } in
   let daemon = Miou.async @@ fun () -> daemon t in

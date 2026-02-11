@@ -1,3 +1,7 @@
+(* Copyright (c) 2015 Nicolas Ojeda bar <n.oje.bar@gmail.com>
+   SPDX-License-Identifier: ISC
+ *)
+
 let src = Logs.Src.create "mnet.ndpv6"
 
 module Log = (val Logs.src_log src : Logs.LOG)
@@ -499,6 +503,15 @@ let process t = function
       let pkt = { Packet.dst= lladdr; len; fn } in
       (t, [ pkt ])
 
+(* NOTE(dinosaure): Unlike IPv4, if we cannot find the MAC address of the
+   [next_hop], we cache the packets we want to send. They will be sent as soon as
+   we have the MAC address of our neighbor, which is determined in the
+   cooperative [NDPv6.tick] task.
+
+   This also means that, unlike IPv4, writing packets to a destination has no
+   effect (we can write directly or keep the packets). This allows us to offer
+   an [IPv6.write] function that does not reschedule (and can be used in a
+   [Miou.Ownership] "finally" without any problems). *)
 let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
   if Ipaddr.V6.is_multicast next_hop then
     let dst = Ipaddr.V6.multicast_to_mac next_hop in

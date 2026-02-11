@@ -20,7 +20,7 @@
 
 (library
  (name mnet)
- (modules mnet UDP)
+ (modules mnet UDP TCP)
  (public_name mnet)
  (libraries duration mnet.ipv6 mnet.ipv4 mnet.icmpv4 mnet.ethernet))
 
@@ -30,8 +30,8 @@
  (public_name mnet.tls)
  (libraries mnet tls))
 
-; (library
-;  (name mnet_dhcp)
-;  (modules mnet_dhcp)
-;  (public_name mnet.dhcp)
-;  (libraries charrua-client mnet))
+(library
+ (name mnet_happy_eyeballs)
+ (modules mnet_happy_eyeballs)
+ (public_name mnet.happy_eyeballs)
+ (libraries happy-eyeballs mnet))

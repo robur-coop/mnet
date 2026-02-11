@@ -1,4 +1,5 @@
 let src = Logs.Src.create "mnet.ipv6"
+let[@inline always] now () = Mkernel.clock_monotonic ()
 
 module SBstr = Slice_bstr
 module Log = (val Logs.src_log src : Logs.LOG)
@@ -28,12 +29,12 @@ module Key = struct
   let hash t = Hashtbl.hash (t.src, t.dst, t.uid)
 end
 
-module Fragments = Fragments.Make (Key)
+module Frags = Fragments.Make (Key)
 
 type t = {
     eth: Ethernet.t
   ; mutable ndpv6: NDPv6.t
-  ; fragments: Fragments.t
+  ; fragments: Frags.t
   ; lmtu: int
   ; tags: Logs.Tag.set
   ; mutable handler: handler
@@ -53,7 +54,7 @@ let ignore ~protocol:_ _src _dst _payload = ()
 let _1s = 1_000_000_000
 
 let rec daemon t =
-  let now = Mkernel.clock_monotonic () in
+  let now = now () in
   let ndpv6, outs = NDPv6.tick t.ndpv6 ~now `Tick in
   t.ndpv6 <- ndpv6;
   List.iter (write t.eth) outs;
@@ -64,14 +65,15 @@ let kill = Miou.cancel
 
 type mode = NDPv6.mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
 
-let create ~now ?(handler = ignore) eth mode =
+let create ?(handler = ignore) eth mode =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
+  let now = now () in
   let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac mode in
   List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in
-  let fragments = Fragments.create () in
+  let fragments = Frags.create () in
   let t = { eth; ndpv6; lmtu; tags; handler; cnt; fragments } in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (t, daemon)
@@ -132,25 +134,24 @@ let at_most_one = function [] | [ _ ] -> true | _ -> false
 let src t ~dst = NDPv6.src t.ndpv6 dst
 let addresses t = NDPv6.addresses t.ndpv6
 
-let write_directly t ~now ?src dst ~protocol ~len user's_fn =
+let write_directly t ?src dst ~protocol ~len user's_fn =
   let src = NDPv6.src t.ndpv6 ?src dst in
   let* ndpv6, next_hop, mtu = NDPv6.next_hop t.ndpv6 dst in
   match mtu with
   | None ->
-      (* NOTE(dinosaure): we try with MTU=Link-MTU (generally, 1500). However,
-         this PMTU may fail for the intended destination. The only valid PMTU in
-         all cases is 1280. *)
-      let mtu = t.lmtu in
+      let mtu = 1280 in
       let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
       (* NOTE(dinosaure): we should never fragment a TCP packet. *)
       if protocol = 6 (* TCP *) && not (at_most_one pkts) then
         Log.warn (fun m -> m "Fragmentation of IPv6/TCP packets");
+      let now = now () in
       let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
       List.iter (write t.eth) outs;
       t.ndpv6 <- ndpv6;
       Ok ()
   | Some mtu ->
       let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      let now = now () in
       let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
       List.iter (write t.eth) outs;
       t.ndpv6 <- ndpv6;
@@ -169,16 +170,16 @@ let input t pkt =
   | Ok
       (`Fragment (src, dst, { NDPv6.Fragment.protocol; uid; off; last; payload }))
     ->
-      let now = Mkernel.clock_monotonic () in
+      let now = now () in
       let key = { Key.src; dst; uid; protocol } in
       let len = SBstr.length payload in
-      let pkt = Fragments.insert ~now t.fragments key ~off ~len ~last payload in
+      let pkt = Frags.insert ~now t.fragments key ~off ~len ~last payload in
       let fn ({ Key.src; dst; protocol; _ }, payload) =
         t.handler ~protocol src dst payload
       in
       Option.iter fn pkt
   | Ok event ->
-      let now = Mkernel.clock_monotonic () in
+      let now = now () in
       let ndpv6, outs = NDPv6.tick ~now t.ndpv6 event in
       List.iter (write t.eth) outs;
       t.ndpv6 <- ndpv6

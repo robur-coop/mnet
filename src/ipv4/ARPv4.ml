@@ -1,4 +1,5 @@
 let src = Logs.Src.create "mnet.arp"
+let[@inline always] now () = Mkernel.clock_monotonic ()
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module Ethernet = Ethernet
@@ -290,12 +291,12 @@ let read_or_sync ?(delay = 1_500_000_000) t =
 
 let arp ?(delay = 1_500_000_000) t =
   let rec go rem =
-    let t0 = Mkernel.clock_monotonic () in
+    let t0 = now () in
     match read_or_sync ~delay:rem t with
     | In queue ->
         let fn = input t in
         Queue.iter fn queue;
-        let t1 = Mkernel.clock_monotonic () in
+        let t1 = now () in
         let rem = rem - (t1 - t0) in
         let rem = if rem <= 0 then delay else rem in
         go rem

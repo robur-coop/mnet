@@ -2,7 +2,11 @@
 
 `mnet` is a small library that implements the IP layer needed by [`utcp`][utcp]
 to obtain a TCP/IP stack for unikernels in OCaml (with [`mkernel`][mkernel],
-i.e. with [Solo5][solo5] and [Unikraft][unikraft]).
+i.e. with [Solo5][solo5] and [Unikraft][unikraft]). This library (partially)
+implements what is necessary for a unikernel to "talk" to a node via IPv4, IPv6,
+and TCP (it is an improved reimplementation of [mirage-tcpip][mirage-tcpip]).
+The library uses [Miou][miou] as its scheduler and effects, so it offers a
+"direct-style" API.
 
 ## How to use it?
 
@@ -13,14 +17,14 @@ that offered by `Unix` module:
 ```ocaml
 let ( let@ ) finally fn = Fun.protect ~finally fn
 module RNG = Mirage_crypto_rng_mkernel.Fortuna
+let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
+let rng = Mkernel.map rng Mkernel.[]
 
 let run _ cidr gateway =
-  Mkernel.(run [ Mnet.stackv4 ~name:"service" ?gateway cidr ])
-  @@ fun (daemon, tcpv4, udpv4) () ->
-  let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
+  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway cidr ])
+  @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
-  Fun.protect ~finally @@ fun () ->
   ...
 ```
 

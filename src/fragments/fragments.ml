@@ -3,6 +3,8 @@ let src = Logs.Src.create "mnet.fragments"
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
 
+type payload = Slice of SBstr.t | String of string
+
 module Make (Key : Hashtbl.HashedType) = struct
   module Value = struct
     type t = { to_expire: int; fragment: Fragment.t; count: int }
@@ -20,8 +22,6 @@ module Make (Key : Hashtbl.HashedType) = struct
     { cache= Cache.create (1024 * 256); to_expire }
 
   let catch ~on_exn fn = try fn () with exn -> on_exn exn
-
-  type payload = Slice of SBstr.t | String of string
 
   let insert ~now t key ?(last = false) ~off ~len slice =
     match (off, last, Cache.find key t.cache) with

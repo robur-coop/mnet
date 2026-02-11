@@ -52,6 +52,7 @@ val write_directly_into :
 val create :
      ?mtu:int
   -> ?handler:(Slice_bstr.t packet -> unit)
+  -> ?hypercalls:extern
   -> Macaddr.t
   -> Mkernel.Net.t
   -> (daemon * t, [> `MTU_too_small ]) result

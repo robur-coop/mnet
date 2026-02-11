@@ -1,5 +1,6 @@
 let src = Logs.Src.create "mnet.ipv4"
 let guard err fn = if fn () then Ok () else Error err
+let[@inline always] now () = Mkernel.clock_monotonic ()
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module SBstr = Slice_bstr
@@ -113,7 +114,7 @@ module Key = struct
   let hash = Hashtbl.hash
 end
 
-module Fragments = Fragments.Make (Key)
+module Frags = Fragments.Make (Key)
 
 type packet = Key.t = {
     src: Ipaddr.V4.t
@@ -129,7 +130,7 @@ type t = {
   ; arp: ARPv4.t
   ; cidr: Ipaddr.V4.Prefix.t
   ; gateway: Ipaddr.V4.t option
-  ; cache: Fragments.t
+  ; cache: Frags.t
   ; mutable handler: packet * payload -> unit
   ; tags: Logs.Tag.set
   ; cnt: int Atomic.t
@@ -231,16 +232,12 @@ end
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
   let tags = Ethernet.tags eth in
   let tags = Logs.Tag.add Tags.ipv4 cidr tags in
-  let cache = Fragments.create ?to_expire () in
+  let cache = Frags.create ?to_expire () in
   let cnt = Atomic.make 0 in
   let t = { eth; arp; cidr; gateway; cache; handler; tags; cnt } in
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
-
-let max t =
-  let mtu = Ethernet.mtu t.eth in
-  mtu - 20
 
 let src t ~dst:_ = Ipaddr.V4.Prefix.address t.cidr
 
@@ -341,7 +338,7 @@ let input t pkt =
            || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
            || Ipaddr.V4.(compare dst (Prefix.broadcast t.cidr)) == 0)
       then begin
-        let now = Mkernel.clock_monotonic () in
+        let now = now () in
         let key =
           let src = ipv4.Packet.src
           and dst = ipv4.Packet.dst
@@ -356,7 +353,7 @@ let input t pkt =
               "Incoming IPv4 packet %a -> %a (off:%d, len:%d, last:%b)"
               Ipaddr.V4.pp ipv4.Packet.src Ipaddr.V4.pp ipv4.Packet.dst off len
               last);
-        let pkt = Fragments.insert ~now t.cache key ~off ~len ~last payload in
+        let pkt = Frags.insert ~now t.cache key ~off ~len ~last payload in
         Option.iter t.handler pkt
       end
 

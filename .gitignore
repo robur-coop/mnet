@@ -14,3 +14,4 @@ c/dpipe
 *.merlin
 *.install
 .depend
+book/book

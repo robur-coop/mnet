@@ -1,3 +1,7 @@
+(* Copyright (c) 2015 ocaml-diet developpers.
+   SPDX-License-Identifier: ISC
+ *)
+
 type t = Empty | Node of node
 and node = { x: int; y: int; l: t; r: t; h: int }
 
