@@ -23,34 +23,6 @@ let sink_of_flow ?(close= ignore) flow =
   and stop flow = close flow in
   Flux.Sink { init; push; full; stop }
 
-let source_of_rng ?g () =
-  let init () = Bytes.create 0x7ff
-  and pull buf =
-    Mirage_crypto_rng.generate_into ?g buf (Bytes.length buf);
-    Some (Bytes.to_string buf, buf)
-  and stop _ = () in
-  Flux.Source { init; pull; stop }
-
-let sha1 =
-  let open Digestif in
-  let init () = (0, SHA1.empty)
-  and push (len, ctx) str = (len + String.length str, SHA1.feed_string ctx str)
-  and full = Fun.const false
-  and stop (len, ctx) = len, SHA1.get ctx in
-  Flux.Sink { init; push; full; stop }
-
-let take length =
-  let flow (Flux.Sink k) =
-    let init () = (k.init (), 0)
-    and push (acc, rem) str =
-      let len = Int.min (length - rem) (String.length str) in
-      let str = String.sub str 0 len in
-      (k.push acc str, rem + len)
-    and full (acc, rem) = k.full acc || rem = length
-    and stop (acc, _) = k.stop acc in
-    Flux.Sink { init; push; full; stop } in
-  { Flux.flow }
-
 let handler flow =
   let from = source_of_flow flow in
   let via = Flux.Flow.identity in
