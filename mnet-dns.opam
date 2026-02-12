@@ -10,6 +10,8 @@ depends: [
   "utcp"
   "dune" {>= "2.7.0"}
   "mnet" {= version}
+  "mnet-tls" {= version}
+  "mnet-happy-eyeballs" {= version}
   "dns"
 ]
 build: [
