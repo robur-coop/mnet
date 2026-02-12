@@ -27,11 +27,17 @@
 (library
  (name mnet_tls)
  (modules mnet_tls)
- (public_name mnet.tls)
+ (public_name mnet-tls)
  (libraries mnet tls))
+
+(library
+ (name mnet_dns)
+ (modules mnet_dns)
+ (public_name mnet-dns)
+ (libraries mnet mnet-happy-eyeballs mnet-tls dns dns-client))
 
 (library
  (name mnet_happy_eyeballs)
  (modules mnet_happy_eyeballs)
- (public_name mnet.happy_eyeballs)
+ (public_name mnet-happy-eyeballs)
  (libraries happy-eyeballs mnet))

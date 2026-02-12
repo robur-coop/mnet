@@ -48,9 +48,13 @@ module Packet = struct
     Bytes.set_uint16_be buf 2 dst_port;
     Bytes.set_uint16_be buf 4 (length + 8);
     Bytes.set_uint16_be buf 6 0;
-    let pseudo_header = checksum src dst (length + 8) in
+    let pseudo_header = checksum src dst length in
     let sum = 0 in
-    let sum = Utcp.Checksum.feed_string sum ~off:0 ~len:12 pseudo_header in
+    let sum =
+      Utcp.Checksum.feed_string sum ~off:0
+        ~len:(String.length pseudo_header)
+        pseudo_header
+    in
     let str = Bytes.unsafe_to_string buf in
     let sum = Utcp.Checksum.feed_string sum ~off:0 ~len:8 str in
     let sum = Utcp.Checksum.feed_string sum ~off ~len payload in
@@ -63,9 +67,13 @@ module Packet = struct
     Bstr.set_uint16_be bstr 2 dst_port;
     Bstr.set_uint16_be bstr 4 (length + 8);
     Bstr.set_uint16_be bstr 6 0;
-    let pseudo_header = checksum src dst (length + 8) in
+    let pseudo_header = checksum src dst length in
     let sum = 0 in
-    let sum = Utcp.Checksum.feed_string sum ~off:0 ~len:12 pseudo_header in
+    let sum =
+      Utcp.Checksum.feed_string sum ~off:0
+        ~len:(String.length pseudo_header)
+        pseudo_header
+    in
     let cs = Cstruct.of_bigarray ~off:0 ~len:8 bstr in
     Utcp.Checksum.feed_cstruct sum cs
 
@@ -93,6 +101,11 @@ type state = {
 
 type error =
   [ `Route_not_found | `Destination_unreachable of int | `Packet_too_big ]
+
+let pp_error ppf = function
+  | `Route_not_found -> Fmt.string ppf "Route not found"
+  | `Destination_unreachable _ -> Fmt.string ppf "Destination unreachable"
+  | `Packet_too_big -> Fmt.string ppf "Packet too big"
 
 let create ipv4 ipv6 = { readers= Hashtbl.create 0x7ff; ipv4; ipv6 }
 
@@ -126,6 +139,13 @@ let handler_ipv4 state (pkt, payload) =
       | Ok (pkt, payload) -> fill state ~peer ~pkt payload
       | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
     end
+
+let handler_ipv6 state src _dst (payload : Bstr.t) =
+  let peer = Ipaddr.V6 src in
+  let slice = SBstr.make payload in
+  match Packet.decode slice with
+  | Ok (pkt, payload) -> fill state ~peer ~pkt payload
+  | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
 
 let recvfrom state ?src:_ ~port ?(off = 0) ?len ?trigger buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
@@ -180,9 +200,13 @@ let sendto state ~dst ?src_port ~port:dst_port ?(off = 0) ?len payload =
       let src = IPv6.src state.ipv6 ~dst in
       let srcv6 = Ipaddr.V6 src and dstv6 = Ipaddr.V6 dst in
       let str = Packet.encode ~src:srcv6 ~dst:dstv6 pkt ~off ~len payload in
-      let len = String.length str in
-      let fn bstr = Bstr.blit_from_string str ~src_off:0 bstr ~dst_off:0 ~len in
-      IPv6.write_directly state.ipv6 ~src dst ~protocol:17 ~len fn
+      let hdr_len = String.length str in
+      let total_len = hdr_len + len in
+      let fn bstr =
+        Bstr.blit_from_string str ~src_off:0 bstr ~dst_off:0 ~len:hdr_len;
+        Bstr.blit_from_string payload ~src_off:off bstr ~dst_off:hdr_len ~len
+      in
+      IPv6.write_directly state.ipv6 ~src dst ~protocol:17 ~len:total_len fn
 
 let sendfn state ~dst ?src_port ~port:dst_port ~len fn =
   let src_port : int =
@@ -202,4 +226,13 @@ let sendfn state ~dst ?src_port ~port:dst_port ~len fn =
       in
       let writer = IPv4.Writer.into state.ipv4 ~len:(8 + len) fn in
       IPv4.write state.ipv4 dst ~protocol:17 writer
-  | Ipaddr.V6 _ -> assert false
+  | Ipaddr.V6 dst ->
+      let src = IPv6.src state.ipv6 ~dst in
+      let pkt = { Packet.src_port; dst_port; length= len } in
+      let srcv6 = Ipaddr.V6 src and dstv6 = Ipaddr.V6 dst in
+      let fn' bstr =
+        let sum = Packet.encode_into ~src:srcv6 ~dst:dstv6 pkt bstr in
+        fn (SBstr.make ~off:8 ~len bstr);
+        Packet.sum bstr sum ~len
+      in
+      IPv6.write_directly state.ipv6 ~src dst ~protocol:17 ~len:(8 + len) fn'

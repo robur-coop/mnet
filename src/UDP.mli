@@ -30,6 +30,8 @@ type state
 type error =
   [ `Route_not_found | `Destination_unreachable of int | `Packet_too_big ]
 
+val pp_error : error Fmt.t
+
 val create : IPv4.t -> IPv6.t -> state
 (** [create ipv4 ipv6] creates a new UDP state backed by the given IPv4 and IPv6
     protocol handlers. Normally called internally by {!val:Mnet.stack}. *)
@@ -108,3 +110,4 @@ val sendfn :
 (**/**)
 
 val handler_ipv4 : state -> IPv4.packet * IPv4.payload -> unit
+val handler_ipv6 : state -> Ipaddr.V6.t -> Ipaddr.V6.t -> Bstr.t -> unit
