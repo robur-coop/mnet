@@ -265,6 +265,15 @@ let create ?happy_eyeballs:(he = HE.create (now ()))
   let prm = Miou.async @@ fun () -> go t ~prms:(Miou.orphans ()) he in
   (prm, t)
 
+let inject t getaddrinfo =
+  if t.set then
+    Log.warn (fun m ->
+        m
+          "You have already injected a DNS resolver into your happy-eyeballs \
+           instance.");
+  t.getaddrinfo <- getaddrinfo;
+  t.set <- true
+
 let kill = Miou.cancel
 
 let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t addrs =

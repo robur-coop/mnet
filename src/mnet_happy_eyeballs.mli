@@ -18,11 +18,12 @@
     {[
       let hed, he = Mnet_happy_eyeballs.create tcp in
       let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
-      match Mnet_happy_eyeballs.connect he "example.com" [ 443 ] with
+      match Mnet_happy_eyeballs.connect he "robur.coop" [ 443 ] with
       | Ok ((addr, port), flow) ->
+          Logs.debug (fun m -> m "Connected to %a:%d" Ipaddr.pp addr port);
           (* use [flow] for communication *)
           Mnet.TCP.close flow
-      | Error (`Msg msg) -> Logs.err (fun m -> m "connection failed: %s" msg)
+      | Error (`Msg msg) -> Logs.err (fun m -> m "Connection failed: %s" msg)
     ]}
 
     {2 DNS resolution.}
@@ -32,8 +33,6 @@
     if you want to resolve hostnames via {!val:connect_host} or {!val:connect}.
     Without it, only {!val:connect_ip} (with explicit IP addresses) will work.
 *)
-
-(** {1 Types} *)
 
 type daemon
 (** A background task that manages connection attempt scheduling. Must be
@@ -126,3 +125,5 @@ val connect :
     {!type:Domain_name.t} before resolution.
 
     See {!val:connect_host} for parameter descriptions. *)
+
+val inject : t -> getaddrinfo -> unit

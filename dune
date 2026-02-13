@@ -1,5 +1,5 @@
 (rule
- (targets echo.hvt)
+ (targets echo.hvt resolver.hvt)
  (enabled_if
   (= %{profile} unikernels))
  (deps
@@ -8,4 +8,5 @@
   (no-infer
    (progn
     (run make -C unikernels all)
-    (copy unikernels/echo.hvt echo.hvt)))))
+    (copy unikernels/echo.hvt echo.hvt)
+    (copy unikernels/resolver.hvt resolver.hvt)))))
