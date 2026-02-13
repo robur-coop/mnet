@@ -5,7 +5,7 @@
  (libraries
   mkernel
   mnet
-  mnet.happy_eyeballs
+  mnet-happy-eyeballs
   hxd.core
   hxd.string
   mirage-crypto-rng-mkernel

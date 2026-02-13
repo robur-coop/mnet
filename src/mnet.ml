@@ -82,7 +82,7 @@ let ipv4_handler icmpv4 udp tcp =
     | 17 -> UDP.handler_ipv4 udp pkt
     | _ -> ()
 
-let ipv6_handler ipv6 tcp =
+let ipv6_handler ipv6 udp tcp =
   ();
   fun ~protocol src dst payload ->
     Log.debug (fun m ->
@@ -99,6 +99,7 @@ let ipv6_handler ipv6 tcp =
     | 6 ->
         let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
         TCP.handler tcp src dst payload
+    | 17 -> UDP.handler_ipv6 udp src dst payload
     | 58 ->
         let len = Bstr.length payload in
         if len >= 8 then begin
@@ -173,7 +174,7 @@ let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
       let tcpd, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
       let udp = UDP.create ipv4 ipv6 in
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
-      IPv6.set_handler ipv6 (ipv6_handler ipv6 tcp);
+      IPv6.set_handler ipv6 (ipv6_handler ipv6 udp tcp);
       let fn = ethernet_handler arpv4 ipv4 ipv6 in
       Ethernet.set_handler eth fn;
       let stack = { ethd; arpv4d; udp; icmpv4; ipv6d; tcpd; ipv4; ipv6 } in

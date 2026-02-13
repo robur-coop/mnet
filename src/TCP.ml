@@ -420,7 +420,6 @@ let rec transfer state acc =
   | out -> transfer state (out :: acc)
 
 let rec daemon state n =
-  Log.debug (fun m -> m "tick");
   match with_timeout 100_000_000 (or_killed state) with
   | `Kill ->
       let handler's_outs = transfer state [] in

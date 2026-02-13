@@ -225,8 +225,10 @@ let rec go t ~prms he =
   Log.debug (fun m -> m "happy-eyeballs tick");
   clean_up prms;
   let he, cont, actions = HE.timer he (now ()) in
+  Log.debug (fun m -> m "%d action(s)" (List.length actions));
   List.iter (handle_one_action ~prms t) actions;
   let he, actions, events = continue t cont he in
+  Log.debug (fun m -> m "%d action(s)" (List.length actions));
   let he, actions =
     let fn (he, actions) event =
       let he, actions' = HE.event he (now ()) (to_event t event) in
@@ -272,6 +274,7 @@ let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t addrs =
   in
   Miou.Mutex.protect t.mutex @@ fun () ->
   Queue.push (`Connect_ip connect_ip) t.queue;
+  Miou.Condition.signal t.condition;
   state
 
 let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t ips =
