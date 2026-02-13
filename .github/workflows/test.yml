@@ -31,5 +31,5 @@ jobs:
           sudo usermod -a -G kvm,libvirt $USER
       - name: Test
         run: |
-          opam install re mirage-crypto-rng-mkernel kdf gmp digestif
+          opam install re mirage-crypto-rng-mkernel kdf gmp digestif mirage-ptime
           opam exec -- dune runtest --profile=unikernels
