@@ -104,7 +104,8 @@ module Key = struct
     if res <> 0 then res else Int.compare ka kb
 end
 
-module Reqs = Map.Make (Key)
+module UReqs = Map.Make (Key)
+module Reqs = Map.Make (Int)
 module Set = Set.Make (Int)
 
 module Transport = struct
@@ -128,7 +129,8 @@ module Transport = struct
     ; timeout: int
     ; mutable ports: Set.t
     ; mutable mode: [ `Tcp of Ipaddr.t * Ke.t | `Udp ] option
-    ; mutable reqs: ivar Reqs.t
+    ; mutable reqs: (string * ivar) Reqs.t
+    ; mutable ureqs: ivar UReqs.t
     ; queries: string Queue.t
     ; uqueries: int Queue.t
     ; mutex: Miou.Mutex.t
@@ -248,7 +250,7 @@ module Transport = struct
   (* NOTE(dinosaure): Consume until we don't have enough to decode DNS packets.
      We trigger the [ivar]s associated with the [uid]s extracted from the
      packets. The ringbuffer [ke] should not grow more than 8192 bytes. *)
-  let process peer ke reqs =
+  let process ke reqs =
     let rec go () =
       match Ke.peek ke with
       | Some str when String.length str > 2 ->
@@ -256,8 +258,14 @@ module Transport = struct
           if String.length str - 2 >= 2 then begin
             let packet = String.sub str 0 (len + 2) in
             let uid = String.get_uint16_be packet 2 in
-            let fn ivar = assert (Miou.Computation.try_return ivar packet) in
-            Option.iter fn (Reqs.find_opt (peer, uid) reqs);
+            Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
+            Log.debug (fun m ->
+                m "Something waiting for this response? %b"
+                  (Option.is_some (Reqs.find_opt uid reqs)));
+            let fn (_tx, ivar) =
+              assert (Miou.Computation.try_return ivar packet)
+            in
+            Option.iter fn (Reqs.find_opt uid reqs);
             Ke.shift ke (len + 2);
             go ()
           end
@@ -265,23 +273,23 @@ module Transport = struct
     in
     go ()
 
-  let rec read_from_tcp t ke peer buf flow =
+  let rec read_from_tcp t ke buf flow =
     match Mnet.TCP.read flow buf with
     | (exception _) | 0 -> ()
     | len ->
         let str = Bytes.sub_string buf 0 len in
         Ke.push ke str;
-        process peer ke t.reqs;
-        read_from_tcp t ke peer buf flow
+        process ke t.reqs;
+        read_from_tcp t ke buf flow
 
-  let rec read_from_tls t ke peer buf flow =
+  let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with
     | (exception _) | 0 -> ()
     | len ->
         let str = Bytes.sub_string buf 0 len in
         Ke.push ke str;
-        process peer ke t.reqs;
-        read_from_tls t ke peer buf flow
+        process ke t.reqs;
+        read_from_tls t ke buf flow
 
   let rec write_to_tcp t flow =
     let queries =
@@ -306,15 +314,14 @@ module Transport = struct
       | `TLS flow -> Mnet_tls.close flow
     in
     let buf = Bytes.create 4096 in
-    let rec go0 t ((peer, _), flow) =
+    let rec go0 t flow =
       let resource = Miou.Ownership.create ~finally flow in
-      t.mode <- Some (`Tcp (peer, ke));
       Miou.Ownership.own resource;
       let prm0 =
         Miou.async @@ fun () ->
         match flow with
-        | `Plain flow -> read_from_tcp t ke peer buf flow
-        | `TLS flow -> read_from_tls t ke peer buf flow
+        | `Plain flow -> read_from_tcp t ke buf flow
+        | `TLS flow -> read_from_tls t ke buf flow
       in
       let prm1 = Miou.async @@ fun () -> write_to_tcp t flow in
       let _ = Miou.await_first [ prm0; prm1 ] in
@@ -323,12 +330,16 @@ module Transport = struct
          try to initiate a new connection and re-instantiate a reader loop. If we
          are not able to find a nameserver, we fail. *)
       match connect_to_nameservers t t.nameservers with
-      | Ok ns -> go0 t ns
+      | Ok (addr, flow) ->
+          Log.debug (fun m -> m "Connected to %a" pp_addr addr);
+          go0 t flow
       | Error _err -> t.mode <- None
     in
     (* NOTE(dinosaure): first try. *)
     match connect_to_nameservers t t.nameservers with
-    | Ok flow -> go0 t flow
+    | Ok (addr, flow) ->
+        Log.debug (fun m -> m "Connected to %a" pp_addr addr);
+        go0 t flow
     | Error _err -> t.mode <- None
 
   let read_from_udp t =
@@ -347,7 +358,7 @@ module Transport = struct
         let str = Bytes.sub_string buf 0 len in
         if len > 12 then begin
           let uid = String.get_uint16_be str 0 in
-          match (Reqs.find_opt (peer, uid) t.reqs, Set.mem port t.ports) with
+          match (UReqs.find_opt (peer, uid) t.ureqs, Set.mem port t.ports) with
           | Some ivar, _ -> assert (Miou.Computation.try_return ivar str)
           | None, true when retries > 0 -> go (pred retries) (* retry *)
           | _ -> ()
@@ -389,11 +400,13 @@ module Transport = struct
       match proto with
       | `Udp -> Some `Udp
       | `Tcp ->
+          Log.debug (fun m -> m "Initiate a TCP connection to nameservers");
           let ipaddr = Ipaddr.(V4 V4.unspecified) in
           let ke = Ke.unsafe_create 8192 in
           Some (`Tcp (ipaddr, ke))
     in
     let reqs = Reqs.empty in
+    let ureqs = UReqs.empty in
     let queries = Queue.create () in
     let uqueries = Queue.create () in
     let mutex = Miou.Mutex.create () in
@@ -406,6 +419,7 @@ module Transport = struct
       ; ports
       ; mode
       ; reqs
+      ; ureqs
       ; queries
       ; uqueries
       ; mutex
@@ -452,14 +466,14 @@ module Transport = struct
             let rx = Miou.Computation.create () in
             let finally _ =
               t.ports <- Set.remove port t.ports;
-              t.reqs <- Reqs.remove (dst, uid) t.reqs
+              t.ureqs <- UReqs.remove (dst, uid) t.ureqs
             in
             let resource = Miou.Ownership.create ~finally rx in
             Miou.Ownership.own resource;
             Mnet.UDP.sendto t.udp ~src_port:port ~dst ~port:dst_port tx
             |> Result.map_error (Fmt.str "%a" Mnet.UDP.pp_error)
             |> Result.error_to_failure;
-            t.reqs <- Reqs.add (dst, uid) rx t.reqs;
+            t.ureqs <- UReqs.add (dst, uid) rx t.ureqs;
             let@ () = fun () -> Miou.Ownership.release resource in
             match Miou.Computation.await rx with
             | Ok rx -> `Rx rx
@@ -471,14 +485,15 @@ module Transport = struct
           | `Exn (exn, _) -> raise exn
           | `Rx rx -> Ok rx
           end
-      | Some (`Tcp (dst, _)) ->
+      | Some (`Tcp _) ->
           let uid = String.get_uint16_be tx 2 in
           let fn () =
-            push_on_tcp t tx;
             let rx = Miou.Computation.create () in
-            let finally _ = t.reqs <- Reqs.remove (dst, uid) t.reqs in
+            let finally _ = t.reqs <- Reqs.remove uid t.reqs in
             let resource = Miou.Ownership.create ~finally rx in
             Miou.Ownership.own resource;
+            t.reqs <- Reqs.add uid (tx, rx) t.reqs;
+            push_on_tcp t tx;
             let@ () = fun () -> Miou.Ownership.release resource in
             match Miou.Computation.await rx with
             | Ok rx -> `Rx rx
