@@ -16,6 +16,7 @@
   $ CLIENT=$!
   $ wait $CLIENT
   $ wait $SERVER
+  $ ip a
   $ solo5-hvt --net:service=tap0 -- resolver.hvt --solo5:quiet --ipv4=10.0.0.2/24 --ipv4-gateway=10.0.0.1
   robur.coop: 193.30.40.138
   $ sudo ip link del name service type bridge
