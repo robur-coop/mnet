@@ -18,6 +18,10 @@
   $ wait $SERVER
   $ sudo iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE
   $ sudo iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o virbr0 -j MASQUERADE
+  $ sudo iptables -A FORWARD -i service -o eth0 -j ACCEPT
+  $ sudo iptables -A FORWARD -i service -o virbr0 -j ACCEPT
+  $ sudo iptables -A FORWARD -i eth0 -o service -m state --state RELATED,ESTABLISHED -j ACCEPT
+  $ sudo iptables -A FORWARD -i virbr0 -o service -m state --state RELATED,ESTABLISHED -j ACCEPT
   $ solo5-hvt --net:service=tap0 -- resolver.hvt --solo5:quiet --ipv4=10.0.0.2/24 --ipv4-gateway=10.0.0.1
   robur.coop: 193.30.40.138
   $ sudo ip link del name service type bridge
