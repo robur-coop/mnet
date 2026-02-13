@@ -18,7 +18,7 @@ jobs:
           opam-local-packages: |
             *.opam
       - name: Install dependencies
-        run: opam install --deps-only -t mnet,mnet-tls,mnet-dns,mnet-happy-eyeballs
+        run: opam install --deps-only -t mnet mnet-tls mnet-dns mnet-happy-eyeballs
       - name: Build
         run: opam exec -- dune build -p mnet,mnet-happy-eyeballs,mnet-tls,mnet-dns
       - name: Enable KVM group perms
