@@ -12,6 +12,7 @@
   digestif
   re
   gmp
+  zarith
   cmdliner
   ca-certs-nss
   mirage-ptime.solo5

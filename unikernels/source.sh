@@ -13,3 +13,4 @@
 [ ! -d "vendors/tls" ] && opam source tls --dir vendors/tls
 [ ! -d "vendors/x509" ] && opam source x509 --dir vendors/x509
 [ ! -d "vendors/ca-certs-nss" ] && opam source ca-certs-nss --dir vendors/ca-certs-nss
+[ ! -d "vendors/zarith" ] && opam source zarith --dir vendors/zarith

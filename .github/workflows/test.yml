@@ -32,4 +32,5 @@ jobs:
       - name: Test
         run: |
           opam install re mirage-crypto-rng-mkernel kdf gmp digestif mirage-ptime bos ca-certs-nss
+          opam pin add git+https://github.com/mirage/Zarith.git#1.14+dune+mirage
           opam exec -- dune runtest --profile=unikernels
