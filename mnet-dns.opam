@@ -13,6 +13,7 @@ depends: [
   "mnet-tls" {= version}
   "mnet-happy-eyeballs" {= version}
   "dns"
+  "dns-client"
 ]
 build: [
   ["dune" "subst"] {dev}
