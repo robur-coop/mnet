@@ -472,7 +472,7 @@ module Transport = struct
             Miou.Ownership.own resource;
             Mnet.UDP.sendto t.udp ~src_port:port ~dst ~port:dst_port tx
             |> Result.map_error (Fmt.str "%a" Mnet.UDP.pp_error)
-            |> Result.error_to_failure;
+            |> Result.iter_error failwith;
             t.ureqs <- UReqs.add (dst, uid) rx t.ureqs;
             let@ () = fun () -> Miou.Ownership.release resource in
             match Miou.Computation.await rx with
