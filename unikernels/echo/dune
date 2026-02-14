@@ -5,6 +5,7 @@
  (libraries
   mkernel
   mnet
+  mnet.cli
   mnet-happy-eyeballs
   hxd.core
   hxd.string

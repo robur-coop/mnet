@@ -5,6 +5,12 @@
  (libraries fmt ipaddr macaddr logs))
 
 (library
+ (name mnet_cli)
+ (public_name mnet.cli)
+ (modules mnet_cli)
+ (libraries cmdliner mnet))
+
+(library
  (name ethernet)
  (public_name mnet.ethernet)
  (modules ethernet)

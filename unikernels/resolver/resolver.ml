@@ -7,8 +7,8 @@ let rng = Mkernel.map rng Mkernel.[]
 let _5s = Duration.of_sec 5
 let robur_coop = Domain_name.(host_exn (of_string_exn "robur.coop"))
 
-let run _quiet cidrv4 gateway cidrv6 nameservers =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6:cidrv6 cidrv4 ])
+let run _quiet (cidrv4, gateway, ipv6) nameservers =
+  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 cidrv4 ])
   @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
@@ -99,31 +99,6 @@ let setup_logs utf_8 style_renderer sources level =
 
 let setup_logs =
   Term.(const setup_logs $ utf_8 $ renderer $ setup_sources $ verbosity)
-
-let ipv4 =
-  let doc = "The IPv4 address of the unikernel." in
-  let ipaddr = Arg.conv (Ipaddr.V4.Prefix.of_string, Ipaddr.V4.Prefix.pp) in
-  let open Arg in
-  required & opt (some ipaddr) None & info [ "ipv4" ] ~doc ~docv:"IPv4"
-
-let ipv6 =
-  let doc = "The IPv6 address of the unikernel." in
-  let parser str = match Ipaddr.V6.Prefix.of_string str with
-    | Ok cidrv6 -> Ok (Mnet.IPv6.Static cidrv6)
-    | Error _ as err -> err in
-  let pp ppf = function
-    | Mnet.IPv6.Static cidrv6 -> Ipaddr.V6.Prefix.pp ppf cidrv6
-    | Mnet.IPv6.EUI64 -> Fmt.string ppf "eui64"
-    | Mnet.IPv6.Random -> Fmt.string ppf "random" in
-  let ipaddr = Arg.conv (parser, pp) in
-  let open Arg in
-  value & opt ipaddr Mnet.IPv6.EUI64 & info [ "ipv6" ] ~doc ~docv:"IPv6"
-
-let ipv4_gateway =
-  let doc = "The IPv4 gateway." in
-  let ipaddr = Arg.conv (Ipaddr.V4.of_string, Ipaddr.V4.pp) in
-  let open Arg in
-  value & opt (some ipaddr) None & info [ "ipv4-gateway" ] ~doc ~docv:"IPv4"
 
 let nameserver_of_string str =
   let ( let* ) = Result.bind in
@@ -220,9 +195,7 @@ let term =
   let open Term in
   const run
   $ setup_logs
-  $ ipv4
-  $ ipv4_gateway
-  $ ipv6
+  $ Mnet_cli.setup
   $ setup_nameservers
 
 let cmd =

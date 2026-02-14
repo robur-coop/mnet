@@ -48,8 +48,8 @@ let rec terminate orphans = match Miou.care orphans with
       Result.iter_error fn result;
       terminate orphans
 
-let run _quiet cidrv4 gateway cidrv6 mode =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6:cidrv6 cidrv4 ])
+let run _quiet (cidrv4, gateway, ipv6) mode =
+  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 cidrv4 ])
   @@ fun rng (daemon, tcp, _udp) () ->
   let hed, he = Mnet_happy_eyeballs.create tcp in
   let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
@@ -105,11 +105,11 @@ let run _quiet cidrv4 gateway cidrv6 mode =
       let hash0, hash1 = go Digestif.SHA1.empty Digestif.SHA1.empty length length in
       if not (Digestif.SHA1.equal hash0 hash1) then exit 1
 
-let run_client _quiet cidrv4 gateway cidrv6 edn length =
-  run _quiet cidrv4 gateway cidrv6 (`Client (edn, length))
+let run_client _quiet mnet edn length =
+  run _quiet mnet (`Client (edn, length))
 
-let run_server _quiet cidrv4 gateway cidrv6 port limit =
-  run _quiet cidrv4 gateway cidrv6 (`Server (port, limit))
+let run_server _quiet mnet port limit =
+  run _quiet mnet (`Server (port, limit))
 
 open Cmdliner
 
@@ -190,31 +190,6 @@ let setup_logs utf_8 style_renderer sources level =
 let setup_logs =
   Term.(const setup_logs $ utf_8 $ renderer $ setup_sources $ verbosity)
 
-let ipv4 =
-  let doc = "The IPv4 address of the unikernel." in
-  let ipaddr = Arg.conv (Ipaddr.V4.Prefix.of_string, Ipaddr.V4.Prefix.pp) in
-  let open Arg in
-  required & opt (some ipaddr) None & info [ "ipv4" ] ~doc ~docv:"IPv4"
-
-let ipv6 =
-  let doc = "The IPv6 address of the unikernel." in
-  let parser str = match Ipaddr.V6.Prefix.of_string str with
-    | Ok cidrv6 -> Ok (Mnet.IPv6.Static cidrv6)
-    | Error _ as err -> err in
-  let pp ppf = function
-    | Mnet.IPv6.Static cidrv6 -> Ipaddr.V6.Prefix.pp ppf cidrv6
-    | Mnet.IPv6.EUI64 -> Fmt.string ppf "eui64"
-    | Mnet.IPv6.Random -> Fmt.string ppf "random" in
-  let ipaddr = Arg.conv (parser, pp) in
-  let open Arg in
-  value & opt ipaddr Mnet.IPv6.EUI64 & info [ "ipv6" ] ~doc ~docv:"IPv6"
-
-let ipv4_gateway =
-  let doc = "The IPv4 gateway." in
-  let ipaddr = Arg.conv (Ipaddr.V4.of_string, Ipaddr.V4.pp) in
-  let open Arg in
-  value & opt (some ipaddr) None & info [ "ipv4-gateway" ] ~doc ~docv:"IPv4"
-
 let port =
   let doc = "The echo server port." in
   let open Arg in
@@ -249,9 +224,7 @@ let term_server =
   let open Term in
   const run_server
   $ setup_logs
-  $ ipv4
-  $ ipv4_gateway
-  $ ipv6
+  $ Mnet_cli.setup
   $ port
   $ limit
 
@@ -263,9 +236,7 @@ let term_client =
   let open Term in
   const run_client
   $ setup_logs
-  $ ipv4
-  $ ipv4_gateway
-  $ ipv6
+  $ Mnet_cli.setup
   $ addr
   $ length
 
