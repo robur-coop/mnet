@@ -5,7 +5,7 @@
  (libraries
   mkernel
   mnet
-  mnet.cli
+  mnet-cli
   mnet-dns
   hxd.core
   hxd.string

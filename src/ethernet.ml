@@ -82,7 +82,7 @@ let uninteresting_packet _ = raise_notrace Packet_ignored
 let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
   let src = Option.value ~default:t.mac packet.src in
-  let tags = Logs.Tag.add Tags.mac src Logs.Tag.empty in
+  let tags = Logs.Tag.add Mnet_tags.mac src Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
   (* NOTE(dinosaure): clean-up our buffer. *)
   Packet.encode_into pkt ~off:0 t.bstr_oc;
@@ -159,7 +159,7 @@ let create ?(mtu = 1500) ?(handler = uninteresting_packet) ?hypercalls:extern
   let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:(14 + mtu) in
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
   let tags = Logs.Tag.empty in
-  let tags = Logs.Tag.add Tags.mac mac tags in
+  let tags = Logs.Tag.add Mnet_tags.mac mac tags in
   let cnt = Atomic.make 0 in
   let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc; extern; cnt } in
   let daemon = Miou.async @@ fun () -> daemon t in

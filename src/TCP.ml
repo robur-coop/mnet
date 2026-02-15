@@ -361,7 +361,7 @@ let handler state src dst payload =
       Log.debug (fun m ->
           m "established connection with %a:%d" Ipaddr.pp ipaddr port);
       let tags = IPv4.tags state.ipv4 in
-      let tags = Logs.Tag.add Tags.tcp (ipaddr, port) tags in
+      let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
       let buffer = Buffer.create 0x7ff in
       let flow = { state; tags; flow; buffer; closed= false } in
       begin match Hashtbl.find state.accept src_port with
@@ -545,7 +545,7 @@ let connect state (dst, dst_port) =
   in
   let tcp, flow, c, seg = Utcp.connect ~src ~dst ~dst_port state.tcp (now ()) in
   let tags = IPv4.tags state.ipv4 in
-  let tags = Logs.Tag.add Tags.tcp (dst, dst_port) tags in
+  let tags = Logs.Tag.add Mnet_tags.tcp (dst, dst_port) tags in
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");

@@ -231,7 +231,7 @@ end
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
   let tags = Ethernet.tags eth in
-  let tags = Logs.Tag.add Tags.ipv4 cidr tags in
+  let tags = Logs.Tag.add Mnet_tags.ipv4 cidr tags in
   let cache = Frags.create ?to_expire () in
   let cnt = Atomic.make 0 in
   let t = { eth; arp; cidr; gateway; cache; handler; tags; cnt } in

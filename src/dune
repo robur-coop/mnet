@@ -1,14 +1,14 @@
 (library
- (name tags)
+ (name mnet_tags)
  (public_name mnet.tags)
- (modules tags)
+ (modules mnet_tags)
  (libraries fmt ipaddr macaddr logs))
 
 (library
  (name mnet_cli)
- (public_name mnet.cli)
+ (public_name mnet-cli)
  (modules mnet_cli)
- (libraries cmdliner mnet))
+ (libraries ca-certs-nss mirage-ptime.solo5 dns tls cmdliner mnet))
 
 (library
  (name ethernet)
