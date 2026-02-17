@@ -275,7 +275,7 @@ module Parser = struct
             | 0x80 -> Error (`ICMP_error (4, 2, src_off))
             | 0xc0 when Ipaddr.V6.is_multicast dst -> Error `Drop
             | 0xc0 -> Error (`ICMP_error (4, 2, src_off))
-            | _ -> assert false (* TODO(dinosaure): [Error]? *)
+            | _ -> Error `Drop
           end
       else with_extension ~src ~dst sbstr nhdr (off + opt_len)
     in

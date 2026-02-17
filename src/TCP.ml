@@ -150,9 +150,9 @@ let write_ipv6 ipv6 (src, dst, seg) =
   match IPv6.write_directly ipv6 ~src dst ~protocol:6 ~len fn with
   | Ok () -> ()
   | Error `Packet_too_big ->
-      (* TODO(dinosaure): we should set MSS on the TCP layer and retry
-         everything which was not ACKed. *)
-      assert false
+      Log.warn (fun m ->
+          m "%a: packet too big (PMTU updated), relying on retransmission"
+            Ipaddr.V6.pp dst)
   | Error (`Destination_unreachable _) ->
       Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
       raise Net_unreach

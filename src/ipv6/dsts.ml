@@ -95,19 +95,20 @@ let tick t ~now:_ = function
   | `Packet_too_big ptb -> begin
       (* RFC 8201: Path MTU Discovery for IPv6
          Update the PMTU for the destination. The new PMTU should be
-         at least 1280 (minimum IPv6 MTU) and at most the current PMTU. *)
+         at least 1280 (minimum IPv6 MTU) and at most the current PMTU.
+         Mark the destination as errored so that [next_hop] returns
+         [`Packet_too_big] to the caller, allowing TCP to adjust. *)
       let new_pmtu = Int.max 1280 ptb.PTB.mtu in
+      let errored = Some `Packet_too_big in
       match Dsts.find ptb.PTB.destination t.cache with
-      | Some { Dst.pmtu; next_hop; errored } ->
-          (* Only reduce PMTU, never increase from PTB *)
+      | Some { Dst.pmtu; next_hop; _ } ->
           let pmtu = Int.min pmtu new_pmtu in
           let value = { Dst.pmtu; next_hop; errored } in
           let cache = Dsts.add ptb.PTB.destination value t.cache in
           { t with cache= Dsts.trim cache }
       | None ->
-          (* No cached entry, create one with the new PMTU *)
           let value =
-            { Dst.pmtu= new_pmtu; next_hop= ptb.PTB.destination; errored= None }
+            { Dst.pmtu= new_pmtu; next_hop= ptb.PTB.destination; errored }
           in
           let cache = Dsts.add ptb.PTB.destination value t.cache in
           { t with cache= Dsts.trim cache }
