@@ -4,6 +4,7 @@ authors: ["Robur <team@robur.coop>"]
 homepage: "https://github.com/robur-coop/mnet"
 dev-repo: "git+https://github.com/robur-coop/mnet.git"
 bug-reports: "https://github.com/robur-coop/mnet/issues"
+license: "MIT"
 
 depends: [
   "ocaml" {>= "5.0.0"}
@@ -13,8 +14,8 @@ depends: [
   "dns"
   "tls"
   "cmdliner"
-  "ca-certs-nss"
-  "mirage-ptime"
+  "ca-certs-nss" {>= "3.118"}
+  "mirage-ptime" {>= "5.2.0"}
 ]
 build: [
   ["dune" "subst"] {dev}
