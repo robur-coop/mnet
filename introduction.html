@@ -1,0 +1,419 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Introduction - Unikernels in OCaml and network</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-ba81fcc6.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-f346a6d4.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Unikernels in OCaml and network</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p><code>mnet</code> is a library that provides the networking foundation for unikernels. It
+lets you build services ranging from public-facing web servers to more
+specialized tools such as a DNS resolver (to circumvent censorship) or a DNS
+blocker (to filter out advertising). In this short book, we will walk through
+several practical examples that show what unikernels in OCaml can do.</p>
+<h2 id="what-is-a-unikernel"><a class="header" href="#what-is-a-unikernel">What is a unikernel?</a></h2>
+<p>A unikernel is a specialized, single-purpose operating system that bundles your
+application code with only the OS components it actually needs. Nothing more.
+Instead of running your OCaml application on top of a general-purpose OS such
+as Linux (which ships with thousands of features you will never use), a
+unikernel compiles your code together with only the minimal set of libraries
+needed for networking, storage, and memory management.</p>
+<p>The result is a single bootable image that runs inside a sandboxed environment.
+There is no shell, no unnecessary drivers, and no multi-user support. It is just
+your application and the bare minimum required to run it.</p>
+<p>In practice, building an OCaml unikernel relies on two key components.
+<a href="https://github.com/solo5/solo5">Solo5</a> provides the sandboxed execution environment: it defines a
+minimal, stable interface between your unikernel and the underlying host
+(whether that host is a hypervisor such as KVM, or a sandboxed Linux process
+using <a href="https://en.wikipedia.org/wiki/Seccomp">seccomp</a>). Solo5 handles the low-level details of how your
+unikernel boots, accesses network interfaces, and reads from block devices. On
+top of Solo5, <a href="https://github.com/robur-coop/mkernel"><code>mkernel</code></a> is a library that lets you write unikernels
+in OCaml using the <a href="https://github.com/robur-coop/miou">Miou</a> scheduler. It exposes the devices that Solo5
+provides (network interfaces and block storage) and gives you a familiar OCaml
+programming model for building your application.</p>
+<p>When you compile your OCaml code with <code>mkernel</code>, the build system produces a
+standalone image that can be launched using a Solo5 <em>tender</em> (a small host-side
+program such as <code>solo5-hvt</code>). The practical benefits are significant: a smaller
+attack surface, faster boot times (often measured in milliseconds), a reduced
+memory footprint, and simpler deployment, since the entire system is a single
+artifact.</p>
+<h2 id="the-ecosystem-for-ocaml-unikernels"><a class="header" href="#the-ecosystem-for-ocaml-unikernels">The ecosystem for OCaml unikernels</a></h2>
+<p><code>mnet</code> is part of a broader ecosystem of OCaml libraries that <a href="https://robur.coop">our
+cooperative</a> maintains for unikernel development. This ecosystem provides
+pure OCaml reimplementations of essential components (networking, cryptography,
+and more) so that you can build fully self-contained applications without
+relying on C bindings or system libraries. Here are some of the libraries we
+use throughout this tutorial.</p>
+<ol>
+<li>At the foundation, <a href="https://github.com/robur-coop/mkernel"><code>mkernel</code></a> provides the runtime, including
+hypercalls for network and block devices, clock access, and integration with
+the Miou scheduler.</li>
+<li>For networking, <a href="https://github.com/robur-coop/utcp"><code>utcp</code></a> is a pure OCaml implementation of the TCP
+protocol, used internally by <code>mnet</code>. It originated from a manual extraction
+of a <a href="https://hol-theorem-prover.org/">HOL4</a> specification of the TCP state
+machine (described in detail in <a href="https://www.cl.cam.ac.uk/~pes20/Netsem/paper3.pdf">this paper</a>).</li>
+<li><a href="https://github.com/mirage/ocaml-solo5"><code>ocaml-solo5</code></a> is a variant of the
+OCaml compiler that targets Solo5, making cross-compilation possible.</li>
+<li>On the cryptography side, <a href="https://github.com/mirage/mirage-crypto"><code>mirage-crypto</code></a> provides our
+cryptographic primitives, and some of its operations are derived from
+formally verified proofs in Rocq/Coq via the <a href="https://github.com/mit-plv/fiat-crypto">fiat</a> project.</li>
+</ol>
+<p>We will encounter more of these libraries as we go.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>Unikernels require a different build process than standard executables. We are
+actively improving the development workflow for <code>mkernel</code>, but it is still
+evolving. Everything described in this tutorial is accurate and functional,
+but you can expect the process to become smoother over time. To get started,
+you will need:</p>
+<ul>
+<li>OCaml version 5.0.0 or later,</li>
+<li>along with OPAM, the OCaml package manager (you can find installation
+instructions <a href="https://opam.ocaml.org/doc/Install.html">here</a>).</li>
+<li>You will also need <a href="https://github.com/mirage/ocaml-solo5"><code>ocaml-solo5</code></a>, which lets you compile an
+OCaml project as a unikernel, as well as the Solo5 tools (<code>solo5-hvt</code> or
+<code>solo5-spt</code>) for running unikernels.</li>
+<li>Finally, you will need access to a hypervisor such as KVM, BHyve, or VMM.</li>
+</ul>
+<p>You can install everything you need using these commands:</p>
+<pre><code class="language-bash">$ opam switch create 5.4.0
+$ eval $(opam env)
+$ opam install solo5
+$ opam install ocaml-solo5
+$ opam install mkernel
+$ opam install mnet
+</code></pre>
+<p>To run a unikernel, you need access to a hypervisor or a sandboxing mechanism.
+On Linux, the simplest option is KVM (Kernel-based Virtual Machine). You can
+check whether your system supports it by running:</p>
+<pre><code class="language-bash">$ ls /dev/kvm
+</code></pre>
+<p>If this device exists, you are ready to go. You may need to add your user to
+the <code>kvm</code> group so that you can access it without root privileges:</p>
+<pre><code class="language-bash">$ sudo usermod -aG kvm $USER
+</code></pre>
+<p>After running this command, log out and log back in for the change to take
+effect. Once KVM is available, you can run your unikernel with the <code>solo5-hvt</code>
+tender, which uses KVM to execute your image in an isolated virtual
+environment.</p>
+<h2 id="your-first-unikernel"><a class="header" href="#your-first-unikernel">Your first unikernel</a></h2>
+<p>A unikernel is an executable that must be <em>cross-compiled</em>. This means it is
+built using the <code>ocaml-solo5</code> compiler rather than the regular host compiler.
+Because of this, the build configuration looks slightly different from what you
+might be used to:</p>
+<pre><code class="language-bash">$ cat &gt;dune&lt;&lt;EOF
+(executable
+ (name main)
+ (modules main)
+ (link_flags :standard -cclib "-z solo5-abi=hvt")
+ (libraries mkernel)
+ (foreign_stubs
+  (language c)
+  (names manifest)))
+
+(rule
+ (targets manifest.c)
+ (deps manifest.json)
+ (enabled_if
+  (= %{context_name} "solo5"))
+ (action
+  (run solo5-elftool gen-manifest manifest.json manifest.c)))
+
+(rule
+ (targets manifest.c)
+ (enabled_if
+  (= %{context_name} "default"))
+ (action
+  (write-file manifest.c "")))
+
+(vendored_dirs vendors)
+EOF
+</code></pre>
+<p>To boot as quickly as possible, a unikernel does not perform <em>device
+discovery</em>: it never asks the tender which devices are available. Instead, it
+contains a <strong>static</strong> list of the devices it requires. This list is written as
+a JSON file, which is then compiled into the <code>manifest.c</code> file that becomes
+part of your unikernel:</p>
+<pre><code class="language-bash">$ cat &gt;manifest.json&lt;&lt;EOF
+{"type":"solo5.manifest","version":1,"devices":[]}
+EOF
+</code></pre>
+<p>To cross-compile your executable with <code>ocaml-solo5</code>, you need to define a new
+build context in the <code>dune-workspace</code> file:</p>
+<pre><code class="language-bash">$ cat &gt;dune-workspace&lt;&lt;EOF
+(lang dune 3.0)
+(context (default))
+(context (default
+ (name solo5)
+ (host default)
+ (toolchain solo5)
+ (disable_dynamically_linked_foreign_archives true)))
+EOF
+</code></pre>
+<p>Cross-compilation requires that the source code of your dependencies (in this
+case, <code>mkernel</code>) is available locally. You can fetch it with <code>opam source</code>:</p>
+<pre><code class="language-bash">$ mkdir vendors
+$ opam source mkernel --dir vendors/mkernel
+</code></pre>
+<p>You can now create your unikernel:</p>
+<pre><code class="language-bash">$ cat &gt;dune-project&lt;&lt;EOF
+(lang dune 3.0)
+EOF
+$ cat &gt;main.ml&lt;&lt;EOF
+let () = Mkernel.(run []) @@ fun () -&gt;
+  print_endline "Hello World!"
+EOF
+$ dune build ./main.exe
+</code></pre>
+<p>Launching a unikernel is different from launching a regular executable, because
+it runs as a virtual machine. You need to use a <em>tender</em> to start it. Here, we
+use <code>solo5-hvt</code>:</p>
+<pre><code class="language-bash">$ solo5-hvt -- _build/solo5/main.exe --solo5:quiet
+Hello World!
+</code></pre>
+<p>Congratulations, you have just created your first unikernel! In the next
+chapter, we will build a small echo server using <code>mnet</code> and set up networking
+for your unikernel. Unikernels come with their own concepts and constraints
+that are important to understand. The <code>mkernel</code> <a href="https://robur-coop.github.io/mkernel/local/mkernel/Mkernel/index.html">documentation</a>
+covers these fundamentals in depth, explaining how Solo5 and OCaml fit
+together.</p>
+<h2 id="important-constraints"><a class="header" href="#important-constraints">Important constraints</a></h2>
+<p>There are two essential things to keep in mind when building unikernels.</p>
+<p>The first is that the <code>Unix</code> module is not available. The <code>ocaml-solo5</code>
+compiler does not provide the <code>unix.cmxa</code> library. Since there is no underlying
+operating system, system calls like <code>Unix.openfile</code> or <code>Unix.socket</code> simply do
+not exist. This means that any library, including transitive dependencies, that
+relies on the <code>Unix</code> module cannot be used in a unikernel. In practice, this is
+why our ecosystem relies on pure OCaml reimplementations of protocols and
+services (networking, DNS, TLS, and so on) rather than wrappers around C system
+libraries.</p>
+<p>The second is that dependencies must be vendored. Nearly all of your
+dependencies need their source code present locally in a <code>vendors/</code> directory.
+This is because cross-compilation with <code>ocaml-solo5</code> requires compiling C
+stubs (if any) with the Solo5 toolchain, which is only possible when <code>dune</code>
+has direct access to the source files. You can vendor a dependency with
+<code>opam source</code>:</p>
+<pre><code class="language-bash">$ opam source &lt;package&gt; --dir vendors/&lt;package&gt;
+</code></pre>
+<p>This must be done for every dependency that your unikernel uses, not just your
+direct dependencies, but their transitive dependencies as well.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+                            <a rel="next prefetch" href="echo.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+                    <a rel="next prefetch" href="echo.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-5842b119.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
