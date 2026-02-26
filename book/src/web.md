@@ -5,8 +5,8 @@ connections and sends back whatever it receives. Now we will take a bigger step
 and implement an HTTP web server.
 
 Between the raw Ethernet frames we started with and the HTTP protocol lies a
-deep stack of intermediate layers (TCP, IP, TLS), each of which is interesting
-in its own right. Later chapters will explore some of those layers. For now, we
+whole stack of intermediate layers (TCP, IP, TLS), each of which is interesting
+in its own right. Later chapters may explore some of those layers. For now, we
 jump straight to HTTP because it demonstrates something important: even though
 a unikernel is a minimal, single-purpose system, it can host a fully featured
 web service.
@@ -38,25 +38,25 @@ $ opam source vifu --dir vendors/vifu
 That is quite a few packages, so let us walk through what each one does.
 
 - The library we will interact with most directly is `vifu`. It is a web
-  framework for OCaml 5, designed specifically for unikernels (the _u_ in `vifu`
+  framework for OCaml 5 designed specifically for unikernels (the _u_ in `vifu`
   stands for _unikernel_). It provides routing, request handling, and response
-  building, giving us everything we need to define HTTP endpoints. `vifu` is the
-  unikernel variant of [vif][vif], a web framework that [our cooperative][robur]
-  uses in production for [builds.robur.coop][builds-robur]. If you are familiar
-  with web frameworks like Express (JavaScript) or Sinatra (Ruby), `vifu` fills
-  the same role. We also recommend reading [this tutorial][vif-tutorial] on how
-  to implement a chatroom using websockets with Vif.
+  building: everything we need to define HTTP endpoints. `vifu` is the unikernel
+  variant of [vif][vif], a web framework that [our cooperative][robur] uses in
+  production for [builds.robur.coop][builds-robur]. If you are familiar with web
+  frameworks such as Express (JavaScript) or Sinatra (Ruby), `vifu` fills the
+  same role. We also recommend [this tutorial][vif-tutorial] on implementing a
+  chatroom with websockets using Vif.
 - Under the hood, `mhttp`, `h1`, and `httpcats` together implement the HTTP
-  protocol for unikernels. They take care of parsing incoming HTTP requests and
-  serializing outgoing HTTP responses so that we do not have to worry about the
+  protocol for unikernels. They handle parsing of incoming HTTP requests and
+  serialization of outgoing HTTP responses, so we do not have to deal with the
   wire format ourselves.
 - `flux` is a streaming library used internally by the HTTP stack to process
   request and response bodies without buffering them entirely in memory. If you
-  are interested in handling streams with Miou, we have created a
+  are interested in handling streams with Miou, we have written a
   [tutorial][flux-tutorial] on the subject.
-- For handling file uploads, `multipart_form-miou` takes care of
-  `multipart/form-data` parsing, which is the encoding that web browsers use
-  when uploading files through an HTML form.
+- For file uploads, `multipart_form-miou` handles `multipart/form-data`
+  parsing, which is the encoding that web browsers use when uploading files
+  through an HTML form.
 - Finally, `tls` and `x509` provide TLS encryption and X.509 certificate
   handling. Even though our example uses plain HTTP (no encryption), `vifu`
   depends on these libraries because it supports HTTPS out of the box.
@@ -68,9 +68,10 @@ That is quite a few packages, so let us walk through what each one does.
 
 ## A minimal web server
 
-The only change to the build configuration from the echo server is adding
-`vifu` (and its dependency `gmp`) to the library list in the `dune` file. The
-`dune-workspace`, `dune-project`, and `manifest.json` files stay the same:
+The only change to the build configuration compared to the echo server is
+adding `vifu` (and its dependency `gmp`) to the library list in the `dune`
+file. The `dune-workspace`, `dune-project`, and `manifest.json` files remain
+the same:
 
 ```diff
 - (libraries mkernel mirage-crypto-rng-mkernel mnet)
@@ -110,8 +111,8 @@ server. The new part is the `index` handler and the route table.
 
 The `index` handler receives an HTTP request, sets the response body to
 `"Hello World!\n"` using `with_text`, and responds with HTTP status 200
-(`OK`). The `let*` syntax from `Vifu.Response.Syntax` sequences these response
-operations.
+(`OK`). The `let*` syntax, provided by `Vifu.Response.Syntax`, sequences these
+response-building operations.
 
 The route table maps URL patterns to handlers. Here we define a single route.
 - The `get` combinator matches HTTP GET requests.
@@ -123,10 +124,10 @@ So this route matches `GET /` (with or without query parameters) and calls
 `index`. The [vif tutorial][vif-route] covers the routing DSL in more
 detail, including how to capture path segments and query parameters.
 
-The last two lines wire everything together. `Vifu.Config.v 80` configures the
+The last two lines tie everything together. `Vifu.Config.v 80` configures the
 server to listen on port 80. `Vifu.run` takes the TCP state from our network
-stack, the route table, and starts serving HTTP requests. Unlike the echo
-server where we wrote the accept loop ourselves, `vifu` handles connection
+stack and the route table, then starts serving HTTP requests. Unlike the echo
+server, where we wrote the accept loop ourselves, `vifu` handles connection
 management, HTTP parsing, and request dispatching for us.
 
 ## Building and running
@@ -153,10 +154,10 @@ same result.
 A plain-text "Hello World" is nice, but a real web service needs to serve HTML
 pages, stylesheets, and other assets. To show what `vifu` can do, we are going
 to build a small but practical service: a web page where users can upload files
-and receive a zip archive in return. This raises two questions that we need to
-answer. First, how do we serve static files (like `index.html`) from a
-unikernel that has no file system? And second, how do we receive uploaded files
-from the user and zip them? Let us tackle the first question now.
+and receive a zip archive in return. This raises two questions. First, how do
+we serve static files (such as `index.html`) from a unikernel that has no file
+system? And second, how do we receive uploaded files from the user and zip
+them? Let us tackle the first question now.
 
 ### How to open a file?
 
@@ -177,22 +178,22 @@ The tool for this job is `mcrunch`. You can install it with:
 $ opam install mcrunch
 ```
 
-This is actually a great example of one of the most powerful advantages of the
-unikernel approach: we get to rethink what our application truly needs instead
-of carrying along assumptions from traditional operating systems. In a
+This is a great example of one of the most powerful advantages of the unikernel
+approach: we get to rethink what our application truly needs instead of
+carrying along assumptions from traditional operating systems. In a
 conventional server, we would reach for a file system without a second thought.
-But a file system is a remarkably complex piece of software, handling
+But a file system is a remarkably complex piece of software: it handles
 permissions, directories, concurrent writes, journaling, and much more. Do we
 actually need all of that here? For our web service, the answer is clearly no.
 Our HTML and CSS files are known at build time, they never change at runtime,
 and we only need to read them. There is no need for write access, no need for a
 directory hierarchy, and we are only dealing with a couple of small files.
 
-Once we recognize this, we can choose a much simpler solution: embedding the
-file contents directly into our binary. This is what we mean by reifying the
+Once we recognize this, we can choose a much simpler solution: embed the file
+contents directly into our binary. This is what we mean by reifying the
 building blocks of our application. Instead of pulling in a general-purpose
-abstraction like a file system, we pick the simplest tool that actually solves
-our problem. The unikernel philosophy encourages this kind of thoughtful
+abstraction such as a file system, we pick the simplest tool that actually
+solves our problem. The unikernel philosophy encourages this kind of thoughtful
 minimalism, and `mcrunch` is a perfect example of it in practice.
 
 Let us create a small upload page. Save the following as `index.html`:
@@ -326,13 +327,13 @@ The `mcrunch` command reads our two files and generates a `documents.ml` file
 containing two OCaml values: `Documents.index` and `Documents.style`. Each
 value holds the file's content as a `string list`.
 
-There are a couple of details worth noting about this command. The
-`--file index:index.html` syntax maps the OCaml value name (`index`) to the
-source file on disk (`index.html`), where the colon separates the name from the
-path. The `--list` flag tells `mcrunch` to produce `string list` values rather
-than an array. This matters because it works naturally with the streaming API we
-will use next: the content can be sent to the client incrementally, without
-first concatenating everything into one buffer.
+A couple of details are worth noting about this command. The
+`--file index:index.html` syntax maps an OCaml value name (`index`) to a
+source file on disk (`index.html`); the colon separates the two. The `--list`
+flag tells `mcrunch` to produce `string list` values rather than an array. This
+matters because it works naturally with the streaming API we will use next: the
+content can be sent to the client incrementally, without first concatenating
+everything into a single buffer.
 
 Now we replace our plain-text handler `index` with two handlers that serve the
 embedded files:
@@ -351,10 +352,10 @@ let style req _server () =
 ```
 
 Instead of `with_text` (which takes a plain string), we now use `with_source`,
-which takes a _flux source_, a stream of data. `Flux.Source.list` creates a
+which takes a _flux source_ (a stream of data). `Flux.Source.list` creates a
 source from the `string list` that `mcrunch` generated. The response body is
-sent to the client piece by piece, which is more memory-efficient than building
-the entire response as a single string.
+then sent to the client piece by piece, which is more memory-efficient than
+building the entire response as a single string.
 
 Finally, we add a route for the stylesheet:
 ```ocaml
@@ -378,13 +379,12 @@ files as a `multipart/form-data` request. Our handler will read those files,
 pack them into a zip archive, and send the archive back as the response.
 
 This is where we need to talk about memory. A unikernel has a fixed memory
-budget, 512 megabytes by default. That is far less than a typical server
+budget (512 megabytes by default). That is far less than a typical server
 application running on a machine with tens of gigabytes of RAM. If your
 application tries to hold too much data in memory at once, it will not slow
-down gracefully; it will crash with an `Out_of_memory` exception. This means
-you need to think carefully about how your code consumes memory, and in
-particular, you want to avoid loading entire files into memory when you do not
-have to.
+down gracefully: it will crash with an `Out_of_memory` exception. This means
+you need to think carefully about how your code consumes memory. In particular,
+you want to avoid loading entire files into memory when you do not have to.
 
 The solution here is streaming. Instead of reading all the uploaded files into
 memory, building the zip archive in memory, and then sending it to the client,
@@ -392,12 +392,12 @@ we process the data incrementally: we read a piece of input, compress it, write
 it to the output, and move on to the next piece. At no point does the full
 content of any file need to exist in memory all at once.
 
-The library that makes this possible is `flux`. It provides a way to describe
-data transformations as pipelines of streams, where each stage produces and
-consumes data in small chunks. If you want to understand streaming in more
-depth, the [flux tutorial][flux-tutorial] covers the concepts in detail. On top
-of `flux`, the `flux_zip` library knows how to produce zip archives from a
-stream of files.
+The library that makes this possible is `flux`. It lets you describe data
+transformations as pipelines of streams, where each stage produces and consumes
+data in small chunks. If you want to understand streaming in more depth, the
+[flux tutorial][flux-tutorial] covers the concepts in detail. On top of `flux`,
+the `flux_zip` library knows how to produce zip archives from a stream of
+files.
 
 Here is the upload handler:
 
@@ -476,9 +476,9 @@ executing it. The data only starts flowing when the client begins reading the
 response. This is what makes the approach memory-efficient: the unikernel never
 needs to hold the entire archive in memory. Each `Flux.Source.with_task`
 creates a bounded queue (the `~size:0x7ff` parameter sets the upper bound), so
-the amount of data sitting in memory at any given moment is limited regardless
-of how large the uploaded files are. A user could upload a one-gigabyte file
-and the unikernel would process it using only a few kilobytes of buffer space.
+the amount of data in memory at any given moment is limited, regardless of how
+large the uploaded files are. A user could upload a one-gigabyte file and the
+unikernel would process it using only a few kilobytes of buffer space.
 
 Finally, we need to add the new route to our route table:
 ```ocaml
@@ -513,11 +513,11 @@ solo5-hvt: Exiting on signal 15
 We started this chapter with a three-line "Hello World" handler and ended with
 a unikernel that accepts file uploads and produces zip archives on the fly.
 Along the way, we saw how `vifu` provides a familiar web-framework experience
-(handlers, routes, responses) despite running on a system with no operating
-system underneath, how `mcrunch` solves the static-file problem by embedding
-content directly into the binary at build time, and how `flux` enables
-memory-efficient streaming so that even a unikernel with a small memory budget
-can process large files without breaking a sweat.
+(handlers, routes, responses) even though there is no operating system
+underneath, how `mcrunch` solves the static-file problem by embedding content
+directly into the binary at build time, and how `flux` enables memory-efficient
+streaming so that even a unikernel with a small memory budget can process large
+files comfortably.
 
 [vif]: https://github.com/robur-coop/vif
 [vif-tutorial]: https://robur-coop.github.io/vif/

@@ -1,9 +1,10 @@
-`mnet` is a TCP/IP stack written entirely in OCaml, designed for unikernels. By
-reimplementing the network stack in a memory-safe language, `mnet` benefits
-from OCaml's type system and from the broader ecosystem of formal verification
-tools that can produce correct-by-construction OCaml code. This means fewer
-classes of bugs (no buffer overflows, no use-after-free) and a codebase that is
-easier to audit and reason about than a traditional C implementation.
+`mnet` is a TCP/IP stack written entirely in OCaml, designed for unikernels.
+Because the network stack is reimplemented in a memory-safe language, `mnet`
+benefits from OCaml's type system and from the broader ecosystem of formal
+verification tools that can produce correct-by-construction OCaml code. This
+means fewer classes of bugs (no buffer overflows, no use-after-free) and a
+codebase that is easier to audit and reason about than a traditional C
+implementation.
 
 ## A note on performance
 
@@ -18,31 +19,31 @@ memory management.
 However, the language is only part of the story. Regardless of whether a
 unikernel is written in OCaml or C, it faces an inherent I/O disadvantage
 compared to an application running directly on the host. A regular process on
-Linux can issue system calls that interact with the kernel's network stack
+Linux can make system calls that interact with the kernel's network stack
 directly. A unikernel cannot: it runs inside a sandboxed environment and must
-go through two layers of indirection to perform any I/O. First, the unikernel
-issues a hypercall to the tender, which is the host-side process that manages
-the virtual machine. Then, the tender issues a system call to the host kernel,
+go through two layers of indirection for every I/O operation. First, the
+unikernel issues a hypercall to the tender (the host-side process that manages
+the virtual machine). Then, the tender issues a system call to the host kernel,
 which actually performs the I/O. This double indirection adds latency to every
 network operation. There are techniques to reduce this cost (for example,
 shared-memory ring buffers between the tender and the unikernel, similar to
-what `virtio` provides) but the overhead can never be fully eliminated. This is
-a fundamental constraint of the isolation model, not a limitation of any
+what `virtio` provides), but the overhead can never be fully eliminated. This
+is a fundamental constraint of the isolation model, not a limitation of any
 particular implementation.
 
 If your goal is to build the fastest possible web server, a unikernel is not
 the right tool. But raw throughput is rarely the only metric that matters.
-Unikernels excel in other dimensions. They have a minimal attack surface
+Unikernels excel in other dimensions: they have a minimal attack surface
 because there is no shell, no unused drivers, and no package manager, only the
 code your application needs. They boot in milliseconds because there is no
-operating system to initialize, and their images weigh only a few megabytes
+operating system to initialize, and their images are only a few megabytes
 compared to hundreds for a typical container. The per-instance cost of running
 a unikernel is therefore very low.
 
 These properties naturally lead to a different way of thinking about services.
 Rather than building a single monolithic application, you can decompose your
-system into small, focused unikernels, each one doing one thing, booting
-quickly, and consuming minimal resources. The deployment cost per component
+system into small, focused unikernels, where each one does one thing, boots
+quickly, and consumes minimal resources. The deployment cost per component
 becomes low enough that this architecture is practical, not just theoretical.
 
 In short, do not expect a unikernel to outperform a native application in I/O.
@@ -84,8 +85,7 @@ released before the program exits. The random number generator, for instance,
 spawns a background task that continuously feeds entropy to the Fortuna engine.
 If that task is not terminated explicitly with
 `Mirage_crypto_rng_mkernel.kill`, the scheduler will reject the program at
-exit. You can take a look on our [Miou's tutorial][miou-task] for more
-details.
+exit. The [Miou tutorial][miou-task] covers this topic in more detail.
 
 The same principle applies to `mnet`. Calling `Mnet.stack` starts several
 background daemons (an Ethernet frame reader, an ARP responder, TCP timers, and
@@ -100,12 +100,18 @@ interrupts the normal control flow.
 
 ## Compilation
 
-As explained in the introduction, cross-compiling a unikernel with `ocaml-solo5`
-requires that the source code of all dependencies (including transitive ones) be
-available locally in a `vendors/` directory. Our echo server depends on `mnet`
-and its own transitive dependencies, so we need to vendor all of them:
+As explained in the introduction, cross-compiling a unikernel with
+`ocaml-solo5` requires that the source code of all dependencies (including
+transitive ones) be available locally in a `vendors/` directory. Our echo
+server depends on `mnet` and its own transitive dependencies, so we need to
+vendor all of them. There is one point worth mentioning about [Zarith][zarith]: it needs to be
+compiled with `dune`. For several years, the Mirage team has maintained a fork
+of Zarith that uses `dune`, available [here][zarith-fork]. To make unikernel
+compilation work, we need to _pin_ this package. Here are the commands to
+run:
 
 ```bash
+$ opam pin git+https://github.com/mirage/Zarith.git#zarith-1.14
 $ opam source bstr --dir vendors/bstr
 $ opam source mnet --dir vendors/mnet
 $ opam source mirage-crypto-rng-mkernel --dir vendors/mirage-crypto-rng-mkernel
@@ -113,6 +119,7 @@ $ opam source gmp --dir vendors/gmp
 $ opam source digestif --dir vendors/digestif
 $ opam source kdf --dir vendors/kdf
 $ opam source utcp --dir vendors/utcp
+$ opam source zarith --dir vendors/zarith
 ```
 
 Next, we update the `dune` file to declare the libraries our unikernel depends
@@ -161,11 +168,11 @@ On Linux, we can create this virtual network using two standard kernel
 features: [tap interfaces][tap-intf] and bridges (`bridge-utils`).
 
 Think of a physical network in an office. Each computer has an Ethernet port
-and a cable that runs to a switch (a box whose only job is to forward Ethernet
-frames between the devices plugged into it). Any machine on the switch can talk
-to any other machine on the same switch, because the switch delivers each frame
-to the right port based on the destination MAC address. This forms what is
-called a local network (or LAN).
+and a cable that connects it to a switch (a device whose only job is to forward
+Ethernet frames between the machines plugged into it). Any machine on the
+switch can talk to any other machine on the same switch, because the switch
+delivers each frame to the right port based on the destination MAC address.
+This forms what is called a local area network, or LAN.
 
 We need to reproduce this setup virtually. A tap interface plays the role of
 the Ethernet cable: it is a network device created by the Linux kernel that
@@ -195,12 +202,12 @@ When the unikernel wants to reach an address outside the local network (for
 instance, a DNS server on the internet) it sends the packet to the host via the
 bridge, and the host forwards it through its own network connection.
 
-This is admittedly more of a system administration task than a development
-task. The configuration we describe here is simple and generic; your network
-topology may require adjustments. But it is worth understanding what these
-pieces do, because a unikernel sits at the intersection of application
-development and deployment. Appreciating both sides is part of what makes the
-unikernel approach powerful.
+This is admittedly more system administration than development. The
+configuration we describe here is simple and generic; your network topology may
+require adjustments. But it is worth understanding what these pieces do,
+because a unikernel sits at the intersection of application development and
+deployment. Understanding both sides is part of what makes the unikernel
+approach powerful.
 
 Here is how to set this up on Linux:
 
@@ -345,16 +352,15 @@ process so that we can stop the unikernel cleanly with `kill` when we are done.
 
 And with that, we have a working echo server running as a unikernel. As you
 have seen, the process is fairly straightforward once you know the key steps:
-vendoring your dependencies, declaring your devices, and configuring the
-virtual network on the host. The networking concepts (tap interfaces, bridges,
-and gateways) may be new territory if you come from a pure application
-development background, but they quickly become second nature with a bit of
-practice.
+vendor your dependencies, declare your devices, and configure the virtual
+network on the host. The networking concepts (tap interfaces, bridges, and
+gateways) may be unfamiliar if you come from a pure application development
+background, but they quickly become second nature with a bit of practice.
 
 Now that the foundations are in place, the fun really begins. In the next
 chapter, we will build on what we have learned here and implement a web server.
-Our [cooperative][robur] offers implementations of several protocols (such as
-[ocaml-tls][ocaml-tls] or [ocaml-dns][ocaml-dns]) that you can use to provide
+Our [cooperative][robur] provides implementations of several protocols (such as
+[ocaml-tls][ocaml-tls] and [ocaml-dns][ocaml-dns]) that you can use to build
 a wide range of services. We hope you are as excited as we are to see what you
 will build next.
 
@@ -365,3 +371,5 @@ will build next.
 [robur]: https://robur.coop/
 [fortuna]: https://en.wikipedia.org/wiki/Fortuna_(PRNG)
 [miou-task]: https://robur-coop.github.io/miou/retrospective.html#a-task-as-a-resource
+[zarith]: https://github.com/xavierleroy/Zarith
+[zarith-fork]: https://github.com/mirage/Zarith

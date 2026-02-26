@@ -1,19 +1,19 @@
 # Introduction
 
 `mnet` is a library that provides the networking foundation for unikernels. It
-enables you to build services ranging from public-facing web servers to more
+lets you build services ranging from public-facing web servers to more
 specialized tools such as a DNS resolver (to circumvent censorship) or a DNS
 blocker (to filter out advertising). In this short book, we will walk through
-several practical examples that illustrate what unikernels in OCaml can do.
+several practical examples that show what unikernels in OCaml can do.
 
 ## What is a unikernel?
 
 A unikernel is a specialized, single-purpose operating system that bundles your
 application code with only the OS components it actually needs. Nothing more.
-Instead of running your OCaml application on top of a general-purpose OS like
-Linux (which ships with thousands of features you will never use), a unikernel
-compiles your code directly with a minimal set of libraries that handle
-networking, storage, and memory management.
+Instead of running your OCaml application on top of a general-purpose OS such
+as Linux (which ships with thousands of features you will never use), a
+unikernel compiles your code together with only the minimal set of libraries
+needed for networking, storage, and memory management.
 
 The result is a single bootable image that runs inside a sandboxed environment.
 There is no shell, no unnecessary drivers, and no multi-user support. It is just
@@ -25,7 +25,7 @@ minimal, stable interface between your unikernel and the underlying host
 (whether that host is a hypervisor such as KVM, or a sandboxed Linux process
 using [seccomp][seccomp]). Solo5 handles the low-level details of how your
 unikernel boots, accesses network interfaces, and reads from block devices. On
-top of Solo5, [mkernel][`mkernel`] is a library that lets you write unikernels
+top of Solo5, [`mkernel`][mkernel] is a library that lets you write unikernels
 in OCaml using the [Miou][miou] scheduler. It exposes the devices that Solo5
 provides (network interfaces and block storage) and gives you a familiar OCaml
 programming model for building your application.
@@ -34,17 +34,17 @@ When you compile your OCaml code with `mkernel`, the build system produces a
 standalone image that can be launched using a Solo5 _tender_ (a small host-side
 program such as `solo5-hvt`). The practical benefits are significant: a smaller
 attack surface, faster boot times (often measured in milliseconds), a reduced
-memory footprint, and simpler deployment (since the entire system is a single
-artifact).
+memory footprint, and simpler deployment, since the entire system is a single
+artifact.
 
 ## The ecosystem for OCaml unikernels
 
 `mnet` is part of a broader ecosystem of OCaml libraries that [our
-cooperative][robur] maintains for unikernel development. The ecosystem provides
+cooperative][robur] maintains for unikernel development. This ecosystem provides
 pure OCaml reimplementations of essential components (networking, cryptography,
 and more) so that you can build fully self-contained applications without
-relying on C bindings or system libraries. Let us introduce some of the
-libraries we use throughout this tutorial.
+relying on C bindings or system libraries. Here are some of the libraries we
+use throughout this tutorial.
 
 1) At the foundation, [`mkernel`][mkernel] provides the runtime, including
    hypercalls for network and block devices, clock access, and integration with
@@ -52,22 +52,22 @@ libraries we use throughout this tutorial.
 2) For networking, [`utcp`][utcp] is a pure OCaml implementation of the TCP
    protocol, used internally by `mnet`. It originated from a manual extraction
    of a [HOL4](https://hol-theorem-prover.org/) specification of the TCP state
-   machine (described in detail [here][netsem]).
+   machine (described in detail in [this paper][netsem]).
 3) [`ocaml-solo5`](https://github.com/mirage/ocaml-solo5) is a variant of the
    OCaml compiler that targets Solo5, making cross-compilation possible.
 4) On the cryptography side, [`mirage-crypto`][mirage-crypto] provides our
    cryptographic primitives, and some of its operations are derived from
    formally verified proofs in Rocq/Coq via the [fiat][fiat] project.
 
-We will encounter many more of these libraries throughout this tutorial.
+We will encounter more of these libraries as we go.
 
 ## Prerequisites
 
 Unikernels require a different build process than standard executables. We are
 actively improving the development workflow for `mkernel`, but it is still
-evolving. Everything described in this tutorial is accurate and functional;
-however, you can expect the process to become smoother and better documented
-over time. To get started, you will need:
+evolving. Everything described in this tutorial is accurate and functional,
+but you can expect the process to become smoother over time. To get started,
+you will need:
 - OCaml version 5.0.0 or later,
 - along with OPAM, the OCaml package manager (you can find installation
   instructions [here][opam-install]).
@@ -193,11 +193,11 @@ Hello World!
 ```
 
 Congratulations, you have just created your first unikernel! In the next
-chapter, we will build a small `echo` server using `mnet` and set up networking
-for your unikernel. Unikernels come with their own set of concepts and
-constraints that are important to understand. The `mkernel`
-[documentation][mkernel-doc] covers these fundamentals in depth, explaining how
-Solo5 and OCaml fit together.
+chapter, we will build a small echo server using `mnet` and set up networking
+for your unikernel. Unikernels come with their own concepts and constraints
+that are important to understand. The `mkernel` [documentation][mkernel-doc]
+covers these fundamentals in depth, explaining how Solo5 and OCaml fit
+together.
 
 ## Important constraints
 
@@ -213,11 +213,11 @@ services (networking, DNS, TLS, and so on) rather than wrappers around C system
 libraries.
 
 The second is that dependencies must be vendored. Nearly all of your
-dependencies need to have their source code present locally in a `vendors/`
-directory. This is because cross-compilation with `ocaml-solo5` requires
-compiling C stubs (if any) with the Solo5 toolchain, which is only possible
-when `dune` has direct access to the source files. You can vendor a dependency
-with `opam source`:
+dependencies need their source code present locally in a `vendors/` directory.
+This is because cross-compilation with `ocaml-solo5` requires compiling C
+stubs (if any) with the Solo5 toolchain, which is only possible when `dune`
+has direct access to the source files. You can vendor a dependency with
+`opam source`:
 ```bash
 $ opam source <package> --dir vendors/<package>
 ```
