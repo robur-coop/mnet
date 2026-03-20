@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 [ ! -d "vendors" ] && mkdir vendors
 [ ! -d "vendors/bstr" ] && opam source bstr --dir vendors/bstr

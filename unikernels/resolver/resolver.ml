@@ -5,9 +5,8 @@ let ( let@ ) finally fn = Fun.protect ~finally fn
 let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
 let _5s = Duration.of_sec 5
-let robur_coop = Domain_name.(host_exn (of_string_exn "robur.coop"))
 
-let run _quiet (cidrv4, gateway, ipv6) nameservers =
+let run _quiet (cidrv4, gateway, ipv6) nameservers host =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 cidrv4 ])
   @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
@@ -17,8 +16,8 @@ let run _quiet (cidrv4, gateway, ipv6) nameservers =
   let dns = Mnet_dns.create ~nameservers (udp, he) in
   let t = Mnet_dns.transport dns in
   let@ () = fun () -> Mnet_dns.Transport.kill t in
-  match Mnet_dns.gethostbyname dns robur_coop with
-  | Ok ipv4 -> Fmt.pr "%a: %a\n%!" Domain_name.pp robur_coop Ipaddr.V4.pp ipv4
+  match Mnet_dns.gethostbyname dns host with
+  | Ok ipv4 -> Fmt.pr "%a: %a\n%!" Domain_name.pp host Ipaddr.V4.pp ipv4
   | Error (`Msg msg) -> Fmt.epr "%s\n%!" msg
 
 open Cmdliner
@@ -191,12 +190,20 @@ let setup_nameservers =
   let open Term in
   const setup_nameservers $ nameservers
 
+let host =
+  let doc = "Hostname to query for." in
+  let parser s = Result.bind (Domain_name.of_string s) Domain_name.host in
+  let robur_coop = Domain_name.(host_exn (of_string_exn "robur.coop")) in
+  let open Arg in
+  value & opt (conv (parser, Domain_name.pp)) robur_coop & info [ "host" ] ~doc ~docv:"HOST"
+
 let term =
   let open Term in
   const run
   $ setup_logs
   $ Mnet_cli.setup
   $ setup_nameservers
+  $ host
 
 let cmd =
   let info = Cmd.info "dns" in
