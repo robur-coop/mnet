@@ -1,13 +1,12 @@
 module RNG = Mirage_crypto_rng.Fortuna
 module Hash = Digestif.SHA1
-let ( let@ ) finally fn = Fun.protect ~finally fn
 
+let ( let@ ) finally fn = Fun.protect ~finally fn
 let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
 let _5s = Duration.of_sec 5
-let robur_coop = Domain_name.(host_exn (of_string_exn "robur.coop"))
 
-let run _quiet (cidrv4, gateway, ipv6) nameservers =
+let run _quiet (cidrv4, gateway, ipv6) nameservers host =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 cidrv4 ])
   @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
@@ -17,8 +16,8 @@ let run _quiet (cidrv4, gateway, ipv6) nameservers =
   let dns = Mnet_dns.create ~nameservers (udp, he) in
   let t = Mnet_dns.transport dns in
   let@ () = fun () -> Mnet_dns.Transport.kill t in
-  match Mnet_dns.gethostbyname dns robur_coop with
-  | Ok ipv4 -> Fmt.pr "%a: %a\n%!" Domain_name.pp robur_coop Ipaddr.V4.pp ipv4
+  match Mnet_dns.gethostbyname dns host with
+  | Ok ipv4 -> Fmt.pr "%a: %a\n%!" Domain_name.pp host Ipaddr.V4.pp ipv4
   | Error (`Msg msg) -> Fmt.epr "%s\n%!" msg
 
 open Cmdliner
@@ -103,43 +102,48 @@ let setup_logs =
 let nameserver_of_string str =
   let ( let* ) = Result.bind in
   begin match String.split_on_char ':' str with
-    | "tls" :: rest ->
+  | "tls" :: rest -> (
       let str = String.concat ":" rest in
-      ( match String.split_on_char '!' str with
-        | [ nameserver ] ->
-          let* ipaddr, port = Ipaddr.with_port_of_string ~default:853 nameserver in
+      match String.split_on_char '!' str with
+      | [ nameserver ] ->
+          let* ipaddr, port =
+            Ipaddr.with_port_of_string ~default:853 nameserver
+          in
           let* authenticator = Ca_certs_nss.authenticator () in
           let* tls = Tls.Config.client ~authenticator () in
           Ok (`Tcp, `Tls (tls, ipaddr, port))
-        | nameserver :: opt_hostname :: authenticator ->
-          let* ipaddr, port = Ipaddr.with_port_of_string ~default:853 nameserver in
+      | nameserver :: opt_hostname :: authenticator ->
+          let* ipaddr, port =
+            Ipaddr.with_port_of_string ~default:853 nameserver
+          in
           let peer_name, data =
             match
               let* dn = Domain_name.of_string opt_hostname in
               Domain_name.host dn
             with
-            | Ok hostname -> Some hostname, String.concat "!" authenticator
-            | Error _ -> None, String.concat "!" (opt_hostname :: authenticator)
+            | Ok hostname -> (Some hostname, String.concat "!" authenticator)
+            | Error _ ->
+                (None, String.concat "!" (opt_hostname :: authenticator))
           in
-          let* authenticator = match data with
+          let* authenticator =
+            match data with
             | "" -> Ca_certs_nss.authenticator ()
             | data ->
-              let* a = X509.Authenticator.of_string data in
-              Ok (a (fun () -> Some (Mirage_ptime.now ())))
+                let* a = X509.Authenticator.of_string data in
+                Ok (a (fun () -> Some (Mirage_ptime.now ())))
           in
           let* tls = Tls.Config.client ~authenticator ?peer_name () in
           Ok (`Tcp, `Tls (tls, ipaddr, port))
-        | [] -> assert false )
-    | "tcp" :: nameserver ->
+      | [] -> assert false)
+  | "tcp" :: nameserver ->
       let str = String.concat ":" nameserver in
       let* ipaddr, port = Ipaddr.with_port_of_string ~default:53 str in
       Ok (`Tcp, `Plaintext (ipaddr, port))
-    | "udp" :: nameserver ->
+  | "udp" :: nameserver ->
       let str = String.concat ":" nameserver in
       let* ipaddr, port = Ipaddr.with_port_of_string ~default:53 str in
       Ok (`Udp, `Plaintext (ipaddr, port))
-    | _ ->
-      Error (`Msg ("Unable to decode nameserver " ^ str))
+  | _ -> Error (`Msg ("Unable to decode nameserver " ^ str))
   end
 
 let nsec_per_day = Int64.mul 86_400L 1_000_000_000L
@@ -152,7 +156,7 @@ let time () =
   let rem_ps = Int64.mul rem_ns ps_per_ns in
   Some (Ptime.v (Int64.to_int days, rem_ps))
 
-let _8_8_8_8 = `Udp, `Plaintext (Ipaddr.of_string_exn "8.8.8.8", 53)
+let _8_8_8_8 = (`Udp, `Plaintext (Ipaddr.of_string_exn "8.8.8.8", 53))
 
 let uncensoreddns_org =
   let ipaddr = Ipaddr.of_string_exn "89.233.43.71" in
@@ -170,33 +174,48 @@ let nameservers =
   let doc = "A DNS nameserver." in
   let parser = nameserver_of_string in
   let pp ppf (proto, nameserver) =
-    match proto, nameserver with
-    | `Udp, `Plaintext (ipaddr, port) -> Fmt.pf ppf "udp:%a:%d" Ipaddr.pp ipaddr port
-    | `Tcp, `Plaintext (ipaddr, port) -> Fmt.pf ppf "tcp:%a:%d" Ipaddr.pp ipaddr port
-    | `Tcp, `Tls (_, ipaddr, port) -> Fmt.pf ppf "tls:%a:%d" Ipaddr.pp ipaddr port
-    | `Udp, _ -> assert false in
+    match (proto, nameserver) with
+    | `Udp, `Plaintext (ipaddr, port) ->
+        Fmt.pf ppf "udp:%a:%d" Ipaddr.pp ipaddr port
+    | `Tcp, `Plaintext (ipaddr, port) ->
+        Fmt.pf ppf "tcp:%a:%d" Ipaddr.pp ipaddr port
+    | `Tcp, `Tls (_, ipaddr, port) ->
+        Fmt.pf ppf "tls:%a:%d" Ipaddr.pp ipaddr port
+    | `Udp, _ -> assert false
+  in
   let open Arg in
-  value & opt_all (conv (parser, pp)) [ uncensoreddns_org ] & info [ "n"; "nameserver" ] ~doc ~docv:"NAMESERVER"
+  value
+  & opt_all (conv (parser, pp)) [ uncensoreddns_org ]
+  & info [ "n"; "nameserver" ] ~doc ~docv:"NAMESERVER"
 
 let setup_nameservers nameservers =
   let fn = function
     | `Udp, ns -> Either.Left ns
-    | `Tcp, ns -> Either.Right ns in
+    | `Tcp, ns -> Either.Right ns
+  in
   match List.partition_map fn nameservers with
-  | [], nss -> `Tcp, nss
-  | nss, [] -> `Udp, nss
-  | _ -> Fmt.failwith "It is impossible to mix multiple nameservers over TCP and UDP"
+  | [], nss -> (`Tcp, nss)
+  | nss, [] -> (`Udp, nss)
+  | _ ->
+      Fmt.failwith
+        "It is impossible to mix multiple nameservers over TCP and UDP"
 
 let setup_nameservers =
   let open Term in
   const setup_nameservers $ nameservers
 
+let host =
+  let doc = "Hostname to query for." in
+  let parser s = Result.bind (Domain_name.of_string s) Domain_name.host in
+  let robur_coop = Domain_name.(host_exn (of_string_exn "robur.coop")) in
+  let open Arg in
+  value
+  & opt (conv (parser, Domain_name.pp)) robur_coop
+  & info [ "host" ] ~doc ~docv:"HOST"
+
 let term =
   let open Term in
-  const run
-  $ setup_logs
-  $ Mnet_cli.setup
-  $ setup_nameservers
+  const run $ setup_logs $ Mnet_cli.setup $ setup_nameservers $ host
 
 let cmd =
   let info = Cmd.info "dns" in
