@@ -1,13 +1,14 @@
 (** IPv6 Neighbor Cache.
 
-    The Neighbor Cache ({{:https://www.rfc-editor.org/rfc/rfc4861#section-5.1} RFC 4861 Section 5.1}})
-    stores information about individual neighbors to which traffic has been sent
-    recently. Each entry maps an IPv6 address to its link-layer (MAC) address,
-    along with reachability state used by the Neighbor Unreachability Detection
-    (NUD) algorithm.
+    The Neighbor Cache
+    ({{:https://www.rfc-editor.org/rfc/rfc4861#section-5.1} RFC 4861 Section
+      5.1}) stores information about individual neighbors to which traffic has
+    been sent recently. Each entry maps an IPv6 address to its link-layer (MAC)
+    address, along with reachability state used by the Neighbor Unreachability
+    Detection (NUD) algorithm.
 
-    When a packet needs to be sent to a neighbor whose MAC address is unknown,
-    a Neighbor Solicitation is sent and the packet is queued until a Neighbor
+    When a packet needs to be sent to a neighbor whose MAC address is unknown, a
+    Neighbor Solicitation is sent and the packet is queued until a Neighbor
     Advertisement is received. *)
 
 module Packet : sig
