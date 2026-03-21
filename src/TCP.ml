@@ -124,7 +124,7 @@ let write_without_interruption_ipv4 state (src, dst, seg) =
       Log.warn (fun m -> m "A packet is kept in our internal queue");
       Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) state.outs
   | Some macaddr ->
-      IPv4.write_directly state.ipv4 ~src (dst, macaddr) ~protocol:6 pkt
+      IPv4.write_directly state.ipv4 src (dst, macaddr) ~protocol:6 pkt
 
 let write_ipv4 ipv4 (src, dst, seg) =
   let len = Utcp.Segment.length seg in

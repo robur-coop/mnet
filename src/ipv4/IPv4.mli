@@ -170,12 +170,12 @@ end
 val write_directly :
      t
   -> ?ttl:int
-  -> ?src:Ipaddr.V4.t
+  -> Ipaddr.V4.t
   -> Ipaddr.V4.t * Macaddr.t
   -> protocol:int
   -> Writer.t
   -> unit
-(** [write_directly ipv4 ?ttl ?src (dst, macaddr) ~protocol w] writes a new IPv4
+(** [write_directly ipv4 ?ttl src (dst, macaddr) ~protocol w] writes a new IPv4
     packet [w] {b effectively} (without interruption) (fragmented or not) to the
     specified destination [macaddr]. *)
 
