@@ -1,10 +1,14 @@
 open Cmdliner
 
+let s_network = "NETWORK"
+
 let ipv4 =
   let doc = "The IPv4 address of the unikernel." in
   let ipaddr = Arg.conv (Ipaddr.V4.Prefix.of_string, Ipaddr.V4.Prefix.pp) in
   let open Arg in
-  required & opt (some ipaddr) None & info [ "ipv4" ] ~doc ~docv:"IPv4"
+  required
+  & opt (some ipaddr) None
+  & info [ "ipv4" ] ~doc ~docs:s_network ~docv:"IPv4"
 
 let ipv6 =
   let doc = "The IPv6 address of the unikernel." in
@@ -20,19 +24,25 @@ let ipv6 =
   in
   let ipaddr = Arg.conv (parser, pp) in
   let open Arg in
-  value & opt ipaddr Mnet.IPv6.EUI64 & info [ "ipv6" ] ~doc ~docv:"IPv6"
+  value
+  & opt ipaddr Mnet.IPv6.EUI64
+  & info [ "ipv6" ] ~doc ~docs:s_network ~docv:"IPv6"
 
 let ipv4_gateway =
   let doc = "The IPv4 gateway." in
   let ipaddr = Arg.conv (Ipaddr.V4.of_string, Ipaddr.V4.pp) in
   let open Arg in
-  value & opt (some ipaddr) None & info [ "ipv4-gateway" ] ~doc ~docv:"IPv4"
+  value
+  & opt (some ipaddr) None
+  & info [ "ipv4-gateway" ] ~doc ~docs:s_network ~docv:"IPv4"
 
 let setup ipv4 ipv4_gateway ipv6 = (ipv4, ipv4_gateway, ipv6)
 
 let setup =
   let open Term in
   const setup $ ipv4 $ ipv4_gateway $ ipv6
+
+let s_dns = "DOMAIN NAME SYSTEM"
 
 type nameserver =
   [ `Tls of Tls.Config.client * Ipaddr.t * int | `Plaintext of Ipaddr.t * int ]
@@ -122,7 +132,7 @@ let nameservers ?(default = [ uncensoreddns_org ]) () =
   let open Arg in
   value
   & opt_all (conv (parser, pp)) default
-  & info [ "n"; "nameserver" ] ~doc ~docv:"NAMESERVER"
+  & info [ "n"; "nameserver" ] ~doc ~docs:s_dns ~docv:"NAMESERVER"
 
 let setup_nameservers nameservers =
   let fn = function

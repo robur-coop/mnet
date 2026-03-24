@@ -3,6 +3,9 @@
 
 open Cmdliner
 
+val s_network : Cmdliner.Manpage.section_name
+val s_dns : Cmdliner.Manpage.section_name
+
 val ipv4 : Ipaddr.V4.Prefix.t Term.t
 (** [ipv4] defines the [--ipv4] option. This option is required and allows you
     to assign a static IPv4 address to a unikernel. *)
