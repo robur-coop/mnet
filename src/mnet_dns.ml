@@ -275,7 +275,10 @@ module Transport = struct
 
   let rec read_from_tcp t ke buf flow =
     match Mnet.TCP.read flow buf with
-    | (exception _) | 0 -> ()
+    | 0 -> Log.debug (fun m -> m "TCP connection closed by peer")
+    | exception exn ->
+        Log.err (fun m ->
+            m "TCP connection failed with: %s" (Printexc.to_string exn))
     | len ->
         let str = Bytes.sub_string buf 0 len in
         Ke.push ke str;
@@ -284,7 +287,10 @@ module Transport = struct
 
   let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with
-    | (exception _) | 0 -> ()
+    | 0 -> Log.debug (fun m -> m "TLS connection closed by peer")
+    | exception exn ->
+        Log.err (fun m ->
+            m "TLS connection failed with: %s" (Printexc.to_string exn))
     | len ->
         let str = Bytes.sub_string buf 0 len in
         Ke.push ke str;
