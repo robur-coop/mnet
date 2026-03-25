@@ -105,7 +105,9 @@ let handle_one_action t ~prms action =
         ignore (Miou.Computation.try_cancel waiter err)
       in
       Option.iter trans waiter
-  | _ -> assert false
+  | _ ->
+      Log.err (fun m -> m "Unexpected case for Mnet_happy_eyeballs.handle_one_action");
+      assert false
 
 let to_event t = function
   | `Connection_failed ((id, attempt, host, addr), msg) ->
@@ -135,12 +137,14 @@ let to_event t = function
           if not set then Mnet.TCP.close flow
       end;
       Happy_eyeballs.Connected (host, id, addr)
-  | _ -> assert false
+  | _ ->
+      Log.err (fun m -> m "Unexpected case for Mnet_happy_eyeballs.to_event");
+      assert false
 
 let now () = Int64.of_int (Mkernel.clock_monotonic ())
 
 let to_actions t he user's_actions =
-  let fold (he, actions) = function
+  let fold (he, ractions) = function
     | `Connect_ip { aaaa_timeout; connect_delay; connect_timeout; state; addrs }
       ->
         let waiters, id = HE.Waiter_map.register state t.waiters in
@@ -149,8 +153,7 @@ let to_actions t he user's_actions =
           HE.connect_ip he (now ()) ?aaaa_timeout ?connect_delay
             ?connect_timeout ~id addrs
         in
-        (he, actions @ actions')
-        (* TODO(dinosaure): [List.rev_append]? *)
+        (he, List.rev_append actions' ractions)
     | `Connect
         {
           aaaa_timeout
@@ -168,8 +171,7 @@ let to_actions t he user's_actions =
           HE.connect he (now ()) ?aaaa_timeout ?connect_delay ?connect_timeout
             ?resolve_timeout ?resolve_retries ~id host ports
         in
-        (* TODO(dinosaure): [List.rev_append]? *)
-        (he, actions @ actions')
+        (he, List.rev_append actions' ractions)
   in
   List.fold_left fold (he, []) user's_actions
 
@@ -196,9 +198,12 @@ let continue t cont he =
   let fn () =
     match cont with
     | `Act ->
+        Log.debug (fun m -> m "Act (await actions or events with timeout %dns)" t.timer_interval);
         let fn () = await_actions_or_events t in
         with_timeout ~timeout:t.timer_interval fn
-    | `Suspend -> await_actions_or_events t
+    | `Suspend ->
+        Log.debug (fun m -> m "Suspend (await actions or events)");
+        await_actions_or_events t
   in
   match fn () with
   | `Timeout -> (he, [], [])
@@ -210,8 +215,8 @@ let continue t cont he =
         in
         List.partition_map fn actions_and_events
       in
-      let he, actions = to_actions t he user's_actions in
-      (he, actions, events)
+      let he, ractions = to_actions t he user's_actions in
+      (he, ractions, events)
   | `Exn exn -> raise exn
 
 let rec clean_up prms =
@@ -225,18 +230,16 @@ let rec go t ~prms he =
   Log.debug (fun m -> m "happy-eyeballs tick");
   clean_up prms;
   let he, cont, actions = HE.timer he (now ()) in
-  Log.debug (fun m -> m "%d action(s)" (List.length actions));
   List.iter (handle_one_action ~prms t) actions;
-  let he, actions, events = continue t cont he in
-  Log.debug (fun m -> m "%d action(s)" (List.length actions));
-  let he, actions =
-    let fn (he, actions) event =
+  let he, ractions, events = continue t cont he in
+  let he, ractions =
+    let fn (he, ractions) event =
       let he, actions' = HE.event he (now ()) (to_event t event) in
-      (he, List.rev_append actions actions')
+      (he, List.rev_append actions' ractions)
     in
-    List.fold_left fn (he, actions) events
+    List.fold_left fn (he, ractions) events
   in
-  List.iter (handle_one_action ~prms t) actions;
+  List.iter (handle_one_action ~prms t) (List.rev ractions);
   go t ~prms he
 
 let unknown _ domain_name = error_msgf "%a not found" Domain_name.pp domain_name
