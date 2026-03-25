@@ -297,16 +297,22 @@ module Transport = struct
         process ke t.reqs;
         read_from_tls t ke buf flow
 
+  (* NOTE(dinosaure): you can see this function as an infinite loop which will
+     be cancelled when the nameserver would like to close the TCP/IP connection
+     with the other fiber [prm0] in the [read_from_tcp] function.
+
+     The goal is to keep the TCP/IP connection until the nameserver's had
+     enough. Then, we fallback to the first [read_from_tcp] loop which waits for
+     the user to push a new query. *)
   let rec write_to_tcp t flow =
-    let queries =
-      Miou.Mutex.protect t.mutex @@ fun () ->
+    let queries = Miou.Mutex.protect t.mutex @@ fun () ->
       while Queue.is_empty t.queries do
         Miou.Condition.wait t.condition t.mutex
       done;
+      assert (not (Queue.is_empty t.queries));
       let queries = Queue.to_seq t.queries in
       let queries = List.of_seq queries in
-      Queue.clear t.queries; queries
-    in
+      Queue.clear t.queries; queries in
     let fn query =
       match flow with
       | `Plain flow -> Mnet.TCP.write flow query
@@ -320,33 +326,37 @@ module Transport = struct
       | `TLS flow -> Mnet_tls.close flow
     in
     let buf = Bytes.create 4096 in
-    let rec go0 t flow =
-      let resource = Miou.Ownership.create ~finally flow in
-      Miou.Ownership.own resource;
-      let prm0 =
-        Miou.async @@ fun () ->
-        match flow with
-        | `Plain flow -> read_from_tcp t ke buf flow
-        | `TLS flow -> read_from_tls t ke buf flow
-      in
-      let prm1 = Miou.async @@ fun () -> write_to_tcp t flow in
-      let _ = Miou.await_first [ prm0; prm1 ] in
-      Miou.Ownership.release resource;
-      (* NOTE(dinosaure): Here, the connection was closed for whatever reason, we
-         try to initiate a new connection and re-instantiate a reader loop. If we
-         are not able to find a nameserver, we fail. *)
-      match connect_to_nameservers t t.nameservers with
-      | Ok (addr, flow) ->
-          Log.debug (fun m -> m "Connected to %a" pp_addr addr);
-          go0 t flow
-      | Error _err -> t.mode <- None
-    in
-    (* NOTE(dinosaure): first try. *)
     match connect_to_nameservers t t.nameservers with
     | Ok (addr, flow) ->
         Log.debug (fun m -> m "Connected to %a" pp_addr addr);
-        go0 t flow
+        let resource = Miou.Ownership.create ~finally flow in
+        Miou.Ownership.own resource;
+        let prm0 =
+          Miou.async @@ fun () ->
+          match flow with
+          | `Plain flow -> read_from_tcp t ke buf flow
+          | `TLS flow -> read_from_tls t ke buf flow
+        in
+        let prm1 = Miou.async @@ fun () -> write_to_tcp t flow in
+        let _ = Miou.await_first [ prm0; prm1 ] in
+        Miou.Ownership.release resource
     | Error _err -> t.mode <- None
+
+  let read_from_tcp t ke =
+    let rec go () =
+      (* NOTE(dinosaure): we wait a signal from the user. *)
+      let () =
+        Miou.Mutex.protect t.mutex @@ fun () ->
+        while Queue.is_empty t.queries do
+          Miou.Condition.wait t.condition t.mutex
+        done;
+        assert (not (Queue.is_empty t.queries)) in
+      (* NOTE(dinosaure): and start a new TCP/IP connection. *)
+      read_from_tcp t ke;
+      (* NOTE(dinosaure): here, the TCP/IP connected has been closed; we are
+         waiting for a new query. *)
+      go () in
+    go ()
 
   let read_from_udp t =
     let rec clean_up orphans =
