@@ -322,14 +322,6 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
           m ~tags:t.tags "not sending packet loopback (src %a dst %a)"
             Ipaddr.V4.pp src Ipaddr.V4.pp dst);
       Ok ()
-  | Error `Any ->
-      Log.debug (fun m ->
-          m ~tags:t.tags "not sending packet to any %a" Ipaddr.V4.pp dst);
-      Ok ()
-  | Error `Broadcast ->
-      Log.debug (fun m ->
-          m ~tags:t.tags "not sending packet from broadcast %a" Ipaddr.V4.pp src);
-      Ok ()
   | Ok macaddr ->
       write_directly t ~ttl src (dst, macaddr) ~protocol p;
       Ok ()
