@@ -1,26 +1,24 @@
 type r = Mac of Macaddr.t | Arp of Ipaddr.V4.t
 
 let routing network gateway ~src ~dst =
-  (* avoid packets to 0.0.0.0/8 *)
-  if Ipaddr.V4.Prefix.(mem dst relative) then Error `Any
-    (* avoid packets to 127.0.0.0/8 *)
-  else if Ipaddr.V4.Prefix.(mem dst loopback) then Error `Loopback
-    (* avoid packets from 127.0.0.0/8 *)
-  else if Ipaddr.V4.Prefix.(mem src loopback) then Error `Loopback
-    (* avoid packet from broadcast address *)
-  else if
-    Ipaddr.V4.(compare broadcast) src == 0
-    || Ipaddr.V4.(compare (Prefix.broadcast network)) src == 0
-  then Error `Broadcast (* use broadcast mac *)
+  if Ipaddr.V4.Prefix.(mem dst loopback) || Ipaddr.V4.Prefix.(mem src loopback)
+  then
+    (* avoid packets to or from 127.0.0.0/8 *)
+    Error `Loopback
   else if
     Ipaddr.V4.(compare broadcast) dst == 0
     || Ipaddr.V4.(compare (Prefix.broadcast network)) dst == 0
-  then Ok (Mac Macaddr.broadcast) (* filter multicast *)
+  then
+    (* use broadcast mac *)
+    Ok (Mac Macaddr.broadcast)
   else if Ipaddr.V4.is_multicast dst then
-    Ok (Mac (Ipaddr.V4.multicast_to_mac dst)) (* direct to this network *)
-  else if Ipaddr.V4.Prefix.mem dst network then Ok (Arp dst)
-  (* go through gateway *)
-    else
+    (* filter multicast *)
+    Ok (Mac (Ipaddr.V4.multicast_to_mac dst))
+  else if Ipaddr.V4.Prefix.mem dst network then
+    (* direct to this network *)
+    Ok (Arp dst)
+  else
+    (* send to gateway *)
     match gateway with
     | None -> Error `Gateway
     | Some gateway -> Ok (Arp gateway)
