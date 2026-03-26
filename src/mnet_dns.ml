@@ -304,7 +304,7 @@ module Transport = struct
      The goal is to keep the TCP/IP connection until the nameserver's had
      enough. Then, we fallback to the first [read_from_tcp] loop which waits for
      the user to push a new query. *)
-  let rec write_to_tcp t flow =
+  let rec write_to_connection t flow =
     let queries = Miou.Mutex.protect t.mutex @@ fun () ->
       while Queue.is_empty t.queries do
         Miou.Condition.wait t.condition t.mutex
@@ -318,9 +318,9 @@ module Transport = struct
       | `Plain flow -> Mnet.TCP.write flow query
       | `TLS flow -> Mnet_tls.write flow query
     in
-    List.iter fn queries; write_to_tcp t flow
+    List.iter fn queries; write_to_connection t flow
 
-  let read_from_tcp t ke =
+  let read_from_connection t ke =
     let finally = function
       | `Plain flow -> Mnet.TCP.close flow
       | `TLS flow -> Mnet_tls.close flow
@@ -337,12 +337,12 @@ module Transport = struct
           | `Plain flow -> read_from_tcp t ke buf flow
           | `TLS flow -> read_from_tls t ke buf flow
         in
-        let prm1 = Miou.async @@ fun () -> write_to_tcp t flow in
+        let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
         Miou.Ownership.release resource
     | Error _err -> t.mode <- None
 
-  let read_from_tcp t ke =
+  let connection_loop t ke =
     let rec go () =
       (* NOTE(dinosaure): we wait a signal from the user. *)
       let () =
@@ -352,7 +352,7 @@ module Transport = struct
         done;
         assert (not (Queue.is_empty t.queries)) in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
-      read_from_tcp t ke;
+      read_from_connection t ke;
       (* NOTE(dinosaure): here, the TCP/IP connected has been closed; we are
          waiting for a new query. *)
       go () in
@@ -406,7 +406,7 @@ module Transport = struct
   let daemon t =
     match t.mode with
     | Some `Udp -> read_from_udp t (* forever *)
-    | Some (`Tcp (_, ke)) -> read_from_tcp t ke
+    | Some (`Tcp (_, ke)) -> connection_loop t ke
     | None -> ()
 
   let create ?(nameservers = (`Tcp, [ uncensoreddns_org ])) ~timeout (udp, he) =
