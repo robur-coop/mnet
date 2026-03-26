@@ -250,10 +250,9 @@ let fixed pkt user's_fn len bstr =
   Bstr.set_uint16_be bstr 10 chk;
   20 + len
 
-let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
+let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
   Log.debug (fun m ->
       m ~tags:t.tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
-  let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
   let mtu = Ethernet.mtu t.eth in
   match p with
   | Writer.Fixed { total_length; fn= user's_fn } ->
@@ -306,21 +305,31 @@ let write_directly t ?(ttl = 38) ?src (dst, macaddr) ~protocol p =
       go 0 total_length (fn ())
 
 let write t ?(ttl = 38) ?src dst ~protocol p =
+  let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
   Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
-  match Routing.destination_macaddr t.cidr t.gateway t.arp dst with
+  match Routing.destination_macaddr t.cidr t.gateway t.arp ~src ~dst with
   | Error (`Exn _ | `Timeout | `Clear) ->
       Log.err (fun m -> m ~tags:t.tags "no route found for %a" Ipaddr.V4.pp dst);
       Error `Route_not_found
   | Error `Gateway ->
       Log.debug (fun m ->
-          m ~tags:t.tags "no gateway specified for writing IPv4 packets");
+          m ~tags:t.tags
+            "no gateway specified for writing IPv4 packets, dropping %a"
+            Ipaddr.V4.pp dst);
+      Ok ()
+  | Error `Loopback ->
+      Log.debug (fun m ->
+          m ~tags:t.tags "not sending packet loopback (src %a dst %a)"
+            Ipaddr.V4.pp src Ipaddr.V4.pp dst);
       Ok ()
   | Ok macaddr ->
-      write_directly t ~ttl ?src (dst, macaddr) ~protocol p;
+      write_directly t ~ttl src (dst, macaddr) ~protocol p;
       Ok ()
 
 let attempt_to_discover_destination t dst =
-  Routing.destination_macaddr_without_interruption t.cidr t.gateway t.arp dst
+  let src = Ipaddr.V4.Prefix.address t.cidr in
+  Routing.destination_macaddr_without_interruption t.cidr t.gateway t.arp ~src
+    ~dst
 
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
