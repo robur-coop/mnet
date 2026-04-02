@@ -5,6 +5,7 @@ open Cmdliner
 
 val s_network : Cmdliner.Manpage.section_name
 val s_dns : Cmdliner.Manpage.section_name
+val s_happy_eyeballs : Cmdliner.Manpage.section_name
 
 val ipv4 : Ipaddr.V4.Prefix.t Term.t
 (** [ipv4] defines the [--ipv4] option. This option is required and allows you
@@ -39,3 +40,15 @@ val setup_nameservers :
 (** [setup_nameservers] aggregates {!val:nameservers} and verify if all of them
     use the same protocol (see {!type:Dns.proto}) or not. It fails if one of the
     given nameserver uses a different protocol from the others. *)
+
+type happy_eyeballs = {
+    aaaa_timeout: int64
+  ; connect_delay: int64
+  ; connect_timeout: int64
+  ; resolve_timeout: int64
+  ; resolve_retries: int
+}
+
+val setup_happy_eyeballs : happy_eyeballs Term.t
+(** [setup_happy_eyeballs] aggregates options to configure an Happy Eyeballs
+    instance. *)

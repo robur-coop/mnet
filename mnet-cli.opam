@@ -11,6 +11,7 @@ depends: [
   "utcp"
   "dune" {>= "2.7.0"}
   "mnet" {= version}
+  "duration"
   "dns"
   "tls"
   "cmdliner"
