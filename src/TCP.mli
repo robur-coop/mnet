@@ -32,30 +32,30 @@
     {2 Example: echo server.}
 
     {[
-      let listen = Mnet.TCP.listen tcp 9000 in
-      let flow = Mnet.TCP.accept tcp listen in
-      let buf = Bytes.create 4096 in
-      let rec loop () =
-        let len = Mnet.TCP.read flow buf in
-        if len > 0 then begin
-          Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
-          loop ()
-        end
-      in
-      (try loop () with Mnet.TCP.Closed_by_peer -> ());
-      Mnet.TCP.close flow
+    let listen = Mnet.TCP.listen tcp 9000 in
+    let flow = Mnet.TCP.accept tcp listen in
+    let buf = Bytes.create 4096 in
+    let rec loop () =
+      let len = Mnet.TCP.read flow buf in
+      if len > 0 then begin
+        Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
+        loop ()
+      end
+    in
+    (try loop () with Mnet.TCP.Closed_by_peer -> ());
+    Mnet.TCP.close flow
     ]}
 
     {2 Example: client.}
 
     {[
-      let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 9000) in
-      Mnet.TCP.write flow "Hello!";
-      Mnet.TCP.shutdown flow `write;
-      let buf = Bytes.create 4096 in
-      let len = Mnet.TCP.read flow buf in
-      (* process response *)
-      Mnet.TCP.close flow
+    let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 9000) in
+    Mnet.TCP.write flow "Hello!";
+    Mnet.TCP.shutdown flow `write;
+    let buf = Bytes.create 4096 in
+    let len = Mnet.TCP.read flow buf in
+    (* process response *)
+    Mnet.TCP.close flow
     ]} *)
 
 exception Net_unreach

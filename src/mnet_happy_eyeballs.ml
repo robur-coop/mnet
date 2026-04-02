@@ -106,18 +106,21 @@ let handle_one_action t ~prms action =
       in
       Option.iter trans waiter
   | _ ->
-      Log.err (fun m -> m "Unexpected case for Mnet_happy_eyeballs.handle_one_action");
+      Log.err (fun m ->
+          m "Unexpected case for Mnet_happy_eyeballs.handle_one_action");
       assert false
 
 let to_event t = function
   | `Connection_failed ((id, attempt, host, addr), msg) ->
       let fold = function
         | None as none -> none
-        | Some cs -> begin
-            match List.filter (fun (att, _) -> not (att = attempt)) cs with
+        | Some cs ->
+            begin match
+              List.filter (fun (att, _) -> not (att = attempt)) cs
+            with
             | [] -> None
             | cs -> Some cs
-          end
+            end
       in
       t.cancel_connecting <- HE.Waiter_map.update id fold t.cancel_connecting;
       HE.Connection_failed (host, id, addr, msg)
@@ -198,7 +201,8 @@ let continue t cont he =
   let fn () =
     match cont with
     | `Act ->
-        Log.debug (fun m -> m "Act (await actions or events with timeout %dns)" t.timer_interval);
+        Log.debug (fun m ->
+            m "Act (await actions or events with timeout %dns)" t.timer_interval);
         let fn () = await_actions_or_events t in
         with_timeout ~timeout:t.timer_interval fn
     | `Suspend ->
@@ -327,10 +331,10 @@ let connect ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
   | Ok ipaddr ->
       connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t
         (List.map (fun port -> (ipaddr, port)) ports)
-  | Error _ -> begin
-      match Result.bind (Domain_name.of_string str) Domain_name.host with
+  | Error _ ->
+      begin match Result.bind (Domain_name.of_string str) Domain_name.host with
       | Ok domain_name ->
           connect_host ?aaaa_timeout ?connect_delay ?connect_timeout
             ?resolve_timeout ?resolve_retries t domain_name ports
       | Error _ -> error_msgf "Invalid endpoint: %S" str
-    end
+      end

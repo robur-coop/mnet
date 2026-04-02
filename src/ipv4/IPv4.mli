@@ -128,12 +128,12 @@ val src : t -> dst:Ipaddr.V4.t -> Ipaddr.V4.t
     This assertion is therefore true:
 
     {[
-      let open Ipaddr in
-      let dst0 = V4.of_octets (Mirage_crypto_rng.generate 4) |> Result.get_ok in
-      let src0 = Mnet.IPv4.src ipv4 ~dst:dst0 in
-      let dst1 = V4.of_octets (Mirage_crypto_rng.generate 4) |> Result.get_ok in
-      let src1 = Mnet.IPv4.src ipv4 ~dst:dst1 in
-      assert (V4.compare src0 src1 = 0)
+    let open Ipaddr in
+    let dst0 = V4.of_octets (Mirage_crypto_rng.generate 4) |> Result.get_ok in
+    let src0 = Mnet.IPv4.src ipv4 ~dst:dst0 in
+    let dst1 = V4.of_octets (Mirage_crypto_rng.generate 4) |> Result.get_ok in
+    let src1 = Mnet.IPv4.src ipv4 ~dst:dst1 in
+    assert (V4.compare src0 src1 = 0)
     ]} *)
 
 val addresses : t -> Ipaddr.V4.Prefix.t list

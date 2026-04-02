@@ -58,8 +58,8 @@ let clean_old_routers routers t =
   { t with cache }
 
 let tick t ~now:_ = function
-  | `Redirect (_src, r) -> begin
-      match Dsts.find r.Redirect.destination t.cache with
+  | `Redirect (_src, r) ->
+      begin match Dsts.find r.Redirect.destination t.cache with
       | Some { Dst.pmtu; _ } ->
           let next_hop = r.Redirect.target in
           let errored = None in
@@ -72,12 +72,12 @@ let tick t ~now:_ = function
           let value = { Dst.pmtu= t.lmtu; next_hop; errored } in
           let cache = Dsts.add r.Redirect.destination value t.cache in
           { t with cache= Dsts.trim cache }
-    end
-  | `Destination_unreachable u -> begin
+      end
+  | `Destination_unreachable u ->
       (* RFC 4443: Mark the destination as errored in the cache.
          This prevents further attempts to send to this destination
          until the entry expires or is cleared. *)
-      match Dsts.find u.Unreachable.destination t.cache with
+      begin match Dsts.find u.Unreachable.destination t.cache with
       | Some { Dst.pmtu; next_hop; _ } ->
           let errored = Some (`Destination_unreachable u.Unreachable.code) in
           let value = { Dst.pmtu; next_hop; errored } in
@@ -91,7 +91,7 @@ let tick t ~now:_ = function
           in
           let cache = Dsts.add u.Unreachable.destination value t.cache in
           { t with cache= Dsts.trim cache }
-    end
+      end
   | `Packet_too_big ptb -> begin
       (* RFC 8201: Path MTU Discovery for IPv6
          Update the PMTU for the destination. The new PMTU should be
