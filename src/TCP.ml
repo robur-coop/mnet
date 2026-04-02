@@ -198,8 +198,8 @@ let rec get t =
       t.state.tcp <- tcp;
       List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
       match Notify.await c with
-      | Ok () -> begin
-          match Utcp.recv t.state.tcp (now ()) t.flow with
+      | Ok () ->
+          begin match Utcp.recv t.state.tcp (now ()) t.flow with
           | Ok (tcp, [], _c, segs) ->
               t.state.tcp <- tcp;
               List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
@@ -215,7 +215,7 @@ let rec get t =
                   m ~tags:t.tags "%a error while read (second recv): %s"
                     Utcp.pp_flow t.flow msg);
               Error Refused
-        end
+          end
       | Error `Eof -> Error Eof
       | Error (`Msg msg) ->
           Log.err (fun m ->

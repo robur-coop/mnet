@@ -133,8 +133,8 @@ let input ipv4 pkt payload =
   | Error _ ->
       Log.err (fun m -> m "Invalid ICMPv4 packet:");
       Log.err (fun m -> m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) payload)
-  | Ok (Packet pkt, payload) -> begin
-      match pkt.kind with
+  | Ok (Packet pkt, payload) ->
+      begin match pkt.kind with
       | Packet.Echo_request ->
           Log.debug (fun m -> m "Echo request");
           let pkt =
@@ -154,7 +154,7 @@ let input ipv4 pkt payload =
           let _ = Result.map_error err result in
           ()
       | _ -> Log.debug (fun m -> m "Ignore ICMPv4 packet")
-    end
+      end
 
 type t = {
     mutex: Miou.Mutex.t

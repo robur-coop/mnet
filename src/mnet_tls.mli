@@ -10,13 +10,13 @@
     incoming connections). The TLS handshake is performed during creation.
 
     {[
-      let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 443) in
-      let tls_config = Tls.Config.client ~authenticator () in
-      let tls = Mnet_tls.client_of_fd tls_config flow in
-      Mnet_tls.write tls "GET / HTTP/1.1\r\n\r\n";
-      let buf = Bytes.create 4096 in
-      let len = Mnet_tls.read tls buf in
-      Mnet_tls.close tls
+    let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 443) in
+    let tls_config = Tls.Config.client ~authenticator () in
+    let tls = Mnet_tls.client_of_fd tls_config flow in
+    Mnet_tls.write tls "GET / HTTP/1.1\r\n\r\n";
+    let buf = Bytes.create 4096 in
+    let len = Mnet_tls.read tls buf in
+    Mnet_tls.close tls
     ]} *)
 
 exception Tls_alert of Tls.Packet.alert_type

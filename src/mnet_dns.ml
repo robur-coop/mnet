@@ -276,7 +276,9 @@ module Transport = struct
   let rec read_from_tcp t ke buf flow =
     match Mnet.TCP.read flow buf with
     | 0 -> Log.debug (fun m -> m "TCP connection closed by peer")
-    | exception Miou.Cancelled -> Log.debug (fun m -> m "TCP connection closed by us (useless connection)")
+    | exception Miou.Cancelled ->
+        Log.debug (fun m ->
+            m "TCP connection closed by us (useless connection)")
     | exception exn ->
         Log.err (fun m ->
             m "TCP connection failed with: %s" (Printexc.to_string exn))
@@ -289,7 +291,9 @@ module Transport = struct
   let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with
     | 0 -> Log.debug (fun m -> m "TLS connection closed by peer")
-    | exception Miou.Cancelled -> Log.debug (fun m -> m "TLS connection closed by us (useless connection)")
+    | exception Miou.Cancelled ->
+        Log.debug (fun m ->
+            m "TLS connection closed by us (useless connection)")
     | exception exn ->
         Log.err (fun m ->
             m "TLS connection failed with: %s" (Printexc.to_string exn))
@@ -307,14 +311,16 @@ module Transport = struct
      enough. Then, we fallback to the first [read_from_tcp] loop which waits for
      the user to push a new query. *)
   let rec write_to_connection t flow =
-    let queries = Miou.Mutex.protect t.mutex @@ fun () ->
+    let queries =
+      Miou.Mutex.protect t.mutex @@ fun () ->
       while Queue.is_empty t.queries do
         Miou.Condition.wait t.condition t.mutex
       done;
       assert (not (Queue.is_empty t.queries));
       let queries = Queue.to_seq t.queries in
       let queries = List.of_seq queries in
-      Queue.clear t.queries; queries in
+      Queue.clear t.queries; queries
+    in
     let fn query =
       match flow with
       | `Plain flow -> Mnet.TCP.write flow query
@@ -352,12 +358,14 @@ module Transport = struct
         while Queue.is_empty t.queries do
           Miou.Condition.wait t.condition t.mutex
         done;
-        assert (not (Queue.is_empty t.queries)) in
+        assert (not (Queue.is_empty t.queries))
+      in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
       read_from_connection t ke;
       (* NOTE(dinosaure): here, the TCP/IP connected has been closed; we are
          waiting for a new query. *)
-      go () in
+      go ()
+    in
     go ()
 
   let read_from_udp t =

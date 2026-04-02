@@ -60,24 +60,24 @@
     {2 Full example: echo server.}
 
     {[
-      module RNG = Mirage_crypto_rng.Fortuna
+    module RNG = Mirage_crypto_rng.Fortuna
 
-      let ( let@ ) finally fn = Fun.protect ~finally fn
-      let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
-      let rng = Mkernel.map rng Mkernel.[]
-      let cidr = Ipaddr.V4.Prefix.of_string_exn "10.0.0.2/24"
+    let ( let@ ) finally fn = Fun.protect ~finally fn
+    let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
+    let rng = Mkernel.map rng Mkernel.[]
+    let cidr = Ipaddr.V4.Prefix.of_string_exn "10.0.0.2/24"
 
-      let () =
-        Mkernel.(run [ rng; Mnet.stack ~name:"service" cidr ])
-        @@ fun rng (stack, tcp, _udp) () ->
-        let@ () = fun () -> Mnet.kill stack in
-        let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
-        let listen = Mnet.TCP.listen tcp 9000 in
-        let flow = Mnet.TCP.accept tcp listen in
-        let buf = Bytes.create 4096 in
-        let len = Mnet.TCP.read flow buf in
-        Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
-        Mnet.TCP.close flow
+    let () =
+      Mkernel.(run [ rng; Mnet.stack ~name:"service" cidr ])
+      @@ fun rng (stack, tcp, _udp) () ->
+      let@ () = fun () -> Mnet.kill stack in
+      let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
+      let listen = Mnet.TCP.listen tcp 9000 in
+      let flow = Mnet.TCP.accept tcp listen in
+      let buf = Bytes.create 4096 in
+      let len = Mnet.TCP.read flow buf in
+      Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
+      Mnet.TCP.close flow
     ]} *)
 
 module IPv4 = IPv4

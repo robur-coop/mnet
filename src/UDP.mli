@@ -10,14 +10,14 @@
     [udp_state] to send and receive datagrams:
 
     {[
-      Mkernel.(run [ rng; Mnet.stack ~name:"service" cidr ])
-      @@ fun rng (stack, _tcp, udp) () ->
-      (* Receive a datagram on port 5353 *)
-      let buf = Bytes.create 1500 in
-      let len, (peer, src_port) = Mnet.UDP.recvfrom udp ~port:5353 buf in
-      (* Send a reply *)
-      let reply = "pong" in
-      ignore (Mnet.UDP.sendto udp ~dst:peer ~port:src_port reply)
+    Mkernel.(run [ rng; Mnet.stack ~name:"service" cidr ])
+    @@ fun rng (stack, _tcp, udp) () ->
+    (* Receive a datagram on port 5353 *)
+    let buf = Bytes.create 1500 in
+    let len, (peer, src_port) = Mnet.UDP.recvfrom udp ~port:5353 buf in
+    (* Send a reply *)
+    let reply = "pong" in
+    ignore (Mnet.UDP.sendto udp ~dst:peer ~port:src_port reply)
     ]} *)
 
 (** {1 Types} *)

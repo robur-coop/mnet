@@ -118,8 +118,8 @@ let handler t bstr ~len =
         let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
         Log.err (fun m -> m ~tags "Invalid Ethernet packet");
         Log.err (fun m -> m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
-    | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) -> begin
-        try
+    | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) ->
+        begin try
           if of_interest t dst then
             t.handler { src= Some src; dst; protocol; payload }
         with
@@ -128,7 +128,7 @@ let handler t bstr ~len =
             Log.err (fun m ->
                 m ~tags "Unexpected exception from the user's handler: %s"
                   (Printexc.to_string exn))
-      end
+        end
     | Ok _ -> ()
 
 let rec daemon t =

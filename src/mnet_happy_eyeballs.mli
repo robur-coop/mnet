@@ -16,14 +16,14 @@
     connections:
 
     {[
-      let hed, he = Mnet_happy_eyeballs.create tcp in
-      let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
-      match Mnet_happy_eyeballs.connect he "robur.coop" [ 443 ] with
-      | Ok ((addr, port), flow) ->
-          Logs.debug (fun m -> m "Connected to %a:%d" Ipaddr.pp addr port);
-          (* use [flow] for communication *)
-          Mnet.TCP.close flow
-      | Error (`Msg msg) -> Logs.err (fun m -> m "Connection failed: %s" msg)
+    let hed, he = Mnet_happy_eyeballs.create tcp in
+    let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
+    match Mnet_happy_eyeballs.connect he "robur.coop" [ 443 ] with
+    | Ok ((addr, port), flow) ->
+        Logs.debug (fun m -> m "Connected to %a:%d" Ipaddr.pp addr port);
+        (* use [flow] for communication *)
+        Mnet.TCP.close flow
+    | Error (`Msg msg) -> Logs.err (fun m -> m "Connection failed: %s" msg)
     ]}
 
     {2 DNS resolution.}

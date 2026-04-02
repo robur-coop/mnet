@@ -102,8 +102,8 @@ let ipv6_handler ipv6 udp tcp =
     | 17 -> UDP.handler_ipv6 udp src dst payload
     | 58 ->
         let len = Bstr.length payload in
-        if len >= 8 then begin
-          match Bstr.get_uint8 payload 0 with
+        if len >= 8 then
+          begin match Bstr.get_uint8 payload 0 with
           | 128 ->
               Log.debug (fun m ->
                   m "ICMPv6 Echo Request from %a" Ipaddr.V6.pp src);
@@ -133,7 +133,7 @@ let ipv6_handler ipv6 udp tcp =
               IPv6.write_directly ipv6 ~src dst ~protocol ~len fn
               |> Result.fold ~ok ~error
           | _ -> ()
-        end
+          end
     | _ -> ()
 
 type stack = {
