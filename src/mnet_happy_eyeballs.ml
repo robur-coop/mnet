@@ -105,10 +105,54 @@ let handle_one_action t ~prms action =
         ignore (Miou.Computation.try_cancel waiter err)
       in
       Option.iter trans waiter
-  | _ ->
-      Log.err (fun m ->
-          m "Unexpected case for Mnet_happy_eyeballs.handle_one_action");
-      assert false
+  | HE.(Resolve_a host | Resolve_aaaa host) ->
+      let record =
+        match action with
+        | HE.Resolve_a _ -> `A
+        | HE.Resolve_aaaa _ -> `AAAA
+        | _ -> assert false
+      in
+      let _ =
+        Miou.async ~orphans:prms @@ fun () ->
+        match t.getaddrinfo record host with
+        | Ok result ->
+            let fn ip (ipv4, ipv6) =
+              match ip with
+              | Ipaddr.V4 v -> (Ipaddr.V4.Set.add v ipv4, ipv6)
+              | Ipaddr.V6 v -> (ipv4, Ipaddr.V6.Set.add v ipv6)
+            in
+            let ipv4, ipv6 =
+              Ipaddr.Set.fold fn result Ipaddr.(V4.Set.empty, V6.Set.empty)
+            in
+            let result =
+              match record with
+              | `A ->
+                  let err =
+                    error_msgf "%a unreachable via IPv4" Domain_name.pp host
+                  in
+                  if Ipaddr.V4.Set.is_empty ipv4 then `Resolution_v4 (host, err)
+                  else `Resolution_v4 (host, Ok ipv4)
+              | `AAAA ->
+                  let err =
+                    error_msgf "%a unreachable via IPv6" Domain_name.pp host
+                  in
+                  if Ipaddr.V6.Set.is_empty ipv6 then `Resolution_v6 (host, err)
+                  else `Resolution_v6 (host, Ok ipv6)
+            in
+            Miou.Mutex.protect t.mutex @@ fun () ->
+            Queue.push result t.queue;
+            Miou.Condition.signal t.condition
+        | Error err ->
+            let result =
+              match record with
+              | `A -> `Resolution_v4 (host, Error err)
+              | `AAAA -> `Resolution_v6 (host, Error err)
+            in
+            Miou.Mutex.protect t.mutex @@ fun () ->
+            Queue.push result t.queue;
+            Miou.Condition.signal t.condition
+      in
+      ()
 
 let to_event t = function
   | `Connection_failed ((id, attempt, host, addr), msg) ->
@@ -140,9 +184,11 @@ let to_event t = function
           if not set then Mnet.TCP.close flow
       end;
       Happy_eyeballs.Connected (host, id, addr)
-  | _ ->
-      Log.err (fun m -> m "Unexpected case for Mnet_happy_eyeballs.to_event");
-      assert false
+  | `Resolution_v4 (host, Ok ips) -> HE.Resolved_a (host, ips)
+  | `Resolution_v6 (host, Ok ips) -> HE.Resolved_aaaa (host, ips)
+  | `Resolution_v4 (host, Error (`Msg msg)) -> HE.Resolved_a_failed (host, msg)
+  | `Resolution_v6 (host, Error (`Msg msg)) ->
+      HE.Resolved_aaaa_failed (host, msg)
 
 let now () = Int64.of_int (Mkernel.clock_monotonic ())
 
