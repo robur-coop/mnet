@@ -395,7 +395,11 @@ let handler state src dst payload =
   | None -> ()
   end;
   Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
-  List.iter (fun out -> Queue.push out state.queue) segs
+  let fn out =
+    try write_without_interruption_ip state out
+    with _ -> Queue.push out state.queue
+  in
+  List.iter fn segs
 
 exception Timeout
 
