@@ -121,7 +121,7 @@ let write_without_interruption_ipv4 state (src, dst, seg) =
   let pkt = IPv4.Writer.into state.ipv4 ~len fn in
   match IPv4.attempt_to_discover_destination state.ipv4 dst with
   | None ->
-      Log.warn (fun m -> m "A packet is kept in our internal queue");
+      Log.debug (fun m -> m "A packet is kept in our internal queue");
       Queue.push (Ipaddr.V4 src, Ipaddr.V4 dst, seg) state.outs
   | Some macaddr ->
       IPv4.write_directly state.ipv4 src (dst, macaddr) ~protocol:6 pkt
@@ -395,7 +395,11 @@ let handler state src dst payload =
   | None -> ()
   end;
   Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
-  List.iter (fun out -> Queue.push out state.queue) segs
+  let fn out =
+    try write_without_interruption_ip state out
+    with _ -> Queue.push out state.queue
+  in
+  List.iter fn segs
 
 exception Timeout
 
