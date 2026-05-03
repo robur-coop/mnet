@@ -249,13 +249,19 @@ module Transport = struct
 
   (* NOTE(dinosaure): Consume until we don't have enough to decode DNS packets.
      We trigger the [ivar]s associated with the [uid]s extracted from the
-     packets. The ringbuffer [ke] should not grow more than 8192 bytes. *)
+     packets. The ringbuffer [ke] should not grow more than 8192 bytes.
+
+     A DNS-over-TCP/TLS frame is a 2-byte big-endian length [len] followed by
+     [len] bytes of DNS payload, kept as-is in [packet] (the consumer in
+     [Dns_client] strips the prefix). We therefore must wait until the buffer
+     holds the full [len + 2] bytes before extracting the frame, otherwise
+     [String.sub] raises [Invalid_argument] and kills the reader fiber. *)
   let process ke reqs =
     let rec go () =
       match Ke.peek ke with
-      | Some str when String.length str > 2 ->
+      | Some str when String.length str >= 2 ->
           let len = String.get_uint16_be str 0 in
-          if String.length str - 2 >= 2 then begin
+          if String.length str >= len + 2 then begin
             let packet = String.sub str 0 (len + 2) in
             let uid = String.get_uint16_be packet 2 in
             Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
@@ -263,7 +269,7 @@ module Transport = struct
                 m "Something waiting for this response? %b"
                   (Option.is_some (Reqs.find_opt uid reqs)));
             let fn (_tx, ivar) =
-              assert (Miou.Computation.try_return ivar packet)
+              ignore (Miou.Computation.try_return ivar packet)
             in
             Option.iter fn (Reqs.find_opt uid reqs);
             Ke.shift ke (len + 2);
