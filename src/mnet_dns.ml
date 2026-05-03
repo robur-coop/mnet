@@ -334,6 +334,16 @@ module Transport = struct
     in
     List.iter fn queries; write_to_connection t flow
 
+  let _backoff_max = 5_000_000_000 (* 5 seconds *)
+
+  (* NOTE(dinosaure): returns [`Connected] when the connection has been
+     established (and later closed), [`Connect_failed] when [connect_to_nameservers]
+     could not connect to any nameserver. The caller must keep [t.mode] alive in
+     either case so that subsequent queries can trigger a fresh attempt; if we
+     gave up here by setting [t.mode <- None], the daemon would be stuck
+     forever on a transient network error (e.g. happy-eyeballs timeout, TLS
+     handshake failure) and every later [send_recv]/[connect] call would fail
+     instantly with "Impossible to initiate a TCP connection to nameservers". *)
   let read_from_connection t ke =
     let finally = function
       | `Plain flow -> Mnet.TCP.close flow
@@ -353,11 +363,14 @@ module Transport = struct
         in
         let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
-        Miou.Ownership.release resource
-    | Error _err -> t.mode <- None
+        Miou.Ownership.release resource;
+        `Connected
+    | Error (`Msg msg) ->
+        Log.warn (fun m -> m "Failed to connect to nameservers: %s" msg);
+        `Connect_failed
 
   let connection_loop t ke =
-    let rec go () =
+    let rec go ~backoff () =
       (* NOTE(dinosaure): we wait a signal from the user. *)
       let () =
         Miou.Mutex.protect t.mutex @@ fun () ->
@@ -367,12 +380,21 @@ module Transport = struct
         assert (not (Queue.is_empty t.queries))
       in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
-      read_from_connection t ke;
-      (* NOTE(dinosaure): here, the TCP/IP connected has been closed; we are
-         waiting for a new query. *)
-      go ()
+      match read_from_connection t ke with
+      | `Connected ->
+          (* connection established (and now closed); reset the backoff and
+             wait for a new query. *)
+          go ~backoff:0 ()
+      | `Connect_failed ->
+          (* Avoid busy-looping when the nameserver is unreachable: if there
+             are still queued queries (whose senders are waiting on their own
+             [with_timeout]), sleep with exponential backoff before retrying.
+             [t.mode] is kept on [Some _] so that future [connect]/[send_recv]
+             calls remain serviceable. *)
+          let next = Int.max 100_000_000 (Int.min _backoff_max (backoff * 2)) in
+          Mkernel.sleep next; go ~backoff:next ()
     in
-    go ()
+    go ~backoff:0 ()
 
   let read_from_udp t =
     let rec clean_up orphans =
