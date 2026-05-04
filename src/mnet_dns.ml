@@ -249,13 +249,19 @@ module Transport = struct
 
   (* NOTE(dinosaure): Consume until we don't have enough to decode DNS packets.
      We trigger the [ivar]s associated with the [uid]s extracted from the
-     packets. The ringbuffer [ke] should not grow more than 8192 bytes. *)
+     packets. The ringbuffer [ke] should not grow more than 8192 bytes.
+
+     A DNS-over-TCP/TLS frame is a 2-byte big-endian length [len] followed by
+     [len] bytes of DNS payload, kept as-is in [packet] (the consumer in
+     [Dns_client] strips the prefix). We therefore must wait until the buffer
+     holds the full [len + 2] bytes before extracting the frame, otherwise
+     [String.sub] raises [Invalid_argument] and kills the reader fiber. *)
   let process ke reqs =
     let rec go () =
       match Ke.peek ke with
-      | Some str when String.length str > 2 ->
+      | Some str when String.length str >= 2 ->
           let len = String.get_uint16_be str 0 in
-          if String.length str - 2 >= 2 then begin
+          if String.length str >= len + 2 then begin
             let packet = String.sub str 0 (len + 2) in
             let uid = String.get_uint16_be packet 2 in
             Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
@@ -263,7 +269,7 @@ module Transport = struct
                 m "Something waiting for this response? %b"
                   (Option.is_some (Reqs.find_opt uid reqs)));
             let fn (_tx, ivar) =
-              assert (Miou.Computation.try_return ivar packet)
+              ignore (Miou.Computation.try_return ivar packet)
             in
             Option.iter fn (Reqs.find_opt uid reqs);
             Ke.shift ke (len + 2);
@@ -328,6 +334,16 @@ module Transport = struct
     in
     List.iter fn queries; write_to_connection t flow
 
+  let _backoff_max = 5_000_000_000 (* 5 seconds *)
+
+  (* NOTE(dinosaure): returns [`Connected] when the connection has been
+     established (and later closed), [`Connect_failed] when [connect_to_nameservers]
+     could not connect to any nameserver. The caller must keep [t.mode] alive in
+     either case so that subsequent queries can trigger a fresh attempt; if we
+     gave up here by setting [t.mode <- None], the daemon would be stuck
+     forever on a transient network error (e.g. happy-eyeballs timeout, TLS
+     handshake failure) and every later [send_recv]/[connect] call would fail
+     instantly with "Impossible to initiate a TCP connection to nameservers". *)
   let read_from_connection t ke =
     let finally = function
       | `Plain flow -> Mnet.TCP.close flow
@@ -347,11 +363,14 @@ module Transport = struct
         in
         let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
-        Miou.Ownership.release resource
-    | Error _err -> t.mode <- None
+        Miou.Ownership.release resource;
+        `Connected
+    | Error (`Msg msg) ->
+        Log.warn (fun m -> m "Failed to connect to nameservers: %s" msg);
+        `Connect_failed
 
   let connection_loop t ke =
-    let rec go () =
+    let rec go ~backoff () =
       (* NOTE(dinosaure): we wait a signal from the user. *)
       let () =
         Miou.Mutex.protect t.mutex @@ fun () ->
@@ -361,12 +380,21 @@ module Transport = struct
         assert (not (Queue.is_empty t.queries))
       in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
-      read_from_connection t ke;
-      (* NOTE(dinosaure): here, the TCP/IP connected has been closed; we are
-         waiting for a new query. *)
-      go ()
+      match read_from_connection t ke with
+      | `Connected ->
+          (* connection established (and now closed); reset the backoff and
+             wait for a new query. *)
+          go ~backoff:0 ()
+      | `Connect_failed ->
+          (* Avoid busy-looping when the nameserver is unreachable: if there
+             are still queued queries (whose senders are waiting on their own
+             [with_timeout]), sleep with exponential backoff before retrying.
+             [t.mode] is kept on [Some _] so that future [connect]/[send_recv]
+             calls remain serviceable. *)
+          let next = Int.max 100_000_000 (Int.min _backoff_max (backoff * 2)) in
+          Mkernel.sleep next; go ~backoff:next ()
     in
-    go ()
+    go ~backoff:0 ()
 
   let read_from_udp t =
     let rec clean_up orphans =
