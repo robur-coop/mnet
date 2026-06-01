@@ -41,7 +41,7 @@ and event =
   | `SSH_out of int32 * string
   | `SSH_err of int32 * string ]
 
-and callback = request -> unit
+and callback = string -> request -> unit
 
 and request =
   | Pty_req of {
@@ -90,7 +90,13 @@ let sendv flow server msgs =
 
 let lookup t id = List.find_opt (fun c -> id = c.id) t.channels
 
-let rec nexus t flow server str orphans =
+let username server =
+  match server.Awa.Server.auth_state with
+  | Awa.Server.Preauth | Awa.Server.Inprogress _ ->
+      assert false (* NOTE(dinosaure): I trust @reynir. *)
+  | Awa.Server.Done value -> value
+
+let rec nexus t flow (server : string Awa.Server.t) str orphans =
   let where = "Mnet_ssh.nexus" in
   let value = or_fail ~where (Awa.Server.pop_msg2 server str) in
   match value with
@@ -141,20 +147,23 @@ let rec nexus t flow server str orphans =
       | Some (Awa.Server.Userauth (user, userauth)) ->
           let accept = Auth.verify t.db user userauth in
           let result =
-            if accept then Awa.Server.accept_userauth server userauth ()
+            if accept then Awa.Server.accept_userauth server userauth user
             else Awa.Server.reject_userauth server userauth
           in
           let server, reply = or_fail ~where result in
           let server = send flow server reply in
           nexus t flow server str orphans
       | Some (Awa.Server.Pty (term, width, height, max_width, max_height, _)) ->
-          t.cb (Pty_req { width; height; max_width; max_height; term });
+          let username = username server in
+          t.cb username (Pty_req { width; height; max_width; max_height; term });
           nexus t flow server str orphans
       | Some (Awa.Server.Pty_set (width, height, max_width, max_height)) ->
-          t.cb (Pty_set { width; height; max_width; max_height });
+          let username = username server in
+          t.cb username (Pty_set { width; height; max_width; max_height });
           nexus t flow server str orphans
       | Some (Awa.Server.Set_env (key, value)) ->
-          t.cb (Set_env { key; value });
+          let username = username server in
+          t.cb username (Set_env { key; value });
           nexus t flow server str orphans
       | Some (Awa.Server.Disconnected _) ->
           let fn c = Q.close c.q; Miou.cancel c.prm in
@@ -164,7 +173,8 @@ let rec nexus t flow server str orphans =
           let ic () = Q.get q in
           let oc str = Q.put t.queue (`SSH_out (id, str)) in
           let ec str = Q.put t.queue (`SSH_err (id, str)) in
-          let prm = Miou.async @@ fun () -> t.cb (Shell { ic; oc; ec }) in
+          let user = username server in
+          let prm = Miou.async @@ fun () -> t.cb user (Shell { ic; oc; ec }) in
           let c = { cmd= None; id; q; prm } in
           let t = { t with channels= c :: t.channels } in
           let _ = Miou.async ~orphans @@ fun () -> Q.get t.queue in
@@ -185,9 +195,9 @@ let rec nexus t flow server str orphans =
           let ic () = Q.get q in
           let oc str = Q.put t.queue (`SSH_out (id, str)) in
           let ec str = Q.put t.queue (`SSH_err (id, str)) in
-          let prm =
-            Miou.async @@ fun () -> t.cb (Channel { cmd; ic; oc; ec })
-          in
+          let user = username server in
+          let channel = Channel { cmd; ic; oc; ec } in
+          let prm = Miou.async @@ fun () -> t.cb user channel in
           let c = { cmd= Some cmd; id; q; prm } in
           let t = { t with channels= c :: t.channels } in
           let _ = Miou.async ~orphans @@ fun () -> Q.get t.queue in
@@ -212,10 +222,10 @@ module Stop = struct
     Miou.Condition.signal t.condition
 end
 
-let server ?stop db hostkey flow cb =
+let server ?stop db priv flow cb =
   let queue = Q.(create infinite) 0x7ff in
   let t = { db; cb; channels= []; queue } in
-  let server, msgs = Awa.Server.make hostkey in
+  let server, msgs = Awa.Server.make priv in
   let server = sendv flow server msgs in
   let orphans = Miou.orphans () in
   let _ =

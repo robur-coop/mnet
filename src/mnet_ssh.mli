@@ -17,7 +17,7 @@ end
 
 type t
 
-type callback = request -> unit
+type callback = string -> request -> unit
 
 and request =
   | Pty_req of {
