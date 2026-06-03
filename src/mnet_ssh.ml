@@ -3,32 +3,16 @@ let src = Logs.Src.create "mnet.ssh"
 module Log = (val Logs.src_log src : Logs.LOG)
 module Q = Flux.Bqueue
 
-module Auth = struct
-  type user = {
-      name: string
-    ; password: string option
-    ; keys: Awa.Hostkey.pub list
-  }
+module type AUTH = sig
+  type t
 
-  type db = user list
-
-  let verify db user userauth =
-    match (List.find_opt (fun u -> u.name = user) db, userauth) with
-    | None, Awa.Server.Pubkey pkauth ->
-        Awa.Server.verify_pubkeyauth ~user pkauth && false
-    | (None | Some { password= None; _ }), Awa.Server.Password _ -> false
-    | Some u, Awa.Server.Pubkey pkauth ->
-        let fn pk = Awa.Hostkey.pub_eq pk pkauth.pubkey in
-        Awa.Server.verify_pubkeyauth ~user pkauth && List.exists fn u.keys
-    | Some { password= Some password; _ }, Awa.Server.Password password' ->
-        let open Digestif.SHA256 in
-        let a = digest_string password in
-        let b = digest_string password' in
-        Digestif.SHA256.equal a b
+  val verify : t -> string -> Awa.Server.userauth -> bool
 end
 
+type db = Database : 'db * (module AUTH with type t = 'db) -> db
+
 type t = {
-    db: Auth.db
+    db: db
   ; cb: callback
   ; channels: channel list
   ; queue: (event, event) Q.t
@@ -178,11 +162,8 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           Log.debug (fun m -> m "no event but launch a new reader");
           nexus t flow server str orphans
       | Some (Awa.Server.Userauth (user, userauth)) ->
-          (* NOTE(dinosaure): une base d'authentification vide signifie
-             "accepter tout le monde" (serveur de chat ouvert). *)
-          let accept =
-            match t.db with [] -> true | _ -> Auth.verify t.db user userauth
-          in
+          let (Database (db, (module Auth))) = t.db in
+          let accept = Auth.verify db user userauth in
           let result =
             if accept then Awa.Server.accept_userauth server userauth user
             else Awa.Server.reject_userauth server userauth

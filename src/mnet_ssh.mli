@@ -5,17 +5,14 @@ module Stop : sig
   val switch : t -> unit
 end
 
-module Auth : sig
-  type user = {
-      name: string
-    ; password: string option
-    ; keys: Awa.Hostkey.pub list
-  }
+module type AUTH = sig
+  type t
 
-  type db = user list
+  val verify : t -> string -> Awa.Server.userauth -> bool
 end
 
 type t
+type db = Database : 'db * (module AUTH with type t = 'db) -> db
 
 type callback = string -> request -> unit
 
@@ -54,4 +51,4 @@ and channel = {
 }
 
 val server :
-  ?stop:Stop.t -> Auth.db -> Awa.Hostkey.priv -> Mnet.TCP.flow -> callback -> t
+  ?stop:Stop.t -> db -> Awa.Hostkey.priv -> Mnet.TCP.flow -> callback -> t
