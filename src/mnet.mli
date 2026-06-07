@@ -130,3 +130,7 @@ val kill : stack -> unit
 
     This function should be called when the unikernel is shutting down. See
     {b Lifecycle management} above for the recommended pattern. *)
+
+(**/*)
+
+val tcp : stack -> TCP.daemon
