@@ -6,6 +6,8 @@ open Cmdliner
 val s_network : Cmdliner.Manpage.section_name
 val s_dns : Cmdliner.Manpage.section_name
 val s_happy_eyeballs : Cmdliner.Manpage.section_name
+val s_output : Cmdliner.Manpage.section_name
+val s_logs : Cmdliner.Manpage.section_name
 
 val ipv4 : Ipaddr.V4.Prefix.t Term.t
 (** [ipv4] defines the [--ipv4] option. This option is required and allows you
@@ -52,3 +54,6 @@ type happy_eyeballs = {
 val setup_happy_eyeballs : happy_eyeballs Term.t
 (** [setup_happy_eyeballs] aggregates options to configure an Happy Eyeballs
     instance. *)
+
+val setup_logs : bool Term.t
+(** [setup_logs] setups logs. *)
