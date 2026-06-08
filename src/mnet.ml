@@ -186,3 +186,5 @@ let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
     | Error err -> Fmt.failwith "%a" pp_error err
   in
   Mkernel.(map fn [ net name ])
+
+let tcp { tcpd; _ } = tcpd
