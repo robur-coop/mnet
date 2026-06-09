@@ -43,6 +43,12 @@
  (libraries mnet mnet-happy-eyeballs mnet-tls dns dns-client))
 
 (library
+ (name mnet_ssh)
+ (modules mnet_ssh)
+ (public_name mnet-ssh)
+ (libraries mnet awa flux))
+
+(library
  (name mnet_happy_eyeballs)
  (modules mnet_happy_eyeballs)
  (public_name mnet-happy-eyeballs)
