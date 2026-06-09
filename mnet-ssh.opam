@@ -9,6 +9,7 @@ license: "MIT"
 depends: [
   "ocaml" {>= "5.0.0"}
   "utcp"
+  "miou" {>= "0.7.0"}
   "dune" {>= "2.7.0"}
   "mnet" {= version}
   "awa"
@@ -21,7 +22,3 @@ build: [
 ]
 
 synopsis: "An implementation of SSH in OCaml for Miou & Solo5"
-
-pin-depends: [
-  [ "miou.dev" "git+https://github.com/robur-coop/miou.git#749518ce43476d010e1b44e01e448417e80f91b0" ]
-]
