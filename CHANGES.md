@@ -1,3 +1,17 @@
+### v0.0.3 (2026-06-09)
+
+- Minor simplification of `mnet-tls` about handshake (@hannesm, [!28][28])
+- Improve `mnet-cli` (add `setup_logs`) (@dinosaure, [!30][30])
+- Be able to return the TCP daemon (and be able to kill it)
+  (@dinosaure, [!31][30])
+- Add a new `mnet-ssh` package which implements SSH for unikernels
+  (@dinosaure, [!29][29])
+
+[28]: https://git.robur.coop/robur/mnet/pulls/28
+[29]: https://git.robur.coop/robur/mnet/pulls/29
+[30]: https://git.robur.coop/robur/mnet/pulls/30
+[31]: https://git.robur.coop/robur/mnet/pulls/31
+
 ### v0.0.2 (2026-05-06)
 
 - Improve our unikernel example and our resolver, it's able to take a
