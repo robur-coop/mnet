@@ -1,3 +1,18 @@
+type flow
+
+val client :
+     ?authenticator:Awa.Keys.authenticator
+  -> user:string
+  -> [ `Pubkey of Awa.Hostkey.priv | `Password of string ]
+  -> string
+  -> Mnet.TCP.flow
+  -> (flow, [> `Msg of string ]) result
+
+val read : flow -> bytes -> off:int -> len:int -> int
+val write : flow -> string -> off:int -> len:int -> unit
+val exit_status : flow -> int32 option
+val close : flow -> unit
+
 module Stop : sig
   type t
 
