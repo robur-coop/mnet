@@ -8,7 +8,18 @@
  (name mnet_cli)
  (public_name mnet-cli)
  (modules mnet_cli)
- (libraries re logs.cli logs.fmt fmt.cli duration ca-certs-nss mirage-ptime.solo5 dns tls cmdliner mnet))
+ (libraries
+  re
+  logs.cli
+  logs.fmt
+  fmt.cli
+  duration
+  ca-certs-nss
+  mirage-ptime.solo5
+  dns
+  tls
+  cmdliner
+  mnet))
 
 (library
  (name ethernet)
