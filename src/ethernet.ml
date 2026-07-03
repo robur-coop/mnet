@@ -181,7 +181,8 @@ let set_handler t handler =
     Log.warn (fun m -> m ~tags "Ethernet handler modified more than once")
 
 let extend_handler_with t handler =
-  let handler pkt = try t.handler pkt with Packet_ignored -> handler pkt in
+  let prev = t.handler in
+  let handler pkt = try prev pkt with Packet_ignored -> handler pkt in
   t.handler <- handler
 
 let kill = Miou.cancel
