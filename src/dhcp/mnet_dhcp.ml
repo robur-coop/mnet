@@ -34,12 +34,6 @@ let domain_name l =
 
 let lease_time l = Dhcp_wire.find_ip_lease_time (opts l)
 let options l = opts l
-
-let find_raw l ~code =
-  match Dhcp_wire.find_other code (opts l) with
-  | Some (_, str) -> Some str
-  | None -> None
-
 let pp_lease = Dhcp_wire.pp_pkt
 
 (* Configuration *)

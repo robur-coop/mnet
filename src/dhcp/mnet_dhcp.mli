@@ -32,12 +32,6 @@ val options : lease -> Dhcp_wire.dhcp_option list
 (** [options lease] is the full list of DHCP options of the lease (escape
     hatch). *)
 
-val find_raw : lease -> code:int -> string option
-(** [find_raw lease ~code] returns the raw bytes of the option whose numeric
-    [code] is given, if present. Use this to recover site-specific or private
-    options (codes 224–254), e.g. a TLS certificate the server chose to hand
-    out. *)
-
 val pp_lease : lease Fmt.t
 (** Pretty-printer for a lease, for debugging and logging. *)
 
