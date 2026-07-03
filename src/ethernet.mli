@@ -139,6 +139,10 @@ val write_directly_into :
     This is the low-level frame writing primitive used by {!module:IPv4} and
     {!module:IPv6} to send packets. *)
 
+val write_frame : t -> string -> unit
+(** [write_frame t frame] writes the complete Ethernet [frame] (including its
+    14-byte header) to the device, without adding any header of its own. *)
+
 (** {1 Lifecycle} *)
 
 val create :

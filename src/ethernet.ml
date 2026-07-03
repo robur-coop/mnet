@@ -145,6 +145,14 @@ let write_directly_into t ?len ?src ~dst ~protocol fn =
   let pkt = { src; dst; protocol; payload= fn } in
   write_directly_into t ?len pkt
 
+let write_frame t str =
+  let len = String.length str in
+  match t.extern with
+  | None -> Mkernel.Net.write_string t.net ~off:0 ~len str
+  | Some (External { device; swr; _ }) ->
+      Bstr.blit_from_string str ~src_off:0 t.bstr_oc ~dst_off:0 ~len;
+      swr device ~off:0 ~len t.bstr_oc
+
 let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
