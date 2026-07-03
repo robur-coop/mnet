@@ -132,11 +132,15 @@ type t = {
   ; gateway: Ipaddr.V4.t option
   ; cache: Frags.t
   ; mutable handler: packet * payload -> unit
-  ; tags: Logs.Tag.set
   ; cnt: int Atomic.t
 }
 
-let tags { tags; _ } = tags
+let tags { eth; cidr; _ } tags =
+  match cidr with
+  | Some cidr ->
+      let tags = Ethernet.tags eth tags in
+      Logs.Tag.add Mnet_tags.ipv4 cidr tags
+  | None -> Ethernet.tags eth tags
 let addresses { cidr; _ } = [ cidr ]
 
 module Writer = struct
@@ -229,12 +233,10 @@ module Writer = struct
     Fixed { total_length; fn }
 end
 
-let create ?to_expire eth arp ?gateway ?(handler = ignore) cidr =
-  let tags = Ethernet.tags eth in
-  let tags = Logs.Tag.add Mnet_tags.ipv4 cidr tags in
+let create ?to_expire eth arp ?gateway ?(handler = ignore) ?cidr () =
   let cache = Frags.create ?to_expire () in
   let cnt = Atomic.make 0 in
-  let t = { eth; arp; cidr; gateway; cache; handler; tags; cnt } in
+  let t = { eth; arp; cidr; gateway; cache; handler; cnt } in
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
@@ -252,7 +254,8 @@ let fixed pkt user's_fn len bstr =
 
 let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
   Log.debug (fun m ->
-      m ~tags:t.tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
+      let tags = tags t Logs.Tag.empty in
+      m ~tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
   let mtu = Ethernet.mtu t.eth in
   match p with
   | Writer.Fixed { total_length; fn= user's_fn } ->
@@ -309,18 +312,22 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
   Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
   match Routing.destination_macaddr t.cidr t.gateway t.arp ~src ~dst with
   | Error (`Exn _ | `Timeout | `Clear) ->
-      Log.err (fun m -> m ~tags:t.tags "no route found for %a" Ipaddr.V4.pp dst);
+      Log.err (fun m ->
+          let tags = tags t Logs.Tag.empty in
+          m ~tags "no route found for %a" Ipaddr.V4.pp dst);
       Error `Route_not_found
   | Error `Gateway ->
       Log.debug (fun m ->
-          m ~tags:t.tags
+          let tags = tags t Logs.Tag.empty in
+          m ~tags
             "no gateway specified for writing IPv4 packets, dropping %a"
             Ipaddr.V4.pp dst);
       Ok ()
   | Error `Loopback ->
       Log.debug (fun m ->
-          m ~tags:t.tags "not sending packet loopback (src %a dst %a)"
-            Ipaddr.V4.pp src Ipaddr.V4.pp dst);
+          let tags = tags t Logs.Tag.empty in
+          m ~tags "not sending packet loopback (src %a dst %a)" Ipaddr.V4.pp
+            src Ipaddr.V4.pp dst);
       Ok ()
   | Ok macaddr ->
       write_directly t ~ttl src (dst, macaddr) ~protocol p;
@@ -336,9 +343,11 @@ let input t pkt =
   | Error err ->
       let str = SBstr.to_string pkt.payload in
       Log.err (fun m ->
-          m ~tags:t.tags "Invalid IPv4 packet: %a" Packet.pp_error err);
+          let tags = tags t Logs.Tag.empty in
+          m ~tags "Invalid IPv4 packet: %a" Packet.pp_error err);
       Log.err (fun m ->
-          m ~tags:t.tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+          let tags = tags t Logs.Tag.empty in
+          m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (ipv4, payload) ->
       let dst = ipv4.Packet.dst in
       if
@@ -358,8 +367,8 @@ let input t pkt =
         and len = ipv4.Packet.checksum_and_length.length - 20
         and last = not (List.exists (( = ) Flag.MF) ipv4.Packet.flags) in
         Log.debug (fun m ->
-            m ~tags:t.tags
-              "Incoming IPv4 packet %a -> %a (off:%d, len:%d, last:%b)"
+            let tags = tags t Logs.Tag.empty in
+            m ~tags "Incoming IPv4 packet %a -> %a (off:%d, len:%d, last:%b)"
               Ipaddr.V4.pp ipv4.Packet.src Ipaddr.V4.pp ipv4.Packet.dst off len
               last);
         let pkt = Frags.insert ~now t.cache key ~off ~len ~last payload in
@@ -370,4 +379,6 @@ let set_handler t handler =
   Atomic.incr t.cnt;
   t.handler <- handler;
   if Atomic.get t.cnt > 1 then
-    Log.warn (fun m -> m ~tags:t.tags "IPv4 handler modified more than once")
+    Log.warn (fun m ->
+        let tags = tags t Logs.Tag.empty in
+        m ~tags "IPv4 handler modified more than once")

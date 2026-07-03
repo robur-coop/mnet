@@ -77,7 +77,7 @@ type t
 (** The IPv4 protocol state. Maintains the routing/ARP cache, fragmentation
     reassembly state, and configured addresses. *)
 
-val tags : t -> Logs.Tag.set
+val tags : t -> Logs.Tag.set -> Logs.Tag.set
 (** When IPv4 sends logs, it can attach information such as the source IPv4 and
     the destination to which the logs relate. The user can obtain this
     information through the Logs API (and [tags]) and display it in order to

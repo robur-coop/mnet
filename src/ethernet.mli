@@ -175,6 +175,6 @@ val macaddr : t -> Macaddr.t
 (** [macaddr t] returns the MAC address of the underlying device. Same as
     {!val:mac}. *)
 
-val tags : t -> Logs.Tag.set
+val tags : t -> Logs.Tag.set -> Logs.Tag.set
 (** [tags t] returns logging tags containing the MAC address of the device.
     Useful for structured logging output with {!module:Logs}. *)

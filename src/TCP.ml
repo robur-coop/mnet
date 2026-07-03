@@ -360,7 +360,7 @@ let handler state src dst payload =
       let (_, src_port), (ipaddr, port) = Utcp.peers flow in
       Log.debug (fun m ->
           m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-      let tags = IPv4.tags state.ipv4 in
+      let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
       let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
       let buffer = Buffer.create 0x7ff in
       let flow = { state; tags; flow; buffer; closed= false } in
@@ -548,7 +548,7 @@ let connect state (dst, dst_port) =
     | Ipaddr.V6 dst -> Ipaddr.V6 (IPv6.src state.ipv6 ~dst)
   in
   let tcp, flow, c, seg = Utcp.connect ~src ~dst ~dst_port state.tcp (now ()) in
-  let tags = IPv4.tags state.ipv4 in
+  let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
   let tags = Logs.Tag.add Mnet_tags.tcp (dst, dst_port) tags in
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;

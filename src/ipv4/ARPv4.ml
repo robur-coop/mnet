@@ -161,7 +161,7 @@ let handle_request t arp =
   let src = arp.Packet.src_ip in
   let src_mac = arp.Packet.src_mac in
   Log.debug (fun m ->
-      let tags = Ethernet.tags t.eth in
+      let tags = Ethernet.tags t.eth Logs.Tag.empty in
       m ~tags "%a:%a: who has %a?" Macaddr.pp src_mac Ipaddr.V4.pp src
         Ipaddr.V4.pp dst);
   match Entries.find t.entries dst with
@@ -172,7 +172,7 @@ let handle_request t arp =
 let handle_reply t src macaddr =
   let entry = Entry.Dynamic { addr= macaddr; epoch= t.epoch + t.timeout } in
   Log.debug (fun m ->
-      let tags = Ethernet.tags t.eth in
+      let tags = Ethernet.tags t.eth Logs.Tag.empty in
       m ~tags "handle ARPv4 reply packet from %a:%a" Macaddr.pp macaddr
         Ipaddr.V4.pp src);
   match Entries.find t.entries src with
@@ -186,7 +186,7 @@ let handle_reply t src macaddr =
   | Dynamic { addr= macaddr'; _ } ->
       if Macaddr.compare macaddr macaddr' != 0 then
         Log.debug (fun m ->
-            let tags = Ethernet.tags t.eth in
+            let tags = Ethernet.tags t.eth Logs.Tag.empty in
             m ~tags "set %a from %a to %a" Ipaddr.V4.pp src Macaddr.pp macaddr'
               Macaddr.pp macaddr);
       Entries.add t.entries src entry
@@ -198,7 +198,7 @@ let handle_reply t src macaddr =
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
   | Error _ ->
-      let tags = Ethernet.tags t.eth in
+      let tags = Ethernet.tags t.eth Logs.Tag.empty in
       Log.err (fun m -> m ~tags "Invalid ARPv4 packet:");
       Log.err (fun m ->
           m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) pkt.Ethernet.payload)
@@ -285,7 +285,7 @@ let read_or_sync ?(delay = 1_500_000_000) t =
   | Ok value -> value
   | Error exn ->
       Log.err (fun m ->
-          let tags = Ethernet.tags t.eth in
+          let tags = Ethernet.tags t.eth Logs.Tag.empty in
           m ~tags "Unexpected exception: %s" (Printexc.to_string exn));
       In (Queue.create ())
 
