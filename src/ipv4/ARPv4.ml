@@ -75,6 +75,9 @@ end
 
 module Entries = Table.Make (Key) (Entry)
 
+(* DEFEND_INTERVAL (RFC 5227, section 2.4), in nanoseconds. *)
+let defend_interval = 10_000_000_000
+
 type t = {
     entries: Entries.t
   ; macaddr: Macaddr.t
@@ -86,6 +89,8 @@ type t = {
   ; mutex: Miou.Mutex.t
   ; condition: Miou.Condition.t
   ; queue: string Ethernet.packet Queue.t
+  ; mutable last_defense: int
+  ; mutable on_conflict: Ipaddr.V4.t -> Macaddr.t -> unit
 }
 
 let alias t ipaddr =
@@ -111,6 +116,7 @@ let write t (arp, dst) =
 
 let guard err fn = if fn () then Ok () else Error err
 let macaddr t = t.macaddr
+let set_on_conflict t fn = t.on_conflict <- fn
 
 let request t dst_ip =
   let operation = Packet.Request in
@@ -178,11 +184,10 @@ let handle_reply t src macaddr =
   match Entries.find t.entries src with
   | exception Not_found -> ()
   | Static _ ->
-      if Macaddr.compare macaddr mac0 == 0 then
-        Log.debug (fun m ->
-            let tags = Ethernet.tags t.eth in
-            m ~tags "ignoring gratuitious ARP from %a using %a" Macaddr.pp
-              macaddr Ipaddr.V4.pp src)
+      (* [src] is one of our own addresses and conflicts are intercepted
+         before dispatch (see [is_conflict]), so [macaddr] can only be our
+         own MAC (e.g. a looped-back announcement): nothing to do. *)
+      ()
   | Dynamic { addr= macaddr'; _ } ->
       if Macaddr.compare macaddr macaddr' != 0 then
         Log.debug (fun m ->
@@ -195,6 +200,33 @@ let handle_reply t src macaddr =
       ignore (Miou.Computation.try_return ivar macaddr);
       Entries.add t.entries src entry
 
+(* RFC 5227 (section 2.4): any ARP packet (request or reply) whose sender IP
+   is one of our addresses but whose sender MAC is not ours reveals an address
+   conflict. [Static] entries are exactly our own addresses (only created by
+   [alias]). *)
+let is_conflict t arp =
+  Macaddr.compare arp.Packet.src_mac t.macaddr != 0
+  &&
+  match Entries.find t.entries arp.Packet.src_ip with
+  | Entry.Static _ -> true
+  | _ | (exception Not_found) -> false
+
+(* Policy (b) of RFC 5227 (section 2.4): defend the address with a single
+   announcement, but if the conflict persists within DEFEND_INTERVAL, give up
+   and let the upper layer (e.g. DHCP) acquire a new address. *)
+let handle_conflict t arp =
+  let ip = arp.Packet.src_ip and mac = arp.Packet.src_mac in
+  Log.warn (fun m ->
+      let tags = Ethernet.tags t.eth Logs.Tag.empty in
+      m ~tags "address conflict: %a also claimed by %a" Ipaddr.V4.pp ip
+        Macaddr.pp mac);
+  let n = now () in
+  if n - t.last_defense >= defend_interval then begin
+    t.last_defense <- n;
+    write t (alias t ip)
+  end
+  else t.on_conflict ip mac
+
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
   | Error _ ->
@@ -203,7 +235,8 @@ let input t pkt =
       Log.err (fun m ->
           m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) pkt.Ethernet.payload)
   | Ok arp ->
-      if
+      if is_conflict t arp then handle_conflict t arp
+      else if
         Ipaddr.V4.compare arp.Packet.src_ip arp.Packet.dst_ip == 0
         || arp.Packet.operation == Packet.Reply
       then
@@ -326,6 +359,8 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?ipaddr eth
     ; mutex= Miou.Mutex.create ()
     ; condition= Miou.Condition.create ()
     ; queue= Queue.create ()
+    ; last_defense= -defend_interval
+    ; on_conflict= (fun _ _ -> ())
     }
   in
   if unknown == false then write t (alias t ipaddr);

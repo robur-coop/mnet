@@ -72,6 +72,17 @@ val set_ips : t -> Ipaddr.V4.t list -> unit
     with the local MAC address. These entries are marked as {i trusted} (not
     disposable). *)
 
+val set_on_conflict : t -> (Ipaddr.V4.t -> Macaddr.t -> unit) -> unit
+(** [set_on_conflict t fn] installs the callback invoked when an address
+    conflict {b persists}: as per RFC 5227 (section 2.4, policy (b)), upon
+    receiving an ARP packet whose sender IP is one of our addresses but whose
+    sender MAC is not ours, the address is first defended with a single ARP
+    announcement; if another conflicting packet arrives within DEFEND_INTERVAL
+    (10s), [fn ip mac] is called (from the ARP daemon) with the disputed address
+    and the MAC address of the conflicting host. The upper layer should then
+    stop using the address (e.g. DHCPDECLINE and acquire a new lease). Defaults
+    to a no-op; conflicts are logged in all cases. *)
+
 val query : t -> Ipaddr.V4.t -> (Macaddr.t, [> error ]) result
 (** [query t ipv4] resolves the MAC address for the given [ipv4] address. If the
     address is already in the cache, the result is returned immediately.
