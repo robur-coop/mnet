@@ -242,6 +242,14 @@ let create ?to_expire eth arp ?gateway ?(handler = ignore) ?cidr () =
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
 
+let reconfigure t ?gateway cidr =
+  t.cidr <- Some cidr;
+  t.gateway <- gateway
+
+let unconfigure t =
+  t.cidr <- None;
+  t.gateway <- None
+
 let src t ~dst:_ =
   match t.cidr with
   | Some cidr -> Ipaddr.V4.Prefix.address cidr

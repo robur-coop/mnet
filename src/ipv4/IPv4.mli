@@ -116,9 +116,25 @@ val create :
       (and reassembled if fragmented). Typically installed later via
       {!val:set_handler}.
     - [cidr]: the local IPv4 address and prefix (e.g. [10.0.0.2/24]). It can be
-      omitted when the address is obtained asynchronously (e.g. via DHCP).
+      omitted when the address is obtained asynchronously (e.g. via DHCP); in
+      that case the layer starts {i unconfigured} and must be configured later
+      with {!val:reconfigure}.
 
     Returns [`MTU_too_small] if the Ethernet MTU is too small for IPv4. *)
+
+val reconfigure : t -> ?gateway:Ipaddr.V4.t -> Ipaddr.V4.Prefix.t -> unit
+(** [reconfigure t ?gateway cidr] atomically updates the local address (and
+    gateway) of the IPv4 layer at runtime. For instance, this is how a DHCP
+    stack can apply a {i new lease} with a new IPv4 address.
+
+    {b NOTE}: that this only updates the IPv4 layer; the caller is responsible
+    for propagating the new address to {!module:ARPv4} (via
+    {!val:ARPv4.set_ips}) so that the address is announced and answered on the
+    local link. *)
+
+val unconfigure : t -> unit
+(** [unconfigure t] removes the current address, putting the layer back into the
+    {i unconfigured} state (see {!val:create}). *)
 
 val src : t -> dst:Ipaddr.V4.t -> Ipaddr.V4.t
 (** It is {i morally} possible for a unikernel to have several IPv4 addresses,
