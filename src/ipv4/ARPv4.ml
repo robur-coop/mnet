@@ -81,7 +81,7 @@ let defend_interval = 10_000_000_000
 type t = {
     entries: Entries.t
   ; macaddr: Macaddr.t
-  ; ipaddr: Ipaddr.V4.t
+  ; mutable ipaddr: Ipaddr.V4.t
   ; timeout: int
   ; retries: int
   ; mutable epoch: int
@@ -298,6 +298,7 @@ let set_ips t = function
         t.entries;
       Entries.reset t.entries;
       (* TODO(dinosaure): reset the dynamic cache. *)
+      t.ipaddr <- ipaddr;
       write t (alias t ipaddr);
       List.iter (add_ip t) rest
 
