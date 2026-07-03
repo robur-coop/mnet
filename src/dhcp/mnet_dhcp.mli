@@ -52,6 +52,10 @@ type config = {
         (** the options to ask the server for (e.g. [SUBNET_MASK], [ROUTERS],
             [DNS_SERVERS], or a private code carrying a certificate). An empty
             list lets [charrua] pick a sensible default set. *)
+  ; options: Dhcp_wire.dhcp_option list
+        (** the DHCP options to ask the server for (e.g. [Sip_servers],
+            [Irc_servers], etc.). An empty list lets [charrua] pick a sensible
+            default set. *)
   ; on_lease: previous:lease option -> lease -> decision
         (** called for every obtained or renewed lease, with the previously
             accepted lease (if any). The return value decides whether the lease

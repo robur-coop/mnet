@@ -48,10 +48,13 @@ type decision = Accept | Reject
 
 type config = {
     requests: Dhcp_wire.option_code list
+  ; options: Dhcp_wire.dhcp_option list
   ; on_lease: previous:lease option -> lease -> decision
 }
 
-let accept_all = { requests= []; on_lease= (fun ~previous:_ _ -> Accept) }
+let accept_all =
+  { requests= []; options= []; on_lease= (fun ~previous:_ _ -> Accept) }
+
 let with_requests requests config = { config with requests }
 
 (* Daemon *)
@@ -159,12 +162,15 @@ let decline ~xid ~mac ~requested ~server =
       ]
   }
 
-let discover ?xid ~requests mac =
+let discover ?xid ~requests ~options mac =
   let xid = match xid with Some xid -> xid | None -> random_xid () in
-  let client, discover = Dhcp_client.create ~requests xid mac in
+  let client, discover = Dhcp_client.create ~requests ~options xid mac in
   let frame = frame_of_pkt discover in
-  ( { client; outstanding= Some frame; lease= None; phase= Negotiating }
-  , [ Send frame ] )
+  let dhcp =
+    { client; outstanding= Some frame; lease= None; phase= Negotiating }
+  in
+  let outs = [ Send frame ] in
+  (dhcp, outs)
 
 let handle_conflict ~now ~mac dhcp ip mac' =
   match dhcp.lease with
@@ -220,7 +226,9 @@ let handle_new_lease ~now ~mac config dhcp ack =
         decline ~xid:ack.Dhcp_wire.xid ~mac ~requested:ack.Dhcp_wire.yiaddr
           ~server:ack.Dhcp_wire.siaddr
       in
-      let dhcp, outs = discover ~requests:config.requests mac in
+      let dhcp, outs =
+        discover ~requests:config.requests ~options:config.options mac
+      in
       (dhcp, Send (frame_of_pkt decl) :: outs)
 
 let handle_frame ~now ~mac config dhcp cs =
@@ -255,7 +263,7 @@ let handle_timeout ~mac config dhcp =
       end
   | Backoff _ ->
       Log.debug (fun m -> m "backoff expired, re-acquiring a configuration");
-      discover ~requests:config.requests mac
+      discover ~requests:config.requests ~options:config.options mac
 
 let transition ~now ~mac config dhcp = function
   | Frame cs -> handle_frame ~now ~mac config dhcp cs
@@ -314,7 +322,9 @@ let rec run t =
 
 let create eth ~apply ~revoke ?xid config =
   let mac = Ethernet.macaddr eth in
-  let dhcp, actions = discover ?xid ~requests:config.requests mac in
+  let dhcp, actions =
+    discover ?xid ~requests:config.requests ~options:config.options mac
+  in
   let t =
     {
       eth
