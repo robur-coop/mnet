@@ -100,9 +100,10 @@ val create :
   -> ARPv4.t
   -> ?gateway:Ipaddr.V4.t
   -> ?handler:(packet * payload -> unit)
-  -> Ipaddr.V4.Prefix.t
+  -> ?cidr:Ipaddr.V4.Prefix.t
+  -> unit
   -> (t, [> `MTU_too_small ]) result
-(** [create ?to_expire eth arpv4 ?gateway ?handler cidr] creates a new IPv4
+(** [create ?to_expire eth arpv4 ?gateway ?handler ?cidr ()] creates a new IPv4
     protocol handler.
 
     - [to_expire] (nanoseconds): how long to keep fragments in the reassembly
@@ -114,7 +115,8 @@ val create :
     - [handler]: the function called when a complete IPv4 packet is received
       (and reassembled if fragmented). Typically installed later via
       {!val:set_handler}.
-    - [cidr]: the local IPv4 address and prefix (e.g. [10.0.0.2/24]).
+    - [cidr]: the local IPv4 address and prefix (e.g. [10.0.0.2/24]). It can be
+      omitted when the address is obtained asynchronously (e.g. via DHCP).
 
     Returns [`MTU_too_small] if the Ethernet MTU is too small for IPv4. *)
 

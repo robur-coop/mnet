@@ -128,8 +128,8 @@ and payload = Fragments.payload = Slice of SBstr.t | String of string
 type t = {
     eth: Ethernet.t
   ; arp: ARPv4.t
-  ; cidr: Ipaddr.V4.Prefix.t
-  ; gateway: Ipaddr.V4.t option
+  ; mutable cidr: Ipaddr.V4.Prefix.t option
+  ; mutable gateway: Ipaddr.V4.t option
   ; cache: Frags.t
   ; mutable handler: packet * payload -> unit
   ; cnt: int Atomic.t
@@ -141,7 +141,8 @@ let tags { eth; cidr; _ } tags =
       let tags = Ethernet.tags eth tags in
       Logs.Tag.add Mnet_tags.ipv4 cidr tags
   | None -> Ethernet.tags eth tags
-let addresses { cidr; _ } = [ cidr ]
+
+let addresses { cidr; _ } = match cidr with None -> [] | Some cidr -> [ cidr ]
 
 module Writer = struct
   type ipv4 = t
@@ -241,7 +242,10 @@ let create ?to_expire eth arp ?gateway ?(handler = ignore) ?cidr () =
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 20 + 1 in
   Ok t
 
-let src t ~dst:_ = Ipaddr.V4.Prefix.address t.cidr
+let src t ~dst:_ =
+  match t.cidr with
+  | Some cidr -> Ipaddr.V4.Prefix.address cidr
+  | None -> Ipaddr.V4.any
 
 let fixed pkt user's_fn len bstr =
   Packet.unsafe_encode_into pkt bstr;
@@ -308,35 +312,49 @@ let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
       go 0 total_length (fn ())
 
 let write t ?(ttl = 38) ?src dst ~protocol p =
-  let src = Option.value ~default:(Ipaddr.V4.Prefix.address t.cidr) src in
-  Log.debug (fun m -> m ~tags:t.tags "Asking where is %a" Ipaddr.V4.pp dst);
-  match Routing.destination_macaddr t.cidr t.gateway t.arp ~src ~dst with
-  | Error (`Exn _ | `Timeout | `Clear) ->
+  match t.cidr with
+  | None ->
       Log.err (fun m ->
           let tags = tags t Logs.Tag.empty in
-          m ~tags "no route found for %a" Ipaddr.V4.pp dst);
+          m ~tags "no address configured, dropping packet to %a" Ipaddr.V4.pp
+            dst);
       Error `Route_not_found
-  | Error `Gateway ->
+  | Some cidr -> begin
+      let src = Option.value ~default:(Ipaddr.V4.Prefix.address cidr) src in
       Log.debug (fun m ->
           let tags = tags t Logs.Tag.empty in
-          m ~tags
-            "no gateway specified for writing IPv4 packets, dropping %a"
-            Ipaddr.V4.pp dst);
-      Ok ()
-  | Error `Loopback ->
-      Log.debug (fun m ->
-          let tags = tags t Logs.Tag.empty in
-          m ~tags "not sending packet loopback (src %a dst %a)" Ipaddr.V4.pp
-            src Ipaddr.V4.pp dst);
-      Ok ()
-  | Ok macaddr ->
-      write_directly t ~ttl src (dst, macaddr) ~protocol p;
-      Ok ()
+          m ~tags "Asking where is %a" Ipaddr.V4.pp dst);
+      match Routing.destination_macaddr cidr t.gateway t.arp ~src ~dst with
+      | Error (`Exn _ | `Timeout | `Clear) ->
+          Log.err (fun m ->
+              let tags = tags t Logs.Tag.empty in
+              m ~tags "no route found for %a" Ipaddr.V4.pp dst);
+          Error `Route_not_found
+      | Error `Gateway ->
+          Log.debug (fun m ->
+              let tags = tags t Logs.Tag.empty in
+              m ~tags
+                "no gateway specified for writing IPv4 packets, dropping %a"
+                Ipaddr.V4.pp dst);
+          Ok ()
+      | Error `Loopback ->
+          Log.debug (fun m ->
+              let tags = tags t Logs.Tag.empty in
+              m ~tags "not sending packet loopback (src %a dst %a)" Ipaddr.V4.pp
+                src Ipaddr.V4.pp dst);
+          Ok ()
+      | Ok macaddr ->
+          write_directly t ~ttl src (dst, macaddr) ~protocol p;
+          Ok ()
+    end
 
 let attempt_to_discover_destination t dst =
-  let src = Ipaddr.V4.Prefix.address t.cidr in
-  Routing.destination_macaddr_without_interruption t.cidr t.gateway t.arp ~src
-    ~dst
+  match t.cidr with
+  | None -> None
+  | Some cidr ->
+      let src = Ipaddr.V4.Prefix.address cidr in
+      Routing.destination_macaddr_without_interruption cidr t.gateway t.arp ~src
+        ~dst
 
 let input t pkt =
   match Packet.decode pkt.Ethernet.payload with
@@ -350,12 +368,15 @@ let input t pkt =
           m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
   | Ok (ipv4, payload) ->
       let dst = ipv4.Packet.dst in
-      if
-        SBstr.length payload > 0
-        && (Ipaddr.V4.(compare dst (Prefix.address t.cidr)) == 0
-           || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
-           || Ipaddr.V4.(compare dst (Prefix.broadcast t.cidr)) == 0)
-      then begin
+      let for_us =
+        match t.cidr with
+        | None -> Ipaddr.V4.(compare dst broadcast) == 0
+        | Some cidr ->
+            Ipaddr.V4.(compare dst (Prefix.address cidr)) == 0
+            || Ipaddr.V4.(compare dst Ipaddr.V4.broadcast) == 0
+            || Ipaddr.V4.(compare dst (Prefix.broadcast cidr)) == 0
+      in
+      if SBstr.length payload > 0 && for_us then begin
         let now = now () in
         let key =
           let src = ipv4.Packet.src
