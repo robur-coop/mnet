@@ -139,6 +139,10 @@ val write_directly_into :
     This is the low-level frame writing primitive used by {!module:IPv4} and
     {!module:IPv6} to send packets. *)
 
+val write_frame : t -> string -> unit
+(** [write_frame t frame] writes the complete Ethernet [frame] (including its
+    14-byte header) to the device, without adding any header of its own. *)
+
 (** {1 Lifecycle} *)
 
 val create :
@@ -175,6 +179,6 @@ val macaddr : t -> Macaddr.t
 (** [macaddr t] returns the MAC address of the underlying device. Same as
     {!val:mac}. *)
 
-val tags : t -> Logs.Tag.set
+val tags : t -> Logs.Tag.set -> Logs.Tag.set
 (** [tags t] returns logging tags containing the MAC address of the device.
     Useful for structured logging output with {!module:Logs}. *)

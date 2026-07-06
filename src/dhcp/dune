@@ -1,0 +1,24 @@
+(library
+ (name mnet_dhcp)
+ (public_name mnet-dhcp)
+ (libraries
+  mkernel
+  miou
+  charrua
+  charrua-client
+  cstruct
+  mirage-crypto-rng
+  slice
+  slice.bstr
+  bstr
+  utcp
+  ipaddr
+  macaddr
+  fmt
+  logs
+  mnet
+  mnet.ethernet
+  mnet.arpv4
+  mnet.ipv4
+  mnet.icmpv4
+  mnet.ipv6))

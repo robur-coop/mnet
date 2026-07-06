@@ -50,7 +50,6 @@ type t = {
   ; mutable handler: handler
   ; mtu: int
   ; mac: Macaddr.t
-  ; tags: Logs.Tag.set
   ; bstr_ic: Bstr.t
   ; bstr_oc: Bstr.t
   ; extern: extern option
@@ -77,12 +76,15 @@ and handler = Slice_bstr.t packet -> unit
 exception Packet_ignored
 
 let mac { mac; _ } = mac
+let mtu { mtu; _ } = mtu
+let macaddr { mac; _ } = mac
+let tags { mac; _ } tags = Logs.Tag.add Mnet_tags.mac mac tags
 let uninteresting_packet _ = raise_notrace Packet_ignored
 
 let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
   let src = Option.value ~default:t.mac packet.src in
-  let tags = Logs.Tag.add Mnet_tags.mac src Logs.Tag.empty in
+  let tags = tags t Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
   (* NOTE(dinosaure): clean-up our buffer. *)
   Packet.encode_into pkt ~off:0 t.bstr_oc;
@@ -112,7 +114,7 @@ let of_interest t dst =
 
 let handler t bstr ~len =
   if len >= 14 then
-    let tags = t.tags in
+    let tags = tags t Logs.Tag.empty in
     match Packet.decode bstr ~len with
     | Error _ ->
         let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
@@ -143,6 +145,14 @@ let write_directly_into t ?len ?src ~dst ~protocol fn =
   let pkt = { src; dst; protocol; payload= fn } in
   write_directly_into t ?len pkt
 
+let write_frame t str =
+  let len = String.length str in
+  match t.extern with
+  | None -> Mkernel.Net.write_string t.net ~off:0 ~len str
+  | Some (External { device; swr; _ }) ->
+      Bstr.blit_from_string str ~src_off:0 t.bstr_oc ~dst_off:0 ~len;
+      swr device ~off:0 ~len t.bstr_oc
+
 let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
@@ -158,26 +168,21 @@ let create ?(mtu = 1500) ?(handler = uninteresting_packet) ?hypercalls:extern
      [Bstr.sub] are cheap. We should use [Slice] instead of [Bstr]. TODO! *)
   let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:(14 + mtu) in
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
-  let tags = Logs.Tag.empty in
-  let tags = Logs.Tag.add Mnet_tags.mac mac tags in
   let cnt = Atomic.make 0 in
-  let t = { net; handler; mtu; mac; tags; bstr_ic; bstr_oc; extern; cnt } in
+  let t = { net; handler; mtu; mac; bstr_ic; bstr_oc; extern; cnt } in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (daemon, t)
-
-let mtu { mtu; _ } = mtu
-let macaddr { mac; _ } = mac
-let tags { tags; _ } = tags
 
 let set_handler t handler =
   Atomic.incr t.cnt;
   t.handler <- handler;
-  let tags = t.tags in
+  let tags = tags t Logs.Tag.empty in
   if Atomic.get t.cnt > 1 then
     Log.warn (fun m -> m ~tags "Ethernet handler modified more than once")
 
 let extend_handler_with t handler =
-  let handler pkt = try t.handler pkt with Packet_ignored -> handler pkt in
+  let prev = t.handler in
+  let handler pkt = try prev pkt with Packet_ignored -> handler pkt in
   t.handler <- handler
 
 let kill = Miou.cancel
