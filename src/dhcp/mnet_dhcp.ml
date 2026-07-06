@@ -473,7 +473,6 @@ type t = {
   ; dhcp: state
   ; ipv4: IPv4.t
   ; ipv6: IPv6.t
-  ; configured: lease Miou.Computation.t
 }
 
 let addresses t =
@@ -486,13 +485,7 @@ let addresses t =
 let current_lease t = current_lease t.dhcp
 let tcp t = t.tcpd
 
-exception Stack_killed
-
-let configured t = Miou.Computation.await_exn t.configured
-let stack_killed = (Stack_killed, Printexc.get_callstack 0)
-
 let kill t =
-  ignore (Miou.Computation.try_cancel t.configured stack_killed);
   kill t.dhcpd;
   TCP.kill t.tcpd;
   IPv6.kill t.ipv6d;
@@ -515,12 +508,12 @@ let stack ~name ?(ipv6 = IPv6.EUI64) config =
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
       IPv6.set_handler ipv6 (ipv6_handler ipv6 udp tcp);
       let fn = ethernet_handler arpv4 ipv4 ipv6 in
-      let configured = Miou.Computation.create () in
+      let ivar = Miou.Computation.create () in
       let apply lease =
         let cidr = cidr lease in
         IPv4.reconfigure ipv4 ?gateway:(gateway lease) cidr;
         ARPv4.set_ips arpv4 [ Ipaddr.V4.Prefix.address cidr ];
-        ignore (Miou.Computation.try_return configured lease)
+        ignore (Miou.Computation.try_return ivar lease)
       in
       let revoke () = IPv4.unconfigure ipv4; ARPv4.set_ips arpv4 [] in
       let dhcpd, dhcp = create eth ~apply ~revoke config in
@@ -530,21 +523,10 @@ let stack ~name ?(ipv6 = IPv6.EUI64) config =
       Ethernet.set_handler eth (on_packet dhcp);
       Ethernet.extend_handler_with eth fn;
       let stack =
-        {
-          ethd
-        ; arpv4d
-        ; icmpv4
-        ; udp
-        ; ipv6d
-        ; tcpd
-        ; dhcpd
-        ; dhcp
-        ; ipv4
-        ; ipv6
-        ; configured
-        }
+        { ethd; arpv4d; icmpv4; udp; ipv6d; tcpd; dhcpd; dhcp; ipv4; ipv6 }
       in
-      Ok (stack, tcp, udp)
+      let lease = Miou.Computation.await_exn ivar in
+      Ok (stack, tcp, udp, lease)
     in
     let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
     match connect mac with

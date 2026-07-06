@@ -74,7 +74,7 @@ val stack :
      name:string
   -> ?ipv6:Mnet.IPv6.mode
   -> config
-  -> (t * Mnet.TCP.state * Mnet.UDP.state) Mkernel.arg
+  -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) Mkernel.arg
 (** [stack ~name ?ipv6 config] is like {!val:Mnet.stack} but obtains its IPv4
     configuration from DHCP according to [config]. The stack starts unconfigured
     and is configured asynchronously: the user is notified of (and may reject)
@@ -92,22 +92,6 @@ val current_lease : t -> lease option
 (** [current_lease t] is the most recently accepted lease, if any. Use it to
     read configuration the stack does not consume (DNS servers, domain name, or
     a TLS certificate carried in a private option). *)
-
-exception Stack_killed
-
-val configured : t -> lease
-(** [configured t] blocks until the stack has accepted its first DHCP lease and
-    returns it. Use it to delay any network activity (DNS resolution, outgoing
-    connections, ...) until the stack actually has an address (otherwise early
-    traffic is dropped with {i no address configured}).
-
-    The returned lease carries everything the first configuration provided at
-    once: use {!val:cidr} for the address/prefix, {!val:gateway} for the default
-    gateway, and the other accessors for DNS servers, NTP servers, etc.
-
-    If a lease has already been accepted, it returns immediately. It raises
-    {!exception:Stack_killed} if {!val:kill} is called before any lease is
-    obtained. *)
 
 val kill : t -> unit
 (** [kill t] terminates the DHCP daemon and all the stack's background daemons
