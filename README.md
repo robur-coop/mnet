@@ -1,105 +1,43 @@
 # `mnet`, a pure OCaml TCP/IP stack for unikernels
 
-`mnet` implements IPv4, IPv6, TCP, and UDP protocols for
-[mkernel][mkernel]-based unikernels running on [Solo5][solo5] and
-[Unikraft][unikraft]. It replaces [mirage-tcpip][mirage-tcpip] with a
-direct-style API powered by [Miou][miou] and OCaml 5 effects.
+`mnet` is a library that implements certain network layers to provide a TCP/IP
+stack for an application using [utcp][utcp]. The project essentially requires
+the reading and writing of Ethernet frames, which is provided by [Solo5][solo5]
+and [mkernel][mkernel].
 
-The library also provides TLS (via [ocaml-tls][ocaml-tls]), DNS resolution (via
-[ocaml-dns][ocaml-dns]), and the [Happy Eyeballs][rfc8305] connection algorithm
-(via [happy-eyeballs][happy-eyeballs]).
+This library implements:
+- an IPv4 layer (with ARP)
+- an IPv6 layer
+- an ICMP layer
+- the DNS protocol using `mnet-dns`
+- the TLS protocol using `mnet-tls`
+- the SSH protocol using `mnet-ssh`
+- a DHCP layer using `mnet-dhcp`
 
-## Features
-
-- **IPv4** with ARPv4, ICMPv4, and packet fragmentation/reassembly
-- **IPv6** with Neighbor Discovery (NDPv6), router discovery, and PMTU
-- **TCP** via [utcp][utcp] with a Unix-socket-like API (`connect`, `listen`,
-  `accept`, `read`, `write`, `close`)
-- **UDP** with `sendto`/`recvfrom`
-- **TLS** via [ocaml-tls][ocaml-tls] for encrypted connections
-- **DNS** resolver via [ocaml-dns][ocaml-dns] with TCP and UDP transports
-- **Happy Eyeballs** ([RFC 8305][rfc8305]) for fast dual-stack connections
-
-## Installation
-
-`mnet` requires OCaml 5. It is also necessary to launch unikernels via
-virtualisation (KVM, BHyve, VMM). Your processor must therefore be configured to
-allow virtualisation (VT-x, AMD-V).
-
-```shell
-opam pin add mnet https://github.com/robur-coop/mnet.git
-opam install mnet mnet-tls mnet-dns mnet-happy-eyeballs
-```
-
-## Quick start
-
-### Initializing the stack
-
-Every unikernel starts by creating a network stack via `Mkernel.run`. The stack
-needs a random number generator and an CIDRv4 (the IPv4 address of the
-unikernel). It is also possible to assign an IPv6 address to the unikernel. The
-DHCP protocol has not yet been implemented.
-
+The aim is to provide a ready-to-use TCP/IP stack implemented entirely in OCaml.
+Here is an example of how to initialise a TCP/IP stack that configures itself
+automatically based on an available DHCP server.
 ```ocaml
 let ( let@ ) finally fn = Fun.protect ~finally fn
 module RNG = Mirage_crypto_rng.Fortuna
 
 let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
+let cfg = Mnet_dhcp.accept_all
 
 let () =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ~gateway cidr ])
-  @@ fun rng (stack, tcp, udp) () ->
-  let@ () = fun () -> Mnet.kill stack in
+  Mkernel.(run [ rng; Mnet_dhcp.stack ~name:"service" cfg ])
+  @@ fun rng (stack, tcp, udp, lease) () ->
+  let@ () = fun () -> Mnet_dhcp.kill stack in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
-  (* use [tcp] and [udp] here *)
-  ()
+  ...
 ```
 
-The `name` parameter corresponds to the Solo5 network device. To launch the
-unikernel, you must allocate a virtual Ethernet interface (a tap interface) and
-you can launch the unikernel in this way:
-
-```shell
-$ sudo ip link add name br0 type bridge
-$ sudo ip addr add 10.0.0.1/24 dev br0
-$ sudo ip tuntap add name tap0 mode tap
-$ sudo ip link set tap0 master br0 
-$ solo5-hvt --net:service=tap0 -- unikernel.hvt --ipv4=10.0.0.2/24
-```
-
-## Packages
-
-| Package               | Description                                    |
-|-----------------------|------------------------------------------------|
-| `mnet`                | Core TCP/IP stack (IPv4, IPv6, TCP, UDP)       |
-| `mnet-tls`            | TLS support via [ocaml-tls][ocaml-tls]         |
-| `mnet-dns`            | DNS client via [ocaml-dns][ocaml-dns]          |
-| `mnet-happy-eyeballs` | Happy Eyeballs connection algorithm (RFC 8305) |
-
-## End-to-end tests
-
-`mnet` provides end-to-end tests that compile and run real unikernels. This
-requires:
-
-- **sudo** access (to create tap interfaces)
-- **KVM** access (membership in the `kvm` group on Linux)
-- The development version of `mnet` pinned in opam
-
-```shell
-git clone https://github.com/robur-coop/mnet
-cd mnet
-opam pin add -y .
-sudo true
-dune runtest --profile=unikernels
-```
+`mnet` is a replacement for [mirage-tcpip][mirage-tcpip], designed to take
+advantage of effects and our [Miou][miou] scheduler.
 
 [mkernel]: https://git.robur.coop/robur/mkernel
 [utcp]: https://github.com/robur-coop/utcp
 [solo5]: https://github.com/solo5/solo5
-[unikraft]: https://unikraft.org/
-[miou]: https://github.com/robur-coop/miou
 [mirage-tcpip]: https://github.com/mirage/mirage-tcpip
-[ocaml-tls]: https://github.com/mirleft/ocaml-tls
-[ocaml-dns]: https://github.com/mirage/ocaml-dns
-[rfc8305]: https://www.rfc-editor.org/rfc/rfc8305
+[miou]: https://github.com/robur-coop/miou
