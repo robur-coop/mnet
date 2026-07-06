@@ -493,7 +493,13 @@ let kill t =
   ARPv4.kill t.arpv4d;
   Ethernet.kill t.ethd
 
-let stack ~name ?(ipv6 = IPv6.EUI64) config =
+exception Unconfigured
+
+let unconfigured = (Unconfigured, Printexc.get_callstack 0)
+let or_raise = function Ok v -> v | Error exn -> raise exn
+let _5m = 300_000_000_000 (* 5 minutes in nanoseconds. *)
+
+let stack ?(timeout = _5m) ~name ?(ipv6 = IPv6.EUI64) config =
   let fn (net, cfg) () =
     let connect mac =
       (* NOTE(dinosaure): see [Mnet.stack] to understand what we do here. *)
@@ -525,7 +531,14 @@ let stack ~name ?(ipv6 = IPv6.EUI64) config =
       let stack =
         { ethd; arpv4d; icmpv4; udp; ipv6d; tcpd; dhcpd; dhcp; ipv4; ipv6 }
       in
-      let lease = Miou.Computation.await_exn ivar in
+      let prm0 = Miou.async @@ fun () -> Miou.Computation.await_exn ivar in
+      let prm1 =
+        Miou.async @@ fun () ->
+        Mkernel.sleep timeout;
+        ignore (Miou.Computation.try_cancel ivar unconfigured);
+        raise Unconfigured
+      in
+      let lease = Miou.await_first [ prm0; prm1 ] |> or_raise in
       Ok (stack, tcp, udp, lease)
     in
     let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in

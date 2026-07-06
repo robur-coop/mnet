@@ -70,16 +70,19 @@ type t
 (** A running DHCP-enabled stack (all protocol layers together with their
     background daemons and the DHCP client driving the IPv4 configuration). *)
 
+exception Unconfigured
+
 val stack :
-     name:string
+     ?timeout:int
+  -> name:string
   -> ?ipv6:Mnet.IPv6.mode
   -> config
   -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) Mkernel.arg
 (** [stack ~name ?ipv6 config] is like {!val:Mnet.stack} but obtains its IPv4
-    configuration from DHCP according to [config]. The stack starts unconfigured
-    and is configured asynchronously: the user is notified of (and may reject)
-    each lease through {!field:config.on_lease}. The returned TCP and UDP
-    handles only become usable once a lease has been accepted.
+    configuration from DHCP according to [config]. The stack starts configured
+    with the given [lease]. If, after a certain period of time, no DHCP server
+    has configured the stack, an {!exn:Unconfigured} exception is raised (by
+    default, this is after 5 minutes; see [timeout]).
 
     [name] and [ipv6] have the same meaning as in {!val:Mnet.stack}. *)
 
