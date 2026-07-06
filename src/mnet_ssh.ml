@@ -1,4 +1,5 @@
 let src = Logs.Src.create "mnet.ssh"
+let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module Q = Flux.Bqueue
@@ -8,6 +9,130 @@ module type AUTH = sig
 
   val verify : t -> string -> Awa.Server.userauth -> bool
 end
+
+type flow = {
+    flow: Mnet.TCP.flow
+  ; mutable client: Awa.Client.t
+  ; mutable id: int32 option
+  ; mutable closed: bool
+  ; mutable exit_status: int32 option
+  ; pendings: string Queue.t
+}
+
+let now () = Mtime.of_uint64_ns (Int64.of_int (Mkernel.clock_monotonic ()))
+let writev t outs = List.iter (fun str -> Mnet.TCP.write t.flow str) outs
+
+let process t =
+  match Mnet.TCP.get t.flow with
+  | Error (`Eof | `Refused) ->
+      t.closed <- true;
+      false
+  | Ok sstr ->
+      let str = String.concat "" sstr in
+      let fn client = function
+        | `Established id ->
+            Log.debug (fun m -> m "channel %04lx established" id);
+            t.id <- Some id;
+            client
+        | `Channel_data (_id, str) -> Queue.push str t.pendings; client
+        | `Channel_stderr (_id, str) ->
+            Log.warn (fun m -> m "stderr: %S" str);
+            client
+        | `Channel_eof _id ->
+            t.closed <- true;
+            client
+        | `Channel_exit_status (_id, status) ->
+            Log.debug (fun m -> m "exit status: %ld" status);
+            t.exit_status <- Some status;
+            client
+        | `Disconnected ->
+            t.closed <- true;
+            client
+      in
+      begin match Awa.Client.incoming t.client (now ()) str with
+      | Error err ->
+          t.closed <- true;
+          Fmt.failwith "%s" err
+      | Ok (client, outs, events) ->
+          t.client <- client;
+          writev t outs;
+          t.client <- List.fold_left fn t.client events;
+          true
+      end
+
+let rec wait_established t =
+  match t.id with
+  | Some id -> Ok id
+  | None ->
+      if t.closed then error_msgf "SSH connection closed during handshake"
+      else if process t then wait_established t
+      else error_msgf "SSH connection closed during handshake"
+
+let client ?authenticator ~user auth cmd flow =
+  let ( let* ) = Result.bind in
+  let client, outs = Awa.Client.make ?authenticator ~user auth in
+  let t =
+    {
+      flow
+    ; client
+    ; id= None
+    ; closed= false
+    ; exit_status= None
+    ; pendings= Queue.create ()
+    }
+  in
+  writev t outs;
+  match wait_established t with
+  | Error _ as err -> err
+  | Ok id ->
+      let* client, outs =
+        Awa.Client.outgoing_request t.client ~id (Awa.Ssh.Exec cmd)
+        |> Result.map_error (fun msg -> `Msg msg)
+      in
+      t.client <- client;
+      Mnet.TCP.write t.flow outs;
+      Ok t
+
+let exit_status { exit_status; _ } = exit_status
+
+let rec read t buf ~off ~len =
+  match Queue.pop t.pendings with
+  | str ->
+      let str_len = String.length str in
+      let len = Int.min len str_len in
+      Bytes.blit_string str 0 buf off len;
+      if len < str_len then begin
+        let rem = String.sub str len (str_len - len) in
+        Queue.push rem t.pendings
+      end;
+      len
+  | exception Queue.Empty ->
+      if t.closed then 0 else if process t then read t buf ~off ~len else 0
+
+let write t str ~off ~len =
+  if t.closed then Fmt.failwith "SSH connection closed";
+  let str =
+    if off = 0 && len = String.length str then str else String.sub str off len
+  in
+  match Awa.Client.outgoing_data t.client str with
+  | Error err -> Fmt.failwith "%s" err
+  | Ok (client, outs) ->
+      t.client <- client;
+      writev t outs
+
+let close t =
+  if not t.closed then begin
+    t.closed <- true;
+    let fn id =
+      let client, outs = Awa.Client.eof ~id t.client in
+      t.client <- client;
+      writev t outs;
+      let client, out = Awa.Client.close ~id t.client in
+      t.client <- client;
+      Option.iter (Mnet.TCP.write t.flow) out
+    in
+    Option.iter fn t.id; Mnet.TCP.close t.flow
+  end
 
 type db = Database : 'db * (module AUTH with type t = 'db) -> db
 
@@ -62,8 +187,6 @@ let or_fail ~where = function
   | Error err ->
       Log.err (fun m -> m "Failure for %s: %s" where err);
       Fmt.failwith "%s: %s" where err
-
-let now () = Mtime.of_uint64_ns (Int64.of_int (Mkernel.clock_monotonic ()))
 
 let send flow server msg =
   let server, str =
