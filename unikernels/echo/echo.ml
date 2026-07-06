@@ -222,11 +222,13 @@ let addr =
   let parser str =
     match Ipaddr.with_port_of_string ~default:9000 str with
     | Ok (ipaddr, port) -> Ok (`Ipaddr (ipaddr, port))
-    | Error _ -> begin
-        match Result.bind (Domain_name.of_string str) Domain_name.host with
+    | Error _ ->
+        begin match
+          Result.bind (Domain_name.of_string str) Domain_name.host
+        with
         | Ok domain_name -> Ok (`Domain domain_name)
         | Error _ -> error_msgf "Invalid echo server: %S" str
-      end
+        end
   in
   let pp ppf = function
     | `Ipaddr (ipaddr, port) -> Fmt.pf ppf "%a:%d" Ipaddr.pp ipaddr port
