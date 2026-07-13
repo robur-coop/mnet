@@ -18,11 +18,11 @@
 
 (** Uninhabited type used as a phantom marker for ropes whose total size is
     known. *)
-type fixed = |
+type fixed = private [`fixed]
 
 (** Uninhabited type used as a phantom marker for ropes whose total size is not
     yet known. *)
-type unknown = |
+type unknown = private [`unknown]
 
 type 'a t =
   | Str : string -> fixed t

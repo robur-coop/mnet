@@ -1,9 +1,11 @@
+[@@@warning "-unused-constructor"]
+
 let src = Logs.Src.create "mnet.ropes"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-type fixed = |
-type unknown = |
+type fixed = [`fixed]
+type unknown = [`unknown]
 
 type 'a t =
   | Str : string -> fixed t
