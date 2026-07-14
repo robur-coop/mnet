@@ -65,9 +65,10 @@ module Notify = struct
     }
 
   let signal value t =
-    (* NOTE(dinosaure): we use only one core into an unikernel.
-       So we are sure that we have the exclusivity of the memory. *)
-    (* Miou.Mutex.protect t.mutex @@ fun () -> *)
+    Miou.Mutex.protect t.mutex @@ fun () ->
+    (* NOTE(dinosaure): our [Miou.Mutex.protect] is not really here to protect
+       (we use only one core) but much more to signal the [Miou.Condition.wait].
+       Otherwise, we don't really signal. *)
     Queue.push value t.queue;
     Miou.Condition.signal t.condition
 
