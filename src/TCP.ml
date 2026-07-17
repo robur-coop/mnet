@@ -3,13 +3,13 @@ exception Closed_by_peer
 exception Connection_refused
 
 module Buffer = struct
-  type t = { mutable bstr: Bstr.t; mutable off: int; mutable len: int }
+  type t = { mutable buf: bytes; mutable off: int; mutable len: int }
 
   let create size =
-    let bstr = Bstr.create size in
-    { bstr; off= 0; len= 0 }
+    let buf = Bytes.create size in
+    { buf; off= 0; len= 0 }
 
-  let available { bstr; off; len } = Bstr.length bstr - off - len
+  let available { buf; off; len } = Bytes.length buf - off - len
   let length { len; _ } = len
 
   let compress t =
@@ -18,12 +18,12 @@ module Buffer = struct
       t.len <- 0
     end
     else if t.off > 0 then begin
-      Bstr.blit t.bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len;
+      Bytes.blit t.buf t.off t.buf 0 t.len;
       t.off <- 0
     end
 
   let get t ~fn =
-    let n = fn t.bstr ~off:t.off ~len:t.len in
+    let n = fn t.buf ~off:t.off ~len:t.len in
     t.off <- t.off + n;
     t.len <- t.len - n;
     if t.len == 0 then t.off <- 0;
@@ -32,22 +32,22 @@ module Buffer = struct
   let put t ~fn =
     compress t;
     let off = t.off + t.len in
-    let bstr = t.bstr in
-    if Bstr.length bstr == t.len then begin
+    let buf = t.buf in
+    if Bytes.length buf == t.len then begin
       (* TODO(dinosaure): we probably should add a limit here. *)
-      t.bstr <- Bstr.create (2 * Bstr.length bstr);
-      Bstr.blit bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len
+      t.buf <- Bytes.create (2 * Bytes.length buf);
+      Bytes.blit buf t.off t.buf 0 t.len
     end;
-    let n = fn t.bstr ~off ~len:(Bstr.length t.bstr - off) in
+    let n = fn t.buf ~off ~len:(Bytes.length t.buf - off) in
     t.len <- t.len + n;
     n
 
   let flush t =
-    let buf = Bytes.create t.len in
-    Bstr.blit_to_bytes t.bstr ~src_off:t.off buf ~dst_off:0 ~len:t.len;
+    let tmp = Bytes.create t.len in
+    Bytes.blit t.buf t.off tmp 0 t.len;
     t.off <- 0;
     t.len <- 0;
-    Bytes.unsafe_to_string buf
+    Bytes.unsafe_to_string tmp
 end
 
 module Notify = struct
@@ -184,7 +184,7 @@ let fill t =
     if str_len > 0 then begin
       let len = Int.min str_len (Buffer.available t.buffer) in
       let into_buffer dst ~off:dst_off ~len:_ =
-        Bstr.blit_from_string str ~src_off:str_off dst ~dst_off ~len;
+        Bytes.blit_string str str_off dst dst_off len;
         len
       in
       let _ = Buffer.put t.buffer ~fn:into_buffer in
@@ -239,9 +239,9 @@ let read t ?off:(dst_off = 0) ?len buf =
   if not t.closed then begin
     let default = Bytes.length buf - dst_off in
     let len = Option.value ~default len in
-    let fn bstr ~off:src_off ~len:src_len =
+    let fn tmp ~off:src_off ~len:src_len =
       let len = Int.min src_len len in
-      Bstr.blit_to_bytes bstr ~src_off buf ~dst_off ~len;
+      Bytes.blit tmp src_off buf dst_off len;
       len
     in
     if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
