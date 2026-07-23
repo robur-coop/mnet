@@ -30,3 +30,6 @@ build: [
 ]
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
+pin-depends: [
+  [ "utcp.dev" "git+https://git.robur.coop/robur/utcp.git#91d78b5a438797e5d4a8898b08cb28d292f5e229" ]
+]
