@@ -29,8 +29,6 @@ type t = {
   ; fd: Mnet.TCP.flow
   ; mutable state: state
   ; mutable linger: string option
-  ; read_buffer_size: int
-  ; buf: bytes
   ; mutable rd_closed: bool
 }
 
@@ -100,12 +98,6 @@ let handle flow tls str =
       let _ = inhibit (write flow) resp in
       raise exn
 
-let read flow =
-  match Mnet.TCP.read flow.fd flow.buf ~off:0 ~len:(Bytes.length flow.buf) with
-  | 0 -> Ok String.empty
-  | len -> Ok (Bytes.sub_string flow.buf 0 len)
-  | exception exn -> Error exn
-
 let not_errored = function `Error _ -> false | _ -> true
 let garbage flow = match flow.linger with Some "" | None -> false | _ -> true
 
@@ -139,17 +131,23 @@ let read_react flow =
     raise End_of_file
   | `Active _ | `Write_closed _ ->
     Log.debug (fun m -> m "read something from the TLS session");
-    match read flow with
-    | Error exn ->
+    match Mnet.TCP.get flow.fd with
+    | Error err ->
+      let exn = match err with
+        | `Eof -> End_of_file
+        | `Refused -> Mnet.TCP.Connection_refused in
       if not_errored flow.state then flow.state <- `Error exn;
       raise exn
-    | Ok "" ->
+    | Ok [] ->
       (* XXX(dinosaure): see [`Read_closed _ | `Closed] case. *)
       raise End_of_file 
-    | Ok str ->
-      Log.debug (fun m -> m "got %d byte(s)" (String.length str));
+    | Ok sstr ->
+      Log.debug (fun m ->
+        let len = List.fold_left (fun acc str -> acc + String.length str) 0 sstr in
+        m "got %d byte(s)" len);
       match flow.state with
-      | `Active tls | `Read_closed tls | `Write_closed tls -> handle flow tls str
+      | `Active tls | `Read_closed tls | `Write_closed tls ->
+        handle flow tls (String.concat "" sstr)
       | `Closed -> raise End_of_file
       | `Error exn -> raise exn
 [@@ocamlformat "disable"]
@@ -246,36 +244,20 @@ let shutdown flow mode =
   | `Write_closed _, `write -> ()
   | `Closed, _ -> ()
 
-let client_of_fd conf ?(read_buffer_size = 0x1000) ?host fd =
+let client_of_fd conf ?host fd =
   let conf' =
     match host with None -> conf | Some host -> Tls.Config.peer conf host
   in
   let tls, init = Tls.Engine.client conf' in
   let tls_flow =
-    {
-      role= `Client
-    ; fd
-    ; state= `Active tls
-    ; linger= None
-    ; read_buffer_size
-    ; buf= Bytes.make read_buffer_size '\000'
-    ; rd_closed= false
-    }
+    { role= `Client; fd; state= `Active tls; linger= None; rd_closed= false }
   in
   write tls_flow init; drain_handshake tls_flow
 
-let server_of_fd conf ?(read_buffer_size = 0x1000) fd =
+let server_of_fd conf fd =
   let tls = Tls.Engine.server conf in
   let tls_flow =
-    {
-      role= `Server
-    ; fd
-    ; state= `Active tls
-    ; linger= None
-    ; read_buffer_size
-    ; buf= Bytes.make read_buffer_size '\000'
-    ; rd_closed= false
-    }
+    { role= `Server; fd; state= `Active tls; linger= None; rd_closed= false }
   in
   drain_handshake tls_flow
 

@@ -76,18 +76,13 @@ val shutdown : t -> [ `read | `write | `read_write ] -> unit
     session), the underlying file descriptor is closed. *)
 
 val client_of_fd :
-     Tls.Config.client
-  -> ?read_buffer_size:int
-  -> ?host:[ `host ] Domain_name.t
-  -> Mnet.TCP.flow
-  -> t
+  Tls.Config.client -> ?host:[ `host ] Domain_name.t -> Mnet.TCP.flow -> t
 (** [client_of_flow client ~host fd] is [t], after client-side TLS handshake of
     [fd] using [client] configuration and [host].
 
     @raise End_of_file if we are not able to complete the handshake. *)
 
-val server_of_fd :
-  Tls.Config.server -> ?read_buffer_size:int -> Mnet.TCP.flow -> t
+val server_of_fd : Tls.Config.server -> Mnet.TCP.flow -> t
 (** [server_of_fd server fd] is [t], after server-side TLS handshake of [fd]
     using [server] configuration.
 
