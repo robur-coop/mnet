@@ -246,9 +246,12 @@ let shutdown flow mode =
   | `Write_closed _, `write -> ()
   | `Closed, _ -> ()
 
-let client_of_fd conf ?(read_buffer_size = 0x1000) ?host fd =
+let client_of_fd conf ?(read_buffer_size = 0x1000) ?host ?ip fd =
   let conf' =
-    match host with None -> conf | Some host -> Tls.Config.peer conf host
+    Option.value ~default:conf (Option.map (Tls.Config.peer conf) host)
+  in
+  let conf' =
+    Option.value ~default:conf (Option.map (Tls.Config.ip conf') ip)
   in
   let tls, init = Tls.Engine.client conf' in
   let tls_flow =
