@@ -3,13 +3,13 @@ exception Closed_by_peer
 exception Connection_refused
 
 module Buffer = struct
-  type t = { mutable bstr: Bstr.t; mutable off: int; mutable len: int }
+  type t = { mutable buf: bytes; mutable off: int; mutable len: int }
 
   let create size =
-    let bstr = Bstr.create size in
-    { bstr; off= 0; len= 0 }
+    let buf = Bytes.create size in
+    { buf; off= 0; len= 0 }
 
-  let available { bstr; off; len } = Bstr.length bstr - off - len
+  let available { buf; off; len } = Bytes.length buf - off - len
   let length { len; _ } = len
 
   let compress t =
@@ -18,12 +18,12 @@ module Buffer = struct
       t.len <- 0
     end
     else if t.off > 0 then begin
-      Bstr.blit t.bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len;
+      Bytes.blit t.buf t.off t.buf 0 t.len;
       t.off <- 0
     end
 
   let get t ~fn =
-    let n = fn t.bstr ~off:t.off ~len:t.len in
+    let n = fn t.buf ~off:t.off ~len:t.len in
     t.off <- t.off + n;
     t.len <- t.len - n;
     if t.len == 0 then t.off <- 0;
@@ -32,22 +32,22 @@ module Buffer = struct
   let put t ~fn =
     compress t;
     let off = t.off + t.len in
-    let bstr = t.bstr in
-    if Bstr.length bstr == t.len then begin
+    let buf = t.buf in
+    if Bytes.length buf == t.len then begin
       (* TODO(dinosaure): we probably should add a limit here. *)
-      t.bstr <- Bstr.create (2 * Bstr.length bstr);
-      Bstr.blit bstr ~src_off:t.off t.bstr ~dst_off:0 ~len:t.len
+      t.buf <- Bytes.create (2 * Bytes.length buf);
+      Bytes.blit buf t.off t.buf 0 t.len
     end;
-    let n = fn t.bstr ~off ~len:(Bstr.length t.bstr - off) in
+    let n = fn t.buf ~off ~len:(Bytes.length t.buf - off) in
     t.len <- t.len + n;
     n
 
   let flush t =
-    let buf = Bytes.create t.len in
-    Bstr.blit_to_bytes t.bstr ~src_off:t.off buf ~dst_off:0 ~len:t.len;
+    let tmp = Bytes.create t.len in
+    Bytes.blit t.buf t.off tmp 0 t.len;
     t.off <- 0;
     t.len <- 0;
-    Bytes.unsafe_to_string buf
+    Bytes.unsafe_to_string tmp
 end
 
 module Notify = struct
@@ -184,7 +184,7 @@ let fill t =
     if str_len > 0 then begin
       let len = Int.min str_len (Buffer.available t.buffer) in
       let into_buffer dst ~off:dst_off ~len:_ =
-        Bstr.blit_from_string str ~src_off:str_off dst ~dst_off ~len;
+        Bytes.blit_string str str_off dst dst_off len;
         len
       in
       let _ = Buffer.put t.buffer ~fn:into_buffer in
@@ -239,9 +239,9 @@ let read t ?off:(dst_off = 0) ?len buf =
   if not t.closed then begin
     let default = Bytes.length buf - dst_off in
     let len = Option.value ~default len in
-    let fn bstr ~off:src_off ~len:src_len =
+    let fn tmp ~off:src_off ~len:src_len =
       let len = Int.min src_len len in
-      Bstr.blit_to_bytes bstr ~src_off buf ~dst_off ~len;
+      Bytes.blit tmp src_off buf dst_off len;
       len
     in
     if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
@@ -319,11 +319,15 @@ let write_without_interruption t ?(off = 0) ?len str =
           m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
       raise Closed_by_peer
 
+let _eof = Error `Eof
+let _ok = Ok ()
+
 let close t =
   if t.closed then Fmt.invalid_arg "Connection already closed";
   match Utcp.close t.state.tcp (now ()) t.flow with
-  | Ok (tcp, segs) ->
+  | Ok (tcp, cs, segs) ->
       t.state.tcp <- tcp;
+      List.iter (Notify.signal _eof) cs;
       List.iter (write_without_interruption_ip t.state) segs;
       t.closed <- true
       (* TODO(dinosaure): You should wait until the connection status is
@@ -336,8 +340,9 @@ let close t =
 
 let shutdown t mode =
   match Utcp.shutdown t.state.tcp (now ()) t.flow mode with
-  | Ok (tcp, segs) ->
+  | Ok (tcp, cs, segs) ->
       t.state.tcp <- tcp;
+      List.iter (Notify.signal _eof) cs;
       List.iter (write_ip t.state.ipv4 t.state.ipv6) segs
   | Error (`Msg msg) ->
       Log.err (fun m ->
@@ -346,55 +351,49 @@ let shutdown t mode =
 
 let peers { flow; _ } = Utcp.peers flow
 let tags { tags; _ } = tags
-let _eof = Error `Eof
-let _ok = Ok ()
 
 let handler state src dst payload =
   Log.debug (fun m -> m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
   let cs = Cstruct.of_bigarray payload in
   Log.debug (fun m ->
       m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
-  let tcp, ev, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
+  let tcp, evs, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
   state.tcp <- tcp;
-  begin match ev with
-  | Some (`Established (flow, None)) ->
-      let (_, src_port), (ipaddr, port) = Utcp.peers flow in
-      Log.debug (fun m ->
-          m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-      let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
-      let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
-      let buffer = Buffer.create 0x7ff in
-      let flow = { state; tags; flow; buffer; closed= false } in
-      begin match Hashtbl.find state.accept src_port with
-      | Await c ->
-          Hashtbl.remove state.accept src_port;
-          Log.debug (fun m ->
-              m "transmit the new incoming TCP connection to the handler");
-          ignore (Miou.Computation.try_return c flow)
-      | Pending q ->
-          if Queue.length q < 1024 then Queue.push flow q
-            (* TODO(dinosaure): we only accept 1024 pending established
-               connections. We should respond to the client if we reach
-               this limit.
-               XXX(hannes): not convinced by this hard limit. *)
-      | exception Not_found ->
-          let q = Queue.create () in
-          Queue.push flow q;
-          Hashtbl.add state.accept src_port (Pending q)
-      end
-  | Some (`Established (flow, Some c)) ->
-      Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow);
-      Notify.signal _ok c
-  | Some (`Drop (flow, c, cs)) ->
-      Log.debug (fun m -> m "drop (%a)" Utcp.pp_flow flow);
-      List.iter (Notify.signal _eof) cs;
-      Option.iter (Notify.signal _ok) c
-  | Some (`Signal (flow, cs)) ->
-      Log.debug (fun m ->
-          m "signal (%a)(%d)" Utcp.pp_flow flow (List.length cs));
-      List.iter (Notify.signal _ok) cs
-  | None -> ()
-  end;
+  let fn = function
+    | `Established (flow, `Passive) ->
+        let (_, src_port), (ipaddr, port) = Utcp.peers flow in
+        Log.debug (fun m ->
+            m "established connection with %a:%d" Ipaddr.pp ipaddr port);
+        let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
+        let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
+        let buffer = Buffer.create 0x7ff in
+        let flow = { state; tags; flow; buffer; closed= false } in
+        begin match Hashtbl.find state.accept src_port with
+        | Await c ->
+            Hashtbl.remove state.accept src_port;
+            Log.debug (fun m ->
+                m "transmit the new incoming TCP connection to the handler");
+            ignore (Miou.Computation.try_return c flow)
+        | Pending q ->
+            if Queue.length q < 1024 then Queue.push flow q
+              (* TODO(dinosaure): we only accept 1024 pending established
+                 connections. We should respond to the client if we reach
+                 this limit.
+                 XXX(hannes): not convinced by this hard limit. *)
+        | exception Not_found ->
+            let q = Queue.create () in
+            Queue.push flow q;
+            Hashtbl.add state.accept src_port (Pending q)
+        end
+    | `Established (flow, `Active) ->
+        Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow)
+    | `Received (_, what, c) ->
+        let ev = match what with `Eof -> _eof | `Data -> _ok in
+        Notify.signal ev c
+    | `Send (_, c) -> Notify.signal _ok c
+    | `Drop (_, cs) -> List.iter (Notify.signal _eof) cs
+  in
+  List.iter fn evs;
   Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
   let fn out =
     try write_without_interruption_ip state out
@@ -548,9 +547,13 @@ let connect state (dst, dst_port) =
     | Ipaddr.V4 dst -> Ipaddr.V4 (IPv4.src state.ipv4 ~dst)
     | Ipaddr.V6 dst -> Ipaddr.V6 (IPv6.src state.ipv6 ~dst)
   in
-  let tcp, flow, c, seg = Utcp.connect ~src ~dst ~dst_port state.tcp (now ()) in
   let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
   let tags = Logs.Tag.add Mnet_tags.tcp (dst, dst_port) tags in
+  let tcp, flow, c, seg =
+    match Utcp.connect ~src ~dst ~dst_port state.tcp (now ()) with
+    | Ok (tcp, flow, c, seg) -> (tcp, flow, c, seg)
+    | Error (`Msg _msg) -> raise Connection_refused
+  in
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
