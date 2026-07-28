@@ -548,13 +548,11 @@ type daemon = {
 }
 
 let max_connections () =
-  let _B = Mkernel.heap_size () in
-  let _B = float_of_int _B in
-  (* to MiB *)
-  let _M = _B *. 9.536743e-7 in
-  (* 65% of our memory space / by the weight of one connection (~ 96 KiB) *)
-  let max = 0.65 *. _M /. 0.09 in
-  int_of_float max
+  let b = Mkernel.heap_size () in
+  let kb = b / 1024 in
+  let max = kb / 96 in
+  (* 96 Kb = (so_rcvbuf) 64 Kb + (so_sndbuf) 32 Kb *)
+  max * 65 / 100
 
 let create ~name ?(max = Some (max_connections ())) ipv4 ipv6 =
   let tcp = Utcp.empty Notify.create name in
