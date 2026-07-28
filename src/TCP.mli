@@ -98,10 +98,16 @@ val handler : state -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
 
 val create :
   name:string -> ?max:int option -> IPv4.t -> IPv6.t -> daemon * state
-(** [create ~name ipv4 ipv4] creates a TCP {!type:state} and a background task
-    capable of managing the state over time. It is generally agreed that the
-    user then attaches the {!val:handler} to the task managing incoming IP
-    packets. *)
+(** [create ~name ?max ipv4 ipv4] creates a TCP {!type:state} and a background
+    task capable of managing the state over time. It is generally agreed that
+    the user then attaches the {!val:handler} to the task managing incoming IP
+    packets. The [max] argument allows you to limit the number of active
+    connections managed by the handler, thereby limiting the memory usage of the
+    TCP/IP stack. By default, the TCP/IP stack uses 65% of the available memory
+    (see {!val:Mkernel.heap_size}). The user can redefine the maximum number of
+    connections (by specifying [~max:(Some n)]) or choose not to apply any limit
+    (by specifying [~max:None]). If the limit is reached, incoming SYN packets
+    are ignored. *)
 
 val kill : daemon -> unit
 (** [kill daemon] allows you to terminate the background task launched by
