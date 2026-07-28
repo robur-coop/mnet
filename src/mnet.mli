@@ -94,6 +94,7 @@ type stack
 
 val stack :
      name:string
+  -> ?max:int option
   -> ?gateway:Ipaddr.V4.t
   -> ?ipv6:IPv6.mode
   -> Ipaddr.V4.Prefix.t
