@@ -79,10 +79,11 @@ val client_of_fd :
      Tls.Config.client
   -> ?read_buffer_size:int
   -> ?host:[ `host ] Domain_name.t
+  -> ?ip:Ipaddr.t
   -> Mnet.TCP.flow
   -> t
-(** [client_of_flow client ~host fd] is [t], after client-side TLS handshake of
-    [fd] using [client] configuration and [host].
+(** [client_of_flow client ~host ~ip fd] is [t], after client-side TLS handshake
+    of [fd] using [client] configuration and [host] or [ip].
 
     @raise End_of_file if we are not able to complete the handshake. *)
 
