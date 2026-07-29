@@ -77,7 +77,6 @@ val shutdown : t -> [ `read | `write | `read_write ] -> unit
 
 val client_of_fd :
      Tls.Config.client
-  -> ?read_buffer_size:int
   -> ?host:[ `host ] Domain_name.t
   -> ?ip:Ipaddr.t
   -> Mnet.TCP.flow
@@ -87,8 +86,7 @@ val client_of_fd :
 
     @raise End_of_file if we are not able to complete the handshake. *)
 
-val server_of_fd :
-  Tls.Config.server -> ?read_buffer_size:int -> Mnet.TCP.flow -> t
+val server_of_fd : Tls.Config.server -> Mnet.TCP.flow -> t
 (** [server_of_fd server fd] is [t], after server-side TLS handshake of [fd]
     using [server] configuration.
 
