@@ -77,6 +77,9 @@ type state
     {!val:create} and passed to {!val:connect}, {!val:listen}, and
     {!val:accept}. *)
 
+val connections : state -> int
+(** [connections state] returns the number of actual TCP connections. *)
+
 type flow
 (** An individual TCP connection (either incoming or outgoing). Provides
     {!val:read}, {!val:write}, and {!val:close} operations. *)
@@ -93,11 +96,18 @@ val handler : state -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
     segments (protocol number 6) received by the IPv4 and IPv6 layers. Users
     normally do not need to call this directly. *)
 
-val create : name:string -> IPv4.t -> IPv6.t -> daemon * state
-(** [create ~name ipv4 ipv4] creates a TCP {!type:state} and a background task
-    capable of managing the state over time. It is generally agreed that the
-    user then attaches the {!val:handler} to the task managing incoming IP
-    packets. *)
+val create :
+  name:string -> ?max:int option -> IPv4.t -> IPv6.t -> daemon * state
+(** [create ~name ?max ipv4 ipv4] creates a TCP {!type:state} and a background
+    task capable of managing the state over time. It is generally agreed that
+    the user then attaches the {!val:handler} to the task managing incoming IP
+    packets. The [max] argument allows you to limit the number of active
+    connections managed by the handler, thereby limiting the memory usage of the
+    TCP/IP stack. By default, the TCP/IP stack uses 65% of the available memory
+    (see {!val:Mkernel.heap_size}). The user can redefine the maximum number of
+    connections (by specifying [~max:(Some n)]) or choose not to apply any limit
+    (by specifying [~max:None]). If the limit is reached, incoming SYN packets
+    are ignored. *)
 
 val kill : daemon -> unit
 (** [kill daemon] allows you to terminate the background task launched by
@@ -220,6 +230,10 @@ val listen : state -> int -> listen
 (** [listen state port] prepares [port] for receiving incoming TCP connection
     requests. This is analogous to {!val:Unix.listen}. The returned {i handle}
     is passed to {!val:accept} to wait for clients. *)
+
+val unlisten : state -> listen -> unit
+(** [unlisten state listen] unbounds the given [listen] and refuses subsequent
+    TCP connections on the given port [listen]. *)
 
 val accept : state -> listen -> flow
 (** [accept state listen] blocks the current Miou task until a client connects

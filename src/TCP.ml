@@ -93,6 +93,8 @@ type state = {
   ; queue: Utcp.output Queue.t
   ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
   ; accept: (int, accept) Hashtbl.t
+  ; listened: (int, unit) Hashtbl.t
+  ; max: int option
   ; mutex: Miou.Mutex.t
   ; condition: Miou.Condition.t
   ; kill: bool ref
@@ -107,6 +109,8 @@ and flow = {
   ; buffer: Buffer.t
   ; mutable closed: bool
 }
+
+let connections (t : state) = Utcp.num_connections t.tcp
 
 let[@inline always] now () =
   let now = Mkernel.clock_monotonic () in
@@ -352,54 +356,79 @@ let shutdown t mode =
 let peers { flow; _ } = Utcp.peers flow
 let tags { tags; _ } = tags
 
+let admit state ~src cs =
+  match state.max with
+  | None -> true
+  | Some _ when Cstruct.length cs < 14 -> true (* not TCP *)
+  | Some max ->
+      let flags = Cstruct.get_uint8 cs 13 in
+      let is_initial_syn = flags land 0x02 <> 0 && flags land 0x10 = 0 in
+      if not is_initial_syn then true
+      else begin
+        let local_port = Cstruct.BE.get_uint16 cs 2 in
+        if not (Hashtbl.mem state.listened local_port) then true
+        else if Utcp.num_connections state.tcp >= max then begin
+          let remote_port = Cstruct.BE.get_uint16 cs 0 in
+          Log.warn (fun m ->
+              m
+                "SYN from %a:%dd to *:%d silently ignored (max flows %d \
+                 reached)"
+                Ipaddr.pp src remote_port local_port max);
+          false
+        end
+        else true
+      end
+
 let handler state src dst payload =
   Log.debug (fun m -> m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
   let cs = Cstruct.of_bigarray payload in
   Log.debug (fun m ->
       m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
-  let tcp, evs, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
-  state.tcp <- tcp;
-  let fn = function
-    | `Established (flow, `Passive) ->
-        let (_, src_port), (ipaddr, port) = Utcp.peers flow in
-        Log.debug (fun m ->
-            m "established connection with %a:%d" Ipaddr.pp ipaddr port);
-        let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
-        let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
-        let buffer = Buffer.create 0x7ff in
-        let flow = { state; tags; flow; buffer; closed= false } in
-        begin match Hashtbl.find state.accept src_port with
-        | Await c ->
-            Hashtbl.remove state.accept src_port;
-            Log.debug (fun m ->
-                m "transmit the new incoming TCP connection to the handler");
-            ignore (Miou.Computation.try_return c flow)
-        | Pending q ->
-            if Queue.length q < 1024 then Queue.push flow q
-              (* TODO(dinosaure): we only accept 1024 pending established
-                 connections. We should respond to the client if we reach
-                 this limit.
-                 XXX(hannes): not convinced by this hard limit. *)
-        | exception Not_found ->
-            let q = Queue.create () in
-            Queue.push flow q;
-            Hashtbl.add state.accept src_port (Pending q)
-        end
-    | `Established (flow, `Active) ->
-        Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow)
-    | `Received (_, what, c) ->
-        let ev = match what with `Eof -> _eof | `Data -> _ok in
-        Notify.signal ev c
-    | `Send (_, c) -> Notify.signal _ok c
-    | `Drop (_, cs) -> List.iter (Notify.signal _eof) cs
-  in
-  List.iter fn evs;
-  Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
-  let fn out =
-    try write_without_interruption_ip state out
-    with _ -> Queue.push out state.queue
-  in
-  List.iter fn segs
+  if admit state ~src cs then begin
+    let tcp, evs, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
+    state.tcp <- tcp;
+    let fn = function
+      | `Established (flow, `Passive) ->
+          let (_, src_port), (ipaddr, port) = Utcp.peers flow in
+          Log.debug (fun m ->
+              m "established connection with %a:%d" Ipaddr.pp ipaddr port);
+          let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
+          let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
+          let buffer = Buffer.create 0x7ff in
+          let flow = { state; tags; flow; buffer; closed= false } in
+          begin match Hashtbl.find state.accept src_port with
+          | Await c ->
+              Hashtbl.remove state.accept src_port;
+              Log.debug (fun m ->
+                  m "transmit the new incoming TCP connection to the handler");
+              ignore (Miou.Computation.try_return c flow)
+          | Pending q ->
+              if Queue.length q < 1024 then Queue.push flow q
+                (* TODO(dinosaure): we only accept 1024 pending established
+                   connections. We should respond to the client if we reach
+                   this limit.
+                   XXX(hannes): not convinced by this hard limit. *)
+          | exception Not_found ->
+              let q = Queue.create () in
+              Queue.push flow q;
+              Hashtbl.add state.accept src_port (Pending q)
+          end
+      | `Established (flow, `Active) ->
+          Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow)
+      | `Received (_, what, c) ->
+          let ev = match what with `Eof -> _eof | `Data -> _ok in
+          Notify.signal ev c
+      | `Send (_, c) -> Notify.signal _ok c
+      | `Drop (_, cs) -> List.iter (Notify.signal _eof) cs
+    in
+    List.iter fn evs;
+    Log.debug (fun m -> m "%d segment(s) produced" (List.length segs));
+    let fn out =
+      try write_without_interruption_ip state out
+      with _ -> Queue.push out state.queue
+    in
+    List.iter fn segs
+  end
 
 exception Timeout
 
@@ -478,6 +507,8 @@ type listen = Listen of int [@@unboxed]
 
 (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
 let accept state (Listen port) =
+  if not (Hashtbl.mem state.listened port) then
+    Fmt.invalid_arg "*:%d is not bound" port;
   match Hashtbl.find state.accept port with
   | exception Not_found ->
       Log.debug (fun m -> m "Add waiter for *:%d" port);
@@ -501,7 +532,13 @@ let accept state (Listen port) =
 let listen state port =
   let tcp = Utcp.start_listen state.tcp port in
   state.tcp <- tcp;
+  Hashtbl.replace state.listened port ();
   Listen port
+
+let unlisten state (Listen port) =
+  let tcp = Utcp.stop_listen state.tcp port in
+  state.tcp <- tcp;
+  Hashtbl.remove state.listened port
 
 type daemon = {
     condition: Miou.Condition.t
@@ -510,7 +547,14 @@ type daemon = {
   ; kill: bool ref
 }
 
-let create ~name ipv4 ipv6 =
+let max_connections () =
+  let b = Mkernel.heap_size () in
+  let kb = b / 1024 in
+  let max = kb / 96 in
+  (* 96 Kb = (so_rcvbuf) 64 Kb + (so_sndbuf) 32 Kb *)
+  max * 65 / 100
+
+let create ~name ?(max = Some (max_connections ())) ipv4 ipv6 =
   let tcp = Utcp.empty Notify.create name in
   let accept = Hashtbl.create 0x10 in
   let mutex = Miou.Mutex.create () in
@@ -525,6 +569,8 @@ let create ~name ipv4 ipv6 =
     ; mutex
     ; condition
     ; accept
+    ; listened= Hashtbl.create 0x7ff
+    ; max
     ; outs= Queue.create ()
     ; kill
     }

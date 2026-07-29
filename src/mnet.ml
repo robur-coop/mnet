@@ -161,7 +161,7 @@ let kill t =
   ARPv4.kill t.arpv4d;
   Ethernet.kill t.ethd
 
-let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
+let stack ~name ?max ?gateway ?(ipv6 = IPv6.EUI64) cidr =
   let fn (net, cfg) () =
     let connect mac =
       let ( let* ) = Result.bind in
@@ -171,7 +171,7 @@ let stack ~name ?gateway ?(ipv6 = IPv6.EUI64) cidr =
       let* ipv4 = IPv4.create eth arpv4 ?gateway ~cidr () in
       let* ipv6, ipv6d = IPv6.create eth ipv6 in
       let icmpv4 = ICMPv4.handler ipv4 in
-      let tcpd, tcp = TCP.create ~name:"uniker.ml" ipv4 ipv6 in
+      let tcpd, tcp = TCP.create ~name:"uniker.ml" ?max ipv4 ipv6 in
       let udp = UDP.create ipv4 ipv6 in
       IPv4.set_handler ipv4 (ipv4_handler icmpv4 udp tcp);
       IPv6.set_handler ipv6 (ipv6_handler ipv6 udp tcp);

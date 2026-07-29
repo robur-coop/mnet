@@ -75,6 +75,7 @@ exception Unconfigured
 val stack :
      ?timeout:int
   -> name:string
+  -> ?max:int option
   -> ?ipv6:Mnet.IPv6.mode
   -> config
   -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) Mkernel.arg
