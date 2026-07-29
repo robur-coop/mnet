@@ -413,7 +413,8 @@ let handler state src dst payload =
               Queue.push flow q;
               Hashtbl.add state.accept src_port (Pending q)
           end
-      | `Established (flow, `Active) ->
+      | `Established (flow, `Active c) ->
+          Notify.signal _ok c;
           Log.debug (fun m -> m "connection established (%a)" Utcp.pp_flow flow)
       | `Received (_, what, c) ->
           let ev = match what with `Eof -> _eof | `Data -> _ok in
