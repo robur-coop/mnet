@@ -8,7 +8,7 @@ license: "MIT"
 
 depends: [
   "ocaml" {>= "5.0.0"}
-  "utcp" {>= "0.0.6"}
+  "utcp" {>= "0.0.7"}
   "dune" {>= "2.7.0"}
   "bstr" {>= "0.0.4"}
   "bin"
@@ -30,3 +30,6 @@ build: [
 ]
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
+pin-depends: [
+  [ "utcp.dev" "git+https://git.robur.coop/robur/utcp.git#9538c3f0420e7006fa144796d4763f45c1345418" ]
+]
