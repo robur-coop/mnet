@@ -1,3 +1,32 @@
+### v0.0.4 (2026-07-30)
+
+- Add the support of DHCP and the new package `mnet-dhcp` (@dinosaure, @reynir,
+  [!34][34])
+- Add a basic implementation of the SSH client (@dinosaure, [!33][33])
+- Fix the compilation for OCaml 5.5 (@dinosaure, @kit-ty-kate, [!36][36],
+  [#3][g3])
+- Use `Miou.Mutex.protect` when we want to signal a `Notify.t` value
+  (@dinosaure, [!35][35])
+- Replace our internal `Bstr.t` by bytes when it's about buffering on the TCP 
+  stack (@dinosaure, [!38][38])
+- Use the new interface of `utcp.0.0.6` (@dinosaure, [!38][38])
+- Add `?ip` on `Mnet_tls.client_of_fd` (@hannesm, [!40][40])
+- Add a hard limit for incoming passive TCP connections (@dinosaure, @hannesm,
+  [!42][42])
+- Improve throughput for `mnet-tls` (@dinosaure, @hannesm, [!39][39])
+- Fix how we handle active connection and use `utcp.0.0.7` (@dinosaure,
+  @hannesm, [!43][43])
+
+[34]: https://git.robur.coop/robur/mnet/pulls/34
+[33]: https://git.robur.coop/robur/mnet/pulls/33
+[36]: https://git.robur.coop/robur/mnet/pulls/36
+[g3]: https://github.com/robur-coop/mnet/issues/3
+[38]: https://git.robur.coop/robur/mnet/pulls/38
+[40]: https://git.robur.coop/robur/mnet/pulls/40
+[42]: https://git.robur.coop/robur/mnet/pulls/42
+[39]: https://git.robur.coop/robur/mnet/pulls/39
+[43]: https://git.robur.coop/robur/mnet/pulls/43
+
 ### v0.0.3 (2026-06-09)
 
 - Minor simplification of `mnet-tls` about handshake (@hannesm, [!28][28])
