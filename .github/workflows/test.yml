@@ -12,7 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Use OCaml ${{ matrix.ocaml-version }}
-        uses: ocaml/setup-ocaml@v3
+        uses: ocaml/setup-ocaml@v3.7.1
         with:
           ocaml-compiler: ${{ matrix.ocaml-version }}
           opam-local-packages: |
