@@ -94,7 +94,7 @@ let select t ~is_reachable ipaddr =
   | [] when Routers.is_empty t -> (ipaddr, None, t)
   | [] ->
       (* NOTE(dinosaure): round-robin choice of routers. *)
-      let[@warning "-8"] (Some (ipaddr, _)) = Routers.lru t in
+      let[@warning "-partial-match"] (Some (ipaddr, _)) = Routers.lru t in
       (ipaddr, None, Routers.promote ipaddr t)
   | routers ->
       let fn (_, a, _) (_, b, _) = Int.compare b a in
