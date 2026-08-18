@@ -67,6 +67,7 @@ type mode =
 
 val create :
      ?handler:handler
+  -> ?gateway:Ipaddr.V6.t
   -> Ethernet.t
   -> mode
   -> (t * daemon, [> `MTU_too_small ]) result

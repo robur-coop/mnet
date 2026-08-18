@@ -619,7 +619,7 @@ let anonymous_iid () =
   Bytes.set buf 0 (Char.chr (b lor 0x02 land 0xfe));
   Bytes.unsafe_to_string buf
 
-let make ~now ~lmtu ~mac mode =
+let make ?gateway ~now ~lmtu ~mac mode =
   let iid, addr =
     match mode with
     | Random -> (anonymous_iid (), None)
@@ -627,7 +627,7 @@ let make ~now ~lmtu ~mac mode =
     | Static prefix -> (iid_of_mac mac, Some prefix)
   in
   let neighbors = Neighbors.make 0x100 in
-  let routers = Routers.make 16 in
+  let routers = Routers.make ?gateway 16 in
   let prefixes = Prefixes.make 16 in
   let addrs, acts = Addrs.make ~now ~iid ?addr 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
