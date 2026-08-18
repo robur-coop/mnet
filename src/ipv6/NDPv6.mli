@@ -68,7 +68,13 @@ type t
 (** The NDPv6 state machine. Contains the neighbor cache, router list, prefix
     list, address configuration, and destination cache. *)
 
-val make : now:int -> lmtu:int -> mac:Macaddr.t -> mode -> t * Packet.t list
+val make :
+     ?gateway:Ipaddr.V6.t
+  -> now:int
+  -> lmtu:int
+  -> mac:Macaddr.t
+  -> mode
+  -> t * Packet.t list
 (** [make ~now ~lmtu ~mac mode] initializes the NDPv6 state.
     - [now]: the current monotonic time in nanoseconds.
     - [lmtu]: the link MTU (Maximum Transmission Unit).

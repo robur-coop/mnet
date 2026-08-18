@@ -36,7 +36,7 @@ type t
     entry also has an associated invalidation timer value (extracted from
     {!type:RA.t}) used to delete entries that are no longer advertised. *)
 
-val make : int -> t
+val make : ?gateway:Ipaddr.V6.t -> int -> t
 (** [make capacity] creates an empty router list with the given initial
     capacity. *)
 
