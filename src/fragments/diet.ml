@@ -12,16 +12,16 @@ let is_empty = function Empty -> true | _ -> false
 let rec node x y l r =
   let hl = height l and hr = height r in
   if hl > hr + 2 then
-    let[@warning "-8"] (Node { x= lx; y= ly; l= ll; r= lr; _ }) = l in
+    let[@warning "-partial-match"] (Node { x= lx; y= ly; l= ll; r= lr; _ }) = l in
     if height ll >= height lr then node lx ly ll (node x y lr r)
     else
-      let[@warning "-8"] (Node { x= lrx; y= lry; l= lrl; r= lrr; _ }) = lr in
+      let[@warning "-partial-match"] (Node { x= lrx; y= lry; l= lrl; r= lrr; _ }) = lr in
       node lrx lry (node lx ly ll lrl) (node x y lrr r)
   else if hr > hl + 2 then
-    let[@warning "-8"] (Node { x= rx; y= ry; l= rl; r= rr; _ }) = r in
+    let[@warning "-partial-match"] (Node { x= rx; y= ry; l= rl; r= rr; _ }) = r in
     if height rr >= height rl then node rx ry (node x y l rl) rr
     else
-      let[@warning "-8"] (Node { x= rlx; y= rly; l= rll; r= rlr; _ }) = rl in
+      let[@warning "-partial-match"] (Node { x= rlx; y= rly; l= rll; r= rlr; _ }) = rl in
       node rlx rly (node x y l rll) (node rx ry rlr rr)
   else
     let h = Int.max (height l) (height r) + 1 in

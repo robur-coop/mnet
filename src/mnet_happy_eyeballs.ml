@@ -4,7 +4,7 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 module Log = (val Logs.src_log src : Logs.LOG)
 module HE = Happy_eyeballs
 
-[@@@warning "-30"]
+[@@@warning "-duplicate-definitions"]
 
 type state = ((Ipaddr.t * int) * Mnet.TCP.flow) Miou.Computation.t
 and entry = HE.id * attempt * [ `host ] Domain_name.t * addr
