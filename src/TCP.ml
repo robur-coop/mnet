@@ -107,7 +107,6 @@ and flow = {
   ; tags: Logs.Tag.set
   ; flow: Utcp.flow
   ; buffer: Buffer.t
-  ; mutable closed: bool
 }
 
 let connections (t : state) = Utcp.num_connections t.tcp
@@ -240,24 +239,19 @@ let rec get t =
   | Error `Not_found -> Error Refused
 
 let read t ?off:(dst_off = 0) ?len buf =
-  if not t.closed then begin
-    let default = Bytes.length buf - dst_off in
-    let len = Option.value ~default len in
-    let fn tmp ~off:src_off ~len:src_len =
-      let len = Int.min src_len len in
-      Bytes.blit tmp src_off buf dst_off len;
-      len
-    in
-    if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
-    else
-      match get t with
-      | Ok data -> fill t data; Buffer.get t.buffer ~fn
-      | Error Eof -> 0
-      | Error Refused ->
-          t.closed <- true;
-          0
-  end
-  else 0
+  let default = Bytes.length buf - dst_off in
+  let len = Option.value ~default len in
+  let fn tmp ~off:src_off ~len:src_len =
+    let len = Int.min src_len len in
+    Bytes.blit tmp src_off buf dst_off len;
+    len
+  in
+  if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
+  else
+    match get t with
+    | Ok data -> fill t data; Buffer.get t.buffer ~fn
+    | Error Eof -> 0
+    | Error Refused -> 0
 
 let get t =
   match get t with
@@ -267,9 +261,7 @@ let get t =
         let pre = Buffer.flush t.buffer in
         Ok (pre :: css)
   | Error Eof -> Error `Eof
-  | Error Refused ->
-      t.closed <- true;
-      Error `Refused
+  | Error Refused -> Error `Refused
 
 let rec really_read t off len buf =
   let len' = read t ~off ~len buf in
@@ -327,16 +319,16 @@ let _eof = Error `Eof
 let _ok = Ok ()
 
 let close t =
-  if t.closed then Fmt.invalid_arg "Connection already closed";
   match Utcp.close t.state.tcp (now ()) t.flow with
   | Ok (tcp, cs, segs) ->
       t.state.tcp <- tcp;
       List.iter (Notify.signal _eof) cs;
-      List.iter (write_without_interruption_ip t.state) segs;
-      t.closed <- true
+      List.iter (write_without_interruption_ip t.state) segs
       (* TODO(dinosaure): You should wait until the connection status is
          [Fin_wait_1], [Fin_wait_2], or [Closing] to be sure that the
-         connection has been properly terminated. *)
+         connection has been properly terminated.
+         NOTE(dinosaure): we also must not emit effects here if we would
+         like to use [Mnet.TCP.close] as a finalizer with [Miou.Ownership]. *)
   | Error `Not_found -> ()
   | Error (`Msg msg) ->
       Log.err (fun m ->
@@ -395,7 +387,7 @@ let handler state src dst payload =
           let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
           let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
           let buffer = Buffer.create 0x7ff in
-          let flow = { state; tags; flow; buffer; closed= false } in
+          let flow = { state; tags; flow; buffer } in
           begin match Hashtbl.find state.accept src_port with
           | Await c ->
               Hashtbl.remove state.accept src_port;
@@ -607,7 +599,7 @@ let connect state (dst, dst_port) =
   match Notify.await c with
   | Ok () ->
       let buffer = Buffer.create 0x7ff in
-      { state; flow; tags; buffer; closed= false }
+      { state; flow; tags; buffer }
   | Error `Eof ->
       Log.err (fun m ->
           m ~tags "%a error established connection (timeout)" Utcp.pp_flow flow);
