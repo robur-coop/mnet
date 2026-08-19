@@ -341,7 +341,7 @@ let arp ?(delay = 1_500_000_000) t =
 let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?ipaddr eth
     =
   let ( let* ) = Result.bind in
-  let macaddr = Ethernet.macaddr eth in
+  let macaddr = Ethernet.mac eth in
   (* enough for ARP packets *)
   let* () = guard `MTU_too_small @@ fun () -> Ethernet.mtu eth >= 28 in
   if timeout <= 0 then Fmt.invalid_arg "Arp.create: null or negative timeout";

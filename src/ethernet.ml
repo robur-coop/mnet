@@ -77,7 +77,6 @@ exception Packet_ignored
 
 let mac { mac; _ } = mac
 let mtu { mtu; _ } = mtu
-let macaddr { mac; _ } = mac
 let tags { mac; _ } tags = Logs.Tag.add Mnet_tags.mac mac tags
 let uninteresting_packet _ = raise_notrace Packet_ignored
 
