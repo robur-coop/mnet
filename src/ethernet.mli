@@ -175,10 +175,6 @@ val mtu : t -> int
     network device. This is the maximum payload size for a single Ethernet frame
     (typically 1500 bytes). *)
 
-val macaddr : t -> Macaddr.t
-(** [macaddr t] returns the MAC address of the underlying device. Same as
-    {!val:mac}. *)
-
 val tags : t -> Logs.Tag.set -> Logs.Tag.set
 (** [tags t] returns logging tags containing the MAC address of the device.
     Useful for structured logging output with {!module:Logs}. *)

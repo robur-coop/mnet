@@ -315,7 +315,7 @@ let rec run t =
   | Expired -> step t Timeout; run t
 
 let create eth ~apply ~revoke ?xid config =
-  let mac = Ethernet.macaddr eth in
+  let mac = Ethernet.mac eth in
   let dhcp, actions =
     discover ?xid ~requests:config.requests ~options:config.options mac
   in
