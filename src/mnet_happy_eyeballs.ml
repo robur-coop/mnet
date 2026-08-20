@@ -6,7 +6,9 @@ module HE = Happy_eyeballs
 
 [@@@warning "-duplicate-definitions"]
 
-type state = ((Ipaddr.t * int) * Mnet.TCP.direct Mnet.TCP.flow) Miou.Computation.t
+type state =
+  ((Ipaddr.t * int) * Mnet.TCP.direct Mnet.TCP.flow) Miou.Computation.t
+
 and entry = HE.id * attempt * [ `host ] Domain_name.t * addr
 and attempt = int
 and addr = Ipaddr.t * int
@@ -340,34 +342,35 @@ let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t addrs =
   state
 
 let connect_ip : type k.
-     ?aaaa_timeout:int64
-  -> ?connect_delay:int64
-  -> ?connect_timeout:int64
-  -> kind:k Mnet.TCP.kind
-  -> t
-  -> (Ipaddr.t * int) list
-  -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result
-  = fun ?aaaa_timeout ?connect_delay ?connect_timeout ~kind t ips ->
+       ?aaaa_timeout:int64
+    -> ?connect_delay:int64
+    -> ?connect_timeout:int64
+    -> kind:k Mnet.TCP.kind
+    -> t
+    -> (Ipaddr.t * int) list
+    -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result =
+ fun ?aaaa_timeout ?connect_delay ?connect_timeout ~kind t ips ->
   let state = connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t ips in
-  match Miou.Computation.await state, kind with
-  | Ok _ as value, Mnet.TCP.Direct -> value
-  | Ok (addr, flow), Mnet.TCP.Buffered -> Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  match (Miou.Computation.await state, kind) with
+  | (Ok _ as value), Mnet.TCP.Direct -> value
+  | Ok (addr, flow), Mnet.TCP.Buffered ->
+      Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
   | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
   | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 
 let connect_host : type k.
-     ?aaaa_timeout:int64
-  -> ?connect_delay:int64
-  -> ?connect_timeout:int64
-  -> ?resolve_timeout:int64
-  -> ?resolve_retries:int
-  -> kind:k Mnet.TCP.kind
-  -> t
-  -> [ `host ] Domain_name.t
-  -> int list
-  -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result
-  = fun ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
-    ?resolve_retries ~kind t host ports ->
+       ?aaaa_timeout:int64
+    -> ?connect_delay:int64
+    -> ?connect_timeout:int64
+    -> ?resolve_timeout:int64
+    -> ?resolve_retries:int
+    -> kind:k Mnet.TCP.kind
+    -> t
+    -> [ `host ] Domain_name.t
+    -> int list
+    -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result =
+ fun ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
+     ?resolve_retries ~kind t host ports ->
   let state = Miou.Computation.create () in
   begin
     Miou.Mutex.protect t.mutex @@ fun () ->
@@ -386,9 +389,10 @@ let connect_host : type k.
     Queue.push (`Connect connect) t.queue;
     Miou.Condition.signal t.condition
   end;
-  match Miou.Computation.await state, kind with
-  | Ok _ as value, Mnet.TCP.Direct -> value
-  | Ok (addr, flow), Mnet.TCP.Buffered -> Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  match (Miou.Computation.await state, kind) with
+  | (Ok _ as value), Mnet.TCP.Direct -> value
+  | Ok (addr, flow), Mnet.TCP.Buffered ->
+      Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
   | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
   | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 

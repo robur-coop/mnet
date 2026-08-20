@@ -66,4 +66,9 @@ and channel = {
 }
 
 val server :
-  ?stop:Stop.t -> db -> Awa.Hostkey.priv -> Mnet.TCP.direct Mnet.TCP.flow -> callback -> t
+     ?stop:Stop.t
+  -> db
+  -> Awa.Hostkey.priv
+  -> Mnet.TCP.direct Mnet.TCP.flow
+  -> callback
+  -> t

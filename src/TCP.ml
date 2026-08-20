@@ -116,20 +116,14 @@ type state = {
   ; kill: bool ref
 }
 
-and accept = Await of direct flow Miou.Computation.t | Pending of direct flow Queue.t
+and accept =
+  | Await of direct flow Miou.Computation.t
+  | Pending of direct flow Queue.t
 
-and 'k flow = {
-    state: state
-  ; tags: Logs.Tag.set
-  ; flow: Utcp.flow
-  ; buffer: 'k
-}
-
+and 'k flow = { state: state; tags: Logs.Tag.set; flow: Utcp.flow; buffer: 'k }
 and buffered = Buf.t
 and direct = Direct
-and 'k kind =
-  | Buffered : buffered kind
-  | Direct : direct kind
+and 'k kind = Buffered : buffered kind | Direct : direct kind
 
 let connections (t : state) = Utcp.num_connections t.tcp
 
@@ -493,12 +487,15 @@ let rec daemon state n =
 
 type listen = Listen of int [@@unboxed]
 
-let cast : type k. k kind -> direct flow -> k flow = fun kind flow -> match kind with
+let cast : type k. k kind -> direct flow -> k flow =
+ fun kind flow ->
+  match kind with
   | Direct -> flow
   | Buffered -> { flow with buffer= Buf.create 0x7ff }
 
 (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
-let accept : type k. kind:k kind -> state -> listen -> k flow = fun ~kind state (Listen port) ->
+let accept : type k. kind:k kind -> state -> listen -> k flow =
+ fun ~kind state (Listen port) ->
   if not (Hashtbl.mem state.listened port) then
     Fmt.invalid_arg "*:%d is not bound" port;
   match Hashtbl.find state.accept port with
@@ -506,21 +503,18 @@ let accept : type k. kind:k kind -> state -> listen -> k flow = fun ~kind state 
       Log.debug (fun m -> m "Add waiter for *:%d" port);
       let c = Miou.Computation.create () in
       Hashtbl.add state.accept port (Await c);
-      Miou.Computation.await_exn c
-      |> cast kind
+      Miou.Computation.await_exn c |> cast kind
   | Await c ->
       Log.debug (fun m -> m "Waiter already exists for *:%d" port);
-      Miou.Computation.await_exn c
-      |> cast kind
+      Miou.Computation.await_exn c |> cast kind
   | Pending q -> begin
       Log.debug (fun m ->
           m "Pending established connections (%d)" (Queue.length q));
-      match Queue.pop q, kind with
+      match (Queue.pop q, kind) with
       | exception Queue.Empty ->
           let c = Miou.Computation.create () in
           Hashtbl.replace state.accept port (Await c);
-          Miou.Computation.await_exn c
-          |> cast kind
+          Miou.Computation.await_exn c |> cast kind
       | flow, Direct -> flow
       | flow, Buffered -> { flow with buffer= Buf.create 0x7ff }
     end
@@ -583,7 +577,8 @@ let kill (daemon : daemon) =
   end;
   Miou.await_exn daemon.prm
 
-let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow = fun ~kind state (dst, dst_port) ->
+let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow =
+ fun ~kind state (dst, dst_port) ->
   let src =
     match dst with
     | Ipaddr.V4 dst -> Ipaddr.V4 (IPv4.src state.ipv4 ~dst)
@@ -599,9 +594,9 @@ let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow = fun ~ki
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
-  let buffer : k = match kind with
-    | Buffered -> Buf.create 0x7ff
-    | Direct -> Direct in
+  let buffer : k =
+    match kind with Buffered -> Buf.create 0x7ff | Direct -> Direct
+  in
   match Notify.await c with
   | Ok () -> { state; flow; tags; buffer }
   | Error `Eof ->

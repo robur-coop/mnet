@@ -56,8 +56,9 @@
     {2 Example: client.}
 
     {[
-    let flow = Mnet.TCP.connect ~kind:Mnet.TCP.buffered tcp
-      (Ipaddr.V4 server, 9000) in
+    let flow =
+      Mnet.TCP.connect ~kind:Mnet.TCP.buffered tcp (Ipaddr.V4 server, 9000)
+    in
     Mnet.TCP.write flow "Hello!";
     Mnet.TCP.shutdown flow `write;
     let buf = Bytes.create 4096 in
@@ -90,14 +91,13 @@ val connections : state -> int
 
 type 'k flow
 (** An individual TCP connection (either incoming or outgoing). Provides
-    {!val:get} or {!val:read} (depending on the kind of flow}, {!val:write},
-    and {!val:close} operations. *)
+    {!val:get} or {!val:read} (depending on the kind of flow), {!val:write}, and
+    {!val:close} operations. *)
 
-and buffered and direct
+and buffered
+and direct
 
-type 'k kind =
-  | Buffered : buffered kind
-  | Direct : direct kind
+type 'k kind = Buffered : buffered kind | Direct : direct kind
 
 val buffered : buffered kind
 val direct : direct kind
@@ -189,7 +189,8 @@ val write : 'k flow -> ?off:int -> ?len:int -> string -> unit
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val write_without_interruption : 'k flow -> ?off:int -> ?len:int -> string -> unit
+val write_without_interruption :
+  'k flow -> ?off:int -> ?len:int -> string -> unit
 (** [write_without_interruption] writes [len] bytes (defaults to
     [String.length str - off]) from byte sequence [buf], starting at offset
     [off] (defaults to [0]), to the given connection [flow].

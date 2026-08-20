@@ -136,7 +136,10 @@ module Transport = struct
   let rec connect_to_nameservers t nameservers =
     let ns = to_pairs nameservers in
     let connect_timeout = Int64.of_int t.timeout in
-    let* addr, flow = Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Direct ~connect_timeout t.he ns in
+    let* addr, flow =
+      Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Direct ~connect_timeout t.he
+        ns
+    in
     match tls_config_of_nameserver t.nameservers addr with
     | None -> Ok (addr, `Plain flow)
     | Some cfg -> try_tls_connection t nameservers cfg addr flow
