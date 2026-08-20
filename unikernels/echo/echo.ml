@@ -68,7 +68,7 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
         match limit with
         | Some limit when limit <= 0 -> ()
         | None | Some _ ->
-            let flow = Mnet.TCP.accept tcp listen in
+            let flow = Mnet.TCP.accept ~kind:Mnet.TCP.Buffered tcp listen in
             let _ = Miou.async ~orphans @@ fun () -> handler flow in
             let limit = Option.map pred limit in
             go orphans listen limit
@@ -79,9 +79,9 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
   | `Client (edn, length) ->
       let result =
         match edn with
-        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip he [ edn ]
+        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Buffered he [ edn ]
         | `Domain domain_name ->
-            Mnet_happy_eyeballs.connect_host he domain_name [ 9000 ]
+            Mnet_happy_eyeballs.connect_host ~kind:Mnet.TCP.Buffered he domain_name [ 9000 ]
       in
       let flow =
         match result with

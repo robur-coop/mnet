@@ -77,9 +77,10 @@ val connect_ip :
      ?aaaa_timeout:int64
   -> ?connect_delay:int64
   -> ?connect_timeout:int64
+  -> kind:'k Mnet.TCP.kind
   -> t
   -> (Ipaddr.t * int) list
-  -> ((Ipaddr.t * int) * Mnet.TCP.flow, [> `Msg of string ]) result
+  -> ((Ipaddr.t * int) * 'k Mnet.TCP.flow, [> `Msg of string ]) result
 (** [connect_ip t addresses] attempts to connect to one of the given
     [(ipaddr, port)] pairs using the happy eyeballs algorithm. Returns the
     address that succeeded and the resulting TCP flow, or an error if all
@@ -98,10 +99,11 @@ val connect_host :
   -> ?connect_timeout:int64
   -> ?resolve_timeout:int64
   -> ?resolve_retries:int
+  -> kind:'k Mnet.TCP.kind
   -> t
   -> [ `host ] Domain_name.t
   -> int list
-  -> ((Ipaddr.t * int) * Mnet.TCP.flow, [> `Msg of string ]) result
+  -> ((Ipaddr.t * int) * 'k Mnet.TCP.flow, [> `Msg of string ]) result
 (** [connect_host t hostname ports] resolves [hostname] via the configured
     {!type:getaddrinfo} callback, then connects to one of the resolved addresses
     on one of the given [ports] using the happy eyeballs algorithm.
@@ -116,10 +118,11 @@ val connect :
   -> ?connect_timeout:int64
   -> ?resolve_timeout:int64
   -> ?resolve_retries:int
+  -> kind:'k Mnet.TCP.kind
   -> t
   -> string
   -> int list
-  -> ((Ipaddr.t * int) * Mnet.TCP.flow, [> `Msg of string ]) result
+  -> ((Ipaddr.t * int) * 'k Mnet.TCP.flow, [> `Msg of string ]) result
 (** [connect t host ports] is a convenience wrapper around {!val:connect_host}
     that accepts the hostname as a plain [string]. The string is parsed as a
     {!type:Domain_name.t} before resolution.

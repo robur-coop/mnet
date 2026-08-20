@@ -11,7 +11,7 @@ module type AUTH = sig
 end
 
 type flow = {
-    flow: Mnet.TCP.flow
+    flow: Mnet.TCP.direct Mnet.TCP.flow
   ; mutable client: Awa.Client.t
   ; mutable id: int32 option
   ; mutable closed: bool

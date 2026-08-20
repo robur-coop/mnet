@@ -2,7 +2,9 @@ exception Net_unreach
 exception Closed_by_peer
 exception Connection_refused
 
-module Buffer = struct
+[@@@warning "-duplicate-definitions"]
+
+module Buf = struct
   type t = { mutable buf: bytes; mutable off: int; mutable len: int }
 
   let create size =
@@ -42,12 +44,26 @@ module Buffer = struct
     t.len <- t.len + n;
     n
 
-  let flush t =
+  let _flush t =
     let tmp = Bytes.create t.len in
     Bytes.blit t.buf t.off tmp 0 t.len;
     t.off <- 0;
     t.len <- 0;
     Bytes.unsafe_to_string tmp
+
+  let fill t =
+    let rec go str str_off str_len =
+      if str_len > 0 then begin
+        let len = Int.min str_len (available t) in
+        let fn dst ~off:dst_off ~len:_ =
+          Bytes.blit_string str str_off dst dst_off len;
+          len
+        in
+        let _ = put t ~fn in
+        go str (str_off + len) (str_len - len)
+      end
+    in
+    List.iter (fun str -> go str 0 (String.length str))
 end
 
 module Notify = struct
@@ -100,14 +116,20 @@ type state = {
   ; kill: bool ref
 }
 
-and accept = Await of flow Miou.Computation.t | Pending of flow Queue.t
+and accept = Await of direct flow Miou.Computation.t | Pending of direct flow Queue.t
 
-and flow = {
+and 'k flow = {
     state: state
   ; tags: Logs.Tag.set
   ; flow: Utcp.flow
-  ; buffer: Buffer.t
+  ; buffer: 'k
 }
+
+and buffered = Buf.t
+and direct = Direct
+and 'k kind =
+  | Buffered : buffered kind
+  | Direct : direct kind
 
 let connections (t : state) = Utcp.num_connections t.tcp
 
@@ -180,23 +202,7 @@ let write_without_interruption_ip state (src, dst, seg) =
   | Ipaddr.V6 _, Ipaddr.V4 _ ->
       failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
-type result = Eof | Refused
-
-let fill t =
-  let rec one str str_off str_len =
-    if str_len > 0 then begin
-      let len = Int.min str_len (Buffer.available t.buffer) in
-      let into_buffer dst ~off:dst_off ~len:_ =
-        Bytes.blit_string str str_off dst dst_off len;
-        len
-      in
-      let _ = Buffer.put t.buffer ~fn:into_buffer in
-      one str (str_off + len) (str_len - len)
-    end
-  in
-  List.iter (fun str -> one str 0 (String.length str))
-
-let rec get t =
+let rec get (t : _ flow) =
   match Utcp.recv t.state.tcp (now ()) t.flow with
   | Ok (tcp, [], c, segs) -> begin
       t.state.tcp <- tcp;
@@ -212,33 +218,33 @@ let rec get t =
               t.state.tcp <- tcp;
               List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
               Ok data
-          | Error `Not_found -> Error Refused
-          | Error `Eof -> Error Eof
+          | Error `Not_found -> Error `Refused
+          | Error `Eof -> Error `Eof
           | Error (`Msg msg) ->
               Log.err (fun m ->
                   m ~tags:t.tags "%a error while read (second recv): %s"
                     Utcp.pp_flow t.flow msg);
-              Error Refused
+              Error `Refused
           end
-      | Error `Eof -> Error Eof
+      | Error `Eof -> Error `Eof
       | Error (`Msg msg) ->
           Log.err (fun m ->
               m ~tags:t.tags "%a error from computation while recv: %s"
                 Utcp.pp_flow t.flow msg);
-          Error Refused
+          Error `Refused
     end
   | Ok (tcp, data, _c, segs) ->
       t.state.tcp <- tcp;
       List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
       Ok data
-  | Error `Eof -> Error Eof
+  | Error `Eof -> Error `Eof
   | Error (`Msg msg) ->
       Log.err (fun m ->
           m ~tags:t.tags "%a error while read: %s" Utcp.pp_flow t.flow msg);
-      Error Refused
-  | Error `Not_found -> Error Refused
+      Error `Refused
+  | Error `Not_found -> Error `Refused
 
-let read t ?off:(dst_off = 0) ?len buf =
+let read (t : buffered flow) ?off:(dst_off = 0) ?len buf =
   let default = Bytes.length buf - dst_off in
   let len = Option.value ~default len in
   let fn tmp ~off:src_off ~len:src_len =
@@ -246,29 +252,19 @@ let read t ?off:(dst_off = 0) ?len buf =
     Bytes.blit tmp src_off buf dst_off len;
     len
   in
-  if Buffer.length t.buffer > 0 then Buffer.get t.buffer ~fn
+  if Buf.length t.buffer > 0 then Buf.get t.buffer ~fn
   else
     match get t with
-    | Ok data -> fill t data; Buffer.get t.buffer ~fn
-    | Error Eof -> 0
-    | Error Refused -> 0
+    | Ok data -> Buf.fill t.buffer data; Buf.get t.buffer ~fn
+    | Error `Eof -> 0
+    | Error `Refused -> 0
 
-let get t =
-  match get t with
-  | Ok css as value ->
-      if Buffer.length t.buffer <= 0 then value
-      else
-        let pre = Buffer.flush t.buffer in
-        Ok (pre :: css)
-  | Error Eof -> Error `Eof
-  | Error Refused -> Error `Refused
-
-let rec really_read t off len buf =
+let rec really_read (t : buffered flow) off len buf =
   let len' = read t ~off ~len buf in
   if len' == 0 then raise End_of_file
   else if len - len' > 0 then really_read t (off + len') (len - len') buf
 
-let really_read t ?(off = 0) ?len buf =
+let really_read (t : buffered flow) ?(off = 0) ?len buf =
   let len = match len with None -> Bytes.length buf - off | Some len -> len in
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "TCP.really_read";
@@ -386,8 +382,7 @@ let handler state src dst payload =
               m "established connection with %a:%d" Ipaddr.pp ipaddr port);
           let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
           let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
-          let buffer = Buffer.create 0x7ff in
-          let flow = { state; tags; flow; buffer } in
+          let flow = { state; tags; flow; buffer= Direct } in
           begin match Hashtbl.find state.accept src_port with
           | Await c ->
               Hashtbl.remove state.accept src_port;
@@ -498,8 +493,12 @@ let rec daemon state n =
 
 type listen = Listen of int [@@unboxed]
 
+let cast : type k. k kind -> direct flow -> k flow = fun kind flow -> match kind with
+  | Direct -> flow
+  | Buffered -> { flow with buffer= Buf.create 0x7ff }
+
 (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
-let accept state (Listen port) =
+let accept : type k. kind:k kind -> state -> listen -> k flow = fun ~kind state (Listen port) ->
   if not (Hashtbl.mem state.listened port) then
     Fmt.invalid_arg "*:%d is not bound" port;
   match Hashtbl.find state.accept port with
@@ -508,18 +507,22 @@ let accept state (Listen port) =
       let c = Miou.Computation.create () in
       Hashtbl.add state.accept port (Await c);
       Miou.Computation.await_exn c
+      |> cast kind
   | Await c ->
       Log.debug (fun m -> m "Waiter already exists for *:%d" port);
       Miou.Computation.await_exn c
+      |> cast kind
   | Pending q -> begin
       Log.debug (fun m ->
           m "Pending established connections (%d)" (Queue.length q));
-      match Queue.pop q with
+      match Queue.pop q, kind with
       | exception Queue.Empty ->
           let c = Miou.Computation.create () in
           Hashtbl.replace state.accept port (Await c);
           Miou.Computation.await_exn c
-      | flow -> flow
+          |> cast kind
+      | flow, Direct -> flow
+      | flow, Buffered -> { flow with buffer= Buf.create 0x7ff }
     end
 
 let listen state port =
@@ -580,7 +583,7 @@ let kill (daemon : daemon) =
   end;
   Miou.await_exn daemon.prm
 
-let connect state (dst, dst_port) =
+let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow = fun ~kind state (dst, dst_port) ->
   let src =
     match dst with
     | Ipaddr.V4 dst -> Ipaddr.V4 (IPv4.src state.ipv4 ~dst)
@@ -596,10 +599,11 @@ let connect state (dst, dst_port) =
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
+  let buffer : k = match kind with
+    | Buffered -> Buf.create 0x7ff
+    | Direct -> Direct in
   match Notify.await c with
-  | Ok () ->
-      let buffer = Buffer.create 0x7ff in
-      { state; flow; tags; buffer }
+  | Ok () -> { state; flow; tags; buffer }
   | Error `Eof ->
       Log.err (fun m ->
           m ~tags "%a error established connection (timeout)" Utcp.pp_flow flow);
@@ -608,3 +612,7 @@ let connect state (dst, dst_port) =
       Log.err (fun m ->
           m ~tags "%a error established connection: %s" Utcp.pp_flow flow msg);
       raise Connection_refused
+
+let unsafe_to_bufferize = cast Buffered
+let buffered = Buffered
+let direct : direct kind = Direct

@@ -26,7 +26,7 @@ exception Closed_by_peer
 type t
 (** Abstract type of a session. *)
 
-val file_descr : t -> Mnet.TCP.flow
+val file_descr : t -> Mnet.TCP.direct Mnet.TCP.flow
 (** [file_descr] returns the underlying file-descriptor used by the given TLS
     {i socket}. *)
 
@@ -79,14 +79,14 @@ val client_of_fd :
      Tls.Config.client
   -> ?host:[ `host ] Domain_name.t
   -> ?ip:Ipaddr.t
-  -> Mnet.TCP.flow
+  -> Mnet.TCP.direct Mnet.TCP.flow
   -> t
 (** [client_of_flow client ~host ~ip fd] is [t], after client-side TLS handshake
     of [fd] using [client] configuration and [host] or [ip].
 
     @raise End_of_file if we are not able to complete the handshake. *)
 
-val server_of_fd : Tls.Config.server -> Mnet.TCP.flow -> t
+val server_of_fd : Tls.Config.server -> Mnet.TCP.direct Mnet.TCP.flow -> t
 (** [server_of_fd server fd] is [t], after server-side TLS handshake of [fd]
     using [server] configuration.
 
