@@ -226,7 +226,7 @@ module Transport = struct
   let rec connect_to_nameservers t nameservers =
     let ns = to_pairs nameservers in
     let connect_timeout = Int64.of_int t.timeout in
-    let* addr, flow = Mnet_happy_eyeballs.connect_ip ~connect_timeout t.he ns in
+    let* addr, flow = Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Direct ~connect_timeout t.he ns in
     match tls_config_of_nameserver t.nameservers addr with
     | None -> Ok (addr, `Plain flow)
     | Some cfg -> try_tls_connection t nameservers cfg addr flow
@@ -280,19 +280,18 @@ module Transport = struct
     go ()
 
   let rec read_from_tcp t ke buf flow =
-    match Mnet.TCP.read flow buf with
-    | 0 -> Log.debug (fun m -> m "TCP connection closed by peer")
+    match Mnet.TCP.get flow with
     | exception Miou.Cancelled ->
         Log.debug (fun m ->
             m "TCP connection closed by us (useless connection)")
     | exception exn ->
         Log.err (fun m ->
             m "TCP connection failed with: %s" (Printexc.to_string exn))
-    | len ->
-        let str = Bytes.sub_string buf 0 len in
-        Ke.push ke str;
+    | Ok sstr ->
+        List.iter (Ke.push ke) sstr;
         process ke t.reqs;
         read_from_tcp t ke buf flow
+    | Error _ -> ()
 
   let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with

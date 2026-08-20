@@ -20,6 +20,13 @@
     - {!val:read} copies data into a user-supplied buffer. An internal buffer
       handles overflow when the frame payload exceeds the buffer size.
 
+    [mnet] concretize these strategy via the type {!type:kind} which specify
+    which one the user would like use. {!val:connect} and {!val:accept} expect
+    such {!type:kind} in order to propose a {!type:flow} with one of these
+    strategies. The {!val:buffered} strategy implies an allocation of a buffer
+    (which can also grow) where the {!val:direct} strategy gives you something
+    close to what [utcp] can give to us.
+
     {2 Concurrency model.}
 
     TCP runs a background daemon (see {!val:create}) that processes incoming
@@ -33,7 +40,7 @@
 
     {[
     let listen = Mnet.TCP.listen tcp 9000 in
-    let flow = Mnet.TCP.accept tcp listen in
+    let flow = Mnet.TCP.accept ~kind:Mnet.TCP.buffered tcp listen in
     let buf = Bytes.create 4096 in
     let rec loop () =
       let len = Mnet.TCP.read flow buf in
@@ -49,7 +56,8 @@
     {2 Example: client.}
 
     {[
-    let flow = Mnet.TCP.connect tcp (Ipaddr.V4 server, 9000) in
+    let flow = Mnet.TCP.connect ~kind:Mnet.TCP.buffered tcp
+      (Ipaddr.V4 server, 9000) in
     Mnet.TCP.write flow "Hello!";
     Mnet.TCP.shutdown flow `write;
     let buf = Bytes.create 4096 in
@@ -80,9 +88,19 @@ type state
 val connections : state -> int
 (** [connections state] returns the number of actual TCP connections. *)
 
-type flow
+type 'k flow
 (** An individual TCP connection (either incoming or outgoing). Provides
-    {!val:read}, {!val:write}, and {!val:close} operations. *)
+    {!val:get} or {!val:read} (depending on the kind of flow}, {!val:write},
+    and {!val:close} operations. *)
+
+and buffered and direct
+
+type 'k kind =
+  | Buffered : buffered kind
+  | Direct : direct kind
+
+val buffered : buffered kind
+val direct : direct kind
 
 type daemon
 (** A background task that manages TCP timers and incoming segment processing.
@@ -113,10 +131,10 @@ val kill : daemon -> unit
 (** [kill daemon] allows you to terminate the background task launched by
     {!val:create}. *)
 
-val connect : state -> Ipaddr.t * int -> flow
+val connect : kind:'k kind -> state -> Ipaddr.t * int -> 'k flow
 (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
-val get : flow -> (string list, [> `Eof | `Refused ]) result
+val get : direct flow -> (string list, [> `Eof | `Refused ]) result
 (** [get flow] allows reading from a given [flow] {b without} involving a
     temporary buffer. In other words, the data returned is that from the
     Ethernet frame.
@@ -124,7 +142,7 @@ val get : flow -> (string list, [> `Eof | `Refused ]) result
     If data exists in the internal buffer, [get] flushes it and prepends this
     content to what we obtain from the Ethernet frames. *)
 
-val read : flow -> ?off:int -> ?len:int -> bytes -> int
+val read : buffered flow -> ?off:int -> ?len:int -> bytes -> int
 (** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
     [Bytes.length buf - off] from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
@@ -141,7 +159,7 @@ val read : flow -> ?off:int -> ?len:int -> bytes -> int
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val really_read : flow -> ?off:int -> ?len:int -> bytes -> unit
+val really_read : buffered flow -> ?off:int -> ?len:int -> bytes -> unit
 (** [really_read flow buf ~off ~len] reads [len] bytes (defaults to
     [Bytes.length buf - off]) from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
@@ -153,7 +171,7 @@ val really_read : flow -> ?off:int -> ?len:int -> bytes -> unit
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val write : flow -> ?off:int -> ?len:int -> string -> unit
+val write : 'k flow -> ?off:int -> ?len:int -> string -> unit
 (** [write fd str ~off ~len] writes [len] bytes (defaults to
     [String.length str - off]) from byte sequence [buf], starting at offset
     [off] (defaults to [0]), to the given connection [flow].
@@ -171,7 +189,7 @@ val write : flow -> ?off:int -> ?len:int -> string -> unit
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val write_without_interruption : flow -> ?off:int -> ?len:int -> string -> unit
+val write_without_interruption : 'k flow -> ?off:int -> ?len:int -> string -> unit
 (** [write_without_interruption] writes [len] bytes (defaults to
     [String.length str - off]) from byte sequence [buf], starting at offset
     [off] (defaults to [0]), to the given connection [flow].
@@ -186,7 +204,7 @@ val write_without_interruption : flow -> ?off:int -> ?len:int -> string -> unit
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val close : flow -> unit
+val close : 'k flow -> unit
 (** [close flow] closes properly the given [flow].
 
     {b NOTE}: [close] has the particularity of being effective and
@@ -204,18 +222,18 @@ val close : flow -> unit
         Miou.Ownership.disown r
     ]} *)
 
-val shutdown : flow -> [ `read | `write | `read_write ] -> unit
+val shutdown : 'k flow -> [ `read | `write | `read_write ] -> unit
 (** [shutdown flow mode] shutdowns a TCP connection. [`write] as second argument
     causes reads on the other end of the connection to return an {i end-of-file}
     condition. [`read] causes writes on the other end of the connection to
     return a {!exception:Closed_by_peer}. *)
 
-val peers : flow -> (Ipaddr.t * int) * (Ipaddr.t * int)
+val peers : 'k flow -> (Ipaddr.t * int) * (Ipaddr.t * int)
 (** [peers flow] returns [(local, remote)] where each element is an
     [(address, port)] pair identifying the two endpoints of the connection. This
     is analogous to {!val:Unix.getsockname} and {!val:Unix.getpeername}. *)
 
-val tags : flow -> Logs.Tag.set
+val tags : 'k flow -> Logs.Tag.set
 (** [tags flow] returns logging tags for the given flow. These tags contain
     connection metadata (local and remote addresses/ports) and can be attached
     to {!module:Logs} messages for structured debugging output. *)
@@ -235,7 +253,7 @@ val unlisten : state -> listen -> unit
 (** [unlisten state listen] unbounds the given [listen] and refuses subsequent
     TCP connections on the given port [listen]. *)
 
-val accept : state -> listen -> flow
+val accept : kind:'k kind -> state -> listen -> 'k flow
 (** [accept state listen] blocks the current Miou task until a client connects
     to the port associated with [listen], then returns a {!type:flow} connected
     to that client. This is analogous to {!val:Unix.accept}.
@@ -257,3 +275,7 @@ val accept : state -> listen -> flow
       in
       loop (Miou.orphans ())
     ]} *)
+
+(**/*)
+
+val unsafe_to_bufferize : direct flow -> buffered flow

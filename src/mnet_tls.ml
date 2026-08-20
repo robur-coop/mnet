@@ -26,7 +26,7 @@ type state =
 
 type t = {
     role: [ `Server | `Client ]
-  ; fd: Mnet.TCP.flow
+  ; fd: Mnet.TCP.direct Mnet.TCP.flow
   ; mutable state: state
   ; mutable linger: string option
   ; mutable rd_closed: bool

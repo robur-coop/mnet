@@ -5,7 +5,7 @@ val client :
   -> user:string
   -> [ `Pubkey of Awa.Hostkey.priv | `Password of string ]
   -> string
-  -> Mnet.TCP.flow
+  -> Mnet.TCP.direct Mnet.TCP.flow
   -> (flow, [> `Msg of string ]) result
 
 val read : flow -> bytes -> off:int -> len:int -> int
@@ -66,4 +66,4 @@ and channel = {
 }
 
 val server :
-  ?stop:Stop.t -> db -> Awa.Hostkey.priv -> Mnet.TCP.flow -> callback -> t
+  ?stop:Stop.t -> db -> Awa.Hostkey.priv -> Mnet.TCP.direct Mnet.TCP.flow -> callback -> t

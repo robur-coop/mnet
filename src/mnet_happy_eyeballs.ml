@@ -6,7 +6,7 @@ module HE = Happy_eyeballs
 
 [@@@warning "-duplicate-definitions"]
 
-type state = ((Ipaddr.t * int) * Mnet.TCP.flow) Miou.Computation.t
+type state = ((Ipaddr.t * int) * Mnet.TCP.direct Mnet.TCP.flow) Miou.Computation.t
 and entry = HE.id * attempt * [ `host ] Domain_name.t * addr
 and attempt = int
 and addr = Ipaddr.t * int
@@ -32,7 +32,7 @@ and connect = {
 }
 
 and action = [ `Connect_ip of connect_ip | `Connect of connect ]
-and connected = [ `Connected of entry * Mnet.TCP.flow ]
+and connected = [ `Connected of entry * Mnet.TCP.direct Mnet.TCP.flow ]
 
 type event =
   [ connected
@@ -63,7 +63,7 @@ and daemon = unit Miou.t
 
 let try_connect t ~meta ((ipaddr, port) as addr) () =
   try
-    let flow = Mnet.TCP.connect t.tcp addr in
+    let flow = Mnet.TCP.connect ~kind:Mnet.TCP.Direct t.tcp addr in
     Miou.Mutex.protect t.mutex @@ fun () ->
     Queue.push (`Connected (meta, flow)) t.queue;
     Miou.Condition.signal t.condition
@@ -339,15 +339,35 @@ let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t addrs =
   Miou.Condition.signal t.condition;
   state
 
-let connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t ips =
+let connect_ip : type k.
+     ?aaaa_timeout:int64
+  -> ?connect_delay:int64
+  -> ?connect_timeout:int64
+  -> kind:k Mnet.TCP.kind
+  -> t
+  -> (Ipaddr.t * int) list
+  -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result
+  = fun ?aaaa_timeout ?connect_delay ?connect_timeout ~kind t ips ->
   let state = connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t ips in
-  match Miou.Computation.await state with
-  | Ok _ as value -> value
-  | Error (Connection_failed (_host, msg), _) -> Error (`Msg msg)
-  | Error (exn, bt) -> Printexc.raise_with_backtrace exn bt
+  match Miou.Computation.await state, kind with
+  | Ok _ as value, Mnet.TCP.Direct -> value
+  | Ok (addr, flow), Mnet.TCP.Buffered -> Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
+  | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 
-let connect_host ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
-    ?resolve_retries t host ports =
+let connect_host : type k.
+     ?aaaa_timeout:int64
+  -> ?connect_delay:int64
+  -> ?connect_timeout:int64
+  -> ?resolve_timeout:int64
+  -> ?resolve_retries:int
+  -> kind:k Mnet.TCP.kind
+  -> t
+  -> [ `host ] Domain_name.t
+  -> int list
+  -> ((Ipaddr.t * int) * k Mnet.TCP.flow, [> `Msg of string ]) result
+  = fun ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
+    ?resolve_retries ~kind t host ports ->
   let state = Miou.Computation.create () in
   begin
     Miou.Mutex.protect t.mutex @@ fun () ->
@@ -366,21 +386,22 @@ let connect_host ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
     Queue.push (`Connect connect) t.queue;
     Miou.Condition.signal t.condition
   end;
-  match Miou.Computation.await state with
-  | Ok _ as value -> value
-  | Error (Connection_failed (_host, msg), _) -> Error (`Msg msg)
-  | Error (exn, bt) -> Printexc.raise_with_backtrace exn bt
+  match Miou.Computation.await state, kind with
+  | Ok _ as value, Mnet.TCP.Direct -> value
+  | Ok (addr, flow), Mnet.TCP.Buffered -> Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
+  | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 
 let connect ?aaaa_timeout ?connect_delay ?connect_timeout ?resolve_timeout
-    ?resolve_retries t str ports =
+    ?resolve_retries ~kind t str ports =
   match Ipaddr.of_string str with
   | Ok ipaddr ->
-      connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t
+      connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout ~kind t
         (List.map (fun port -> (ipaddr, port)) ports)
   | Error _ ->
       begin match Result.bind (Domain_name.of_string str) Domain_name.host with
       | Ok domain_name ->
           connect_host ?aaaa_timeout ?connect_delay ?connect_timeout
-            ?resolve_timeout ?resolve_retries t domain_name ports
+            ?resolve_timeout ?resolve_retries ~kind t domain_name ports
       | Error _ -> error_msgf "Invalid endpoint: %S" str
       end
