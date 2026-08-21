@@ -90,15 +90,10 @@ let select t ~is_reachable ipaddr =
   let fn key { Router.preference; lmtu; _ } acc =
     if is_reachable key then (key, preference, lmtu) :: acc else acc
   in
-  let select routers =
-    let rec go ((_, pref, _) as acc) = function
-      | [] -> acc
-      | ((_, pref', _) as hd) :: tl ->
-        if pref' > pref then go hd tl else go acc tl
-    in
-    match routers with
-    | [] -> failwith "This would have been List.hd"
-    | hd :: tl -> go hd tl
+  let rec select ((_, pref, _) as acc) = function
+    | [] -> acc
+    | ((_, pref', _) as hd) :: tl ->
+      if pref' > pref then go hd tl else go acc tl
   in
   match Routers.fold_k fn [] t with
   | [] when Routers.is_empty t -> (ipaddr, None, t)
@@ -106,6 +101,6 @@ let select t ~is_reachable ipaddr =
       (* NOTE(dinosaure): round-robin choice of routers. *)
       let[@warning "-partial-match"] (Some (ipaddr, _)) = Routers.lru t in
       (ipaddr, None, Routers.promote ipaddr t)
-  | routers ->
-      let ipaddr, _, lmtu = select routers in
+  | hd :: tl ->
+      let ipaddr, _, lmtu = select hd tl in
       (ipaddr, lmtu, Routers.promote ipaddr t)
