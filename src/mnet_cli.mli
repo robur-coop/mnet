@@ -23,9 +23,15 @@ val ipv6 : Mnet.IPv6.mode Term.t
     to define how the static IPv6 address is generated (see {!type:IPv6.mode}).
 *)
 
-val setup : (Ipaddr.V4.Prefix.t * Ipaddr.V4.t option * Mnet.IPv6.mode) Term.t
-(** [setup] aggregates {!val:ipv4}, {!val:ipv4_gateway} and {!val:ipv6} to be
-    able to create a [mnet] {!type:Mnet.stack} (via {!val:Mnet.stack}). *)
+val ipv6_gateway : Ipaddr.V6.t option Term.t
+(** [ipv6_gateway] defines the [--ipv6-gateway] option. This option is optional
+    and allows you to define a {i gateway} (an {i exit} point when a packet is
+    destined for a node outside the link-local network). *)
+
+val setup : (Ipaddr.V4.Prefix.t * Ipaddr.V4.t option * Mnet.IPv6.mode * Ipaddr.V6.t option) Term.t
+(** [setup] aggregates {!val:ipv4}, {!val:ipv4_gateway}, {!val:ipv6} and
+    {!val:ipv6_gateway} to be able to create a [mnet] {!type:Mnet.stack}
+    (via {!val:Mnet.stack}). *)
 
 type nameserver =
   [ `Tls of Tls.Config.client * Ipaddr.t * int | `Plaintext of Ipaddr.t * int ]
