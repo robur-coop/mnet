@@ -125,12 +125,13 @@ module Parser = struct
   let decode_ra sbstr =
     let current_hop_limit = SBstr.get_uint8 sbstr 4 in
     (* RFC 4191 Section 2.2: Router Preference is bits 3-4 of the flags byte.
-       00 = Medium (default), 01 = High, 10 = Low, 11 = Reserved (treat as 0) *)
+       00 = Medium (default), 01 = High, 11 = Low, 10 = Reserved (treat as 0) *)
     let flags = SBstr.get_uint8 sbstr 5 in
     let preference =
-      match (flags lsr 3) land 0x3 with
-      | 0x3 -> 0 (* Reserved, treat as Medium *)
-      | prf -> prf
+      match (flags lsr 3) land 0b11 with
+      | 0b10 -> 0 (* Reserved, treat as Medium *)
+      | 0b11 -> -1 (* Low *)
+      | prf -> prf (* Medium and High, 0 and 1 *)
     in
     let router_lifetime = SBstr.get_uint16_be sbstr 6 in
     let reachable_time = SBstr.get_int32_be sbstr 8 in

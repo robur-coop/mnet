@@ -97,7 +97,8 @@ let select t ~is_reachable ipaddr =
       let[@warning "-partial-match"] (Some (ipaddr, _)) = Routers.lru t in
       (ipaddr, None, Routers.promote ipaddr t)
   | routers ->
-      let fn (_, a, _) (_, b, _) = Int.compare b a in
+      (* The higher preference is preferred, so invert comparison *)
+      let fn (_, a, _) (_, b, _) = -Int.compare b a in
       let routers = List.sort fn routers in
       let ipaddr, _, lmtu = List.hd routers in
       (ipaddr, lmtu, Routers.promote ipaddr t)
