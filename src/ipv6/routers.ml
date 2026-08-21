@@ -90,8 +90,8 @@ let select t ~is_reachable ipaddr =
   let fn key { Router.preference; lmtu; _ } acc =
     if is_reachable key then (key, preference, lmtu) :: acc else acc
   in
-  let rec select ((_, pref, _) as acc) = function
-    | [] -> acc
+  let rec select ((ipaddr, pref, lmtu) as acc) = function
+    | [] -> ipaddr, lmtu
     | ((_, pref', _) as hd) :: tl ->
       if pref' > pref then go hd tl else go acc tl
   in
@@ -102,5 +102,5 @@ let select t ~is_reachable ipaddr =
       let[@warning "-partial-match"] (Some (ipaddr, _)) = Routers.lru t in
       (ipaddr, None, Routers.promote ipaddr t)
   | hd :: tl ->
-      let ipaddr, _, lmtu = select hd tl in
+      let ipaddr, lmtu = select hd tl in
       (ipaddr, lmtu, Routers.promote ipaddr t)
