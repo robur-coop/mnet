@@ -36,11 +36,19 @@ let ipv4_gateway =
   & opt (some ipaddr) None
   & info [ "ipv4-gateway" ] ~doc ~docs:s_network ~docv:"IPv4"
 
-let setup ipv4 ipv4_gateway ipv6 = (ipv4, ipv4_gateway, ipv6)
+let ipv6_gateway =
+  let doc = "The IPv6 gateway." in
+  let ipaddr = Arg.conv (Ipaddr.V6.of_string, Ipaddr.V6.pp) in
+  let open Arg in
+  value
+  & opt (some ipaddr) None
+  & info [ "ipv6-gateway" ] ~doc ~docs:s_network ~docv:"IPv6"
+
+let setup ipv4 ipv4_gateway ipv6 ipv6_gateway = (ipv4, ipv4_gateway, ipv6, ipv6_gateway)
 
 let setup =
   let open Term in
-  const setup $ ipv4 $ ipv4_gateway $ ipv6
+  const setup $ ipv4 $ ipv4_gateway $ ipv6 $ ipv6_gateway
 
 let s_output = "OUTPUT OPTIONS"
 let s_logs = "LOGS OPTIONS"
