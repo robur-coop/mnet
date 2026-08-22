@@ -353,8 +353,8 @@ let connect_ip : type k.
   let state = connect_ip ?aaaa_timeout ?connect_delay ?connect_timeout t ips in
   match (Miou.Computation.await state, kind) with
   | (Ok _ as value), Mnet.TCP.Direct -> value
-  | Ok (addr, flow), Mnet.TCP.Buffered ->
-      Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  | Ok (addr, flow), Mnet.TCP.Buffer { len; limit } ->
+      Ok (addr, Mnet.TCP.unsafe_to_bufferize ~limit len flow)
   | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
   | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 
@@ -391,8 +391,8 @@ let connect_host : type k.
   end;
   match (Miou.Computation.await state, kind) with
   | (Ok _ as value), Mnet.TCP.Direct -> value
-  | Ok (addr, flow), Mnet.TCP.Buffered ->
-      Ok (addr, Mnet.TCP.unsafe_to_bufferize flow)
+  | Ok (addr, flow), Mnet.TCP.Buffer { len; limit } ->
+      Ok (addr, Mnet.TCP.unsafe_to_bufferize ~limit len flow)
   | Error (Connection_failed (_host, msg), _), _ -> Error (`Msg msg)
   | Error (exn, bt), _ -> Printexc.raise_with_backtrace exn bt
 

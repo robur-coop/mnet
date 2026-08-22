@@ -10,47 +10,53 @@
     Errors are reported via exceptions rather than result types, which makes the
     API closer to {!module:Unix}. The three exceptions {!exception:Net_unreach},
     {!exception:Closed_by_peer}, and {!exception:Connection_refused} cover the
-    main failure modes.
+    main failure modes. We advise the user to use [Miou.Ownership] to attach a
+    finalizer (such as {!val:close}) which will be called for abnormal
+    termination (cancellation or exception).
 
     {2 Zero-copy vs buffered reads.}
 
     Two reading strategies are available:
-    - {!val:get} returns data directly from the Ethernet frame. This is the fast
-      path when you can process data in-place.
-    - {!val:read} copies data into a user-supplied buffer. An internal buffer
-      handles overflow when the frame payload exceeds the buffer size.
+    - {!val:get} returns data directly from what [utcp] gives to us. This is the
+      fast path when you can process data in-place.
+    - {!val:read} (and {!val:really_read} copies data into a user-supplied
+      buffer. An internal buffer handles overflow when the [utcp]'s payload
+      exceeds the user-supplied buffer size.
 
     [mnet] concretize these strategy via the type {!type:kind} which specify
     which one the user would like use. {!val:connect} and {!val:accept} expect
     such {!type:kind} in order to propose a {!type:flow} with one of these
-    strategies. The {!val:buffered} strategy implies an allocation of a buffer
-    (which can also grow) where the {!val:direct} strategy gives you something
-    close to what [utcp] can give to us.
+    strategies. The {!val:buffered} strategy implies an allocation of an
+    internal buffer (which can also grow out of the user's control) where the
+    {!val:direct} strategy gives you something close to what [utcp] can give to
+    us and does not allocate behind the scene.
 
     {2 Concurrency model.}
 
     TCP runs a background daemon (see {!val:create}) that processes incoming
-    segments, retransmissions, and timers. Most operations ({!val:read},
-    {!val:accept}, {!val:connect}) may suspend the current Miou task. Some
-    operations ({!val:close}, {!val:write_without_interruption}) are
+    segments, retransmissions, and timers. Most operations ({!val:get},
+    {!val:read}, {!val:accept}, {!val:connect}) may suspend the current Miou
+    task. Some operations ({!val:close}, {!val:write_without_interruption}) are
     {i uninterruptible}: they complete without yielding to the scheduler, making
-    them safe for use in finalizers.
+    them safe for use in Miou's finalizers.
 
     {2 Example: echo server.}
 
     {[
-    let listen = Mnet.TCP.listen tcp 9000 in
+    let listen = Mnet.TCP.listen tcp 7 in
     let flow = Mnet.TCP.accept ~kind:Mnet.TCP.buffered tcp listen in
+    let resource = Miou.Ownership.create ~finally:Mnet.TCP.close flow in
+    Miou.Ownership.own resource;
+    let@ () = fun () -> Miou.Ownership.release resource in
     let buf = Bytes.create 4096 in
-    let rec loop () =
+    let rec go () =
       let len = Mnet.TCP.read flow buf in
       if len > 0 then begin
         Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
-        loop ()
+        go ()
       end
     in
-    (try loop () with Mnet.TCP.Closed_by_peer -> ());
-    Mnet.TCP.close flow
+    go ()
     ]}
 
     {2 Example: client.}
@@ -94,12 +100,14 @@ type 'k flow
     {!val:get} or {!val:read} (depending on the kind of flow), {!val:write}, and
     {!val:close} operations. *)
 
-and buffered
+and buffer
 and direct
 
-type 'k kind = Buffered : buffered kind | Direct : direct kind
+type 'k kind =
+  | Buffer : { len: int; limit: int option } -> buffer kind
+  | Direct : direct kind
 
-val buffered : buffered kind
+val buffer : ?limit:int option -> int -> buffer kind
 val direct : direct kind
 
 type daemon
@@ -142,7 +150,7 @@ val get : direct flow -> (string list, [> `Eof | `Refused ]) result
     If data exists in the internal buffer, [get] flushes it and prepends this
     content to what we obtain from the Ethernet frames. *)
 
-val read : buffered flow -> ?off:int -> ?len:int -> bytes -> int
+val read : buffer flow -> ?off:int -> ?len:int -> bytes -> int
 (** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
     [Bytes.length buf - off] from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
@@ -159,7 +167,7 @@ val read : buffered flow -> ?off:int -> ?len:int -> bytes -> int
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val really_read : buffered flow -> ?off:int -> ?len:int -> bytes -> unit
+val really_read : buffer flow -> ?off:int -> ?len:int -> bytes -> unit
 (** [really_read flow buf ~off ~len] reads [len] bytes (defaults to
     [Bytes.length buf - off]) from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
@@ -279,4 +287,4 @@ val accept : kind:'k kind -> state -> listen -> 'k flow
 
 (**/*)
 
-val unsafe_to_bufferize : direct flow -> buffered flow
+val unsafe_to_bufferize : ?limit:int option -> int -> direct flow -> buffer flow

@@ -4,68 +4,6 @@ exception Connection_refused
 
 [@@@warning "-duplicate-definitions"]
 
-module Buf = struct
-  type t = { mutable buf: bytes; mutable off: int; mutable len: int }
-
-  let create size =
-    let buf = Bytes.create size in
-    { buf; off= 0; len= 0 }
-
-  let available { buf; off; len } = Bytes.length buf - off - len
-  let length { len; _ } = len
-
-  let compress t =
-    if t.len == 0 then begin
-      t.off <- 0;
-      t.len <- 0
-    end
-    else if t.off > 0 then begin
-      Bytes.blit t.buf t.off t.buf 0 t.len;
-      t.off <- 0
-    end
-
-  let get t ~fn =
-    let n = fn t.buf ~off:t.off ~len:t.len in
-    t.off <- t.off + n;
-    t.len <- t.len - n;
-    if t.len == 0 then t.off <- 0;
-    n
-
-  let put t ~fn =
-    compress t;
-    let off = t.off + t.len in
-    let buf = t.buf in
-    if Bytes.length buf == t.len then begin
-      (* TODO(dinosaure): we probably should add a limit here. *)
-      t.buf <- Bytes.create (2 * Bytes.length buf);
-      Bytes.blit buf t.off t.buf 0 t.len
-    end;
-    let n = fn t.buf ~off ~len:(Bytes.length t.buf - off) in
-    t.len <- t.len + n;
-    n
-
-  let _flush t =
-    let tmp = Bytes.create t.len in
-    Bytes.blit t.buf t.off tmp 0 t.len;
-    t.off <- 0;
-    t.len <- 0;
-    Bytes.unsafe_to_string tmp
-
-  let fill t =
-    let rec go str str_off str_len =
-      if str_len > 0 then begin
-        let len = Int.min str_len (available t) in
-        let fn dst ~off:dst_off ~len:_ =
-          Bytes.blit_string str str_off dst dst_off len;
-          len
-        in
-        let _ = put t ~fn in
-        go str (str_off + len) (str_len - len)
-      end
-    in
-    List.iter (fun str -> go str 0 (String.length str))
-end
-
 module Notify = struct
   type 'a t = {
       queue: 'a Queue.t
@@ -120,10 +58,13 @@ and accept =
   | Await of direct flow Miou.Computation.t
   | Pending of direct flow Queue.t
 
-and 'k flow = { state: state; tags: Logs.Tag.set; flow: Utcp.flow; buffer: 'k }
-and buffered = Buf.t
+and 'k flow = { state: state; tags: Logs.Tag.set; flow: Utcp.flow; kind: 'k }
+and buffer = Ke.t
 and direct = Direct
-and 'k kind = Buffered : buffered kind | Direct : direct kind
+
+and 'k kind =
+  | Buffer : { len: int; limit: int option } -> buffer kind
+  | Direct : direct kind
 
 let connections (t : state) = Utcp.num_connections t.tcp
 
@@ -238,27 +179,18 @@ let rec get (t : _ flow) =
       Error `Refused
   | Error `Not_found -> Error `Refused
 
-let read (t : buffered flow) ?off:(dst_off = 0) ?len buf =
-  let default = Bytes.length buf - dst_off in
-  let len = Option.value ~default len in
-  let fn tmp ~off:src_off ~len:src_len =
-    let len = Int.min src_len len in
-    Bytes.blit tmp src_off buf dst_off len;
-    len
-  in
-  if Buf.length t.buffer > 0 then Buf.get t.buffer ~fn
-  else
-    match get t with
-    | Ok data -> Buf.fill t.buffer data; Buf.get t.buffer ~fn
-    | Error `Eof -> 0
-    | Error `Refused -> 0
+let read (t : buffer flow) ?(off = 0) ?len buf =
+  let len = match len with Some len -> len | None -> Bytes.length buf - off in
+  if Ke.length t.kind = 0 then Result.iter (List.iter (Ke.push t.kind)) (get t);
+  let len = Ke.peek_into_bytes t.kind ~off ~len buf in
+  Ke.unsafe_shift t.kind len; len
 
-let rec really_read (t : buffered flow) off len buf =
+let rec really_read (t : buffer flow) off len buf =
   let len' = read t ~off ~len buf in
-  if len' == 0 then raise End_of_file
+  if len' = 0 then raise End_of_file
   else if len - len' > 0 then really_read t (off + len') (len - len') buf
 
-let really_read (t : buffered flow) ?(off = 0) ?len buf =
+let really_read (t : buffer flow) ?(off = 0) ?len buf =
   let len = match len with None -> Bytes.length buf - off | Some len -> len in
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "TCP.really_read";
@@ -376,7 +308,7 @@ let handler state src dst payload =
               m "established connection with %a:%d" Ipaddr.pp ipaddr port);
           let tags = IPv4.tags state.ipv4 Logs.Tag.empty in
           let tags = Logs.Tag.add Mnet_tags.tcp (ipaddr, port) tags in
-          let flow = { state; tags; flow; buffer= Direct } in
+          let flow = { state; tags; flow; kind= Direct } in
           begin match Hashtbl.find state.accept src_port with
           | Await c ->
               Hashtbl.remove state.accept src_port;
@@ -491,7 +423,7 @@ let cast : type k. k kind -> direct flow -> k flow =
  fun kind flow ->
   match kind with
   | Direct -> flow
-  | Buffered -> { flow with buffer= Buf.create 0x7ff }
+  | Buffer { len; limit } -> { flow with kind= Ke.create ~limit len }
 
 (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
 let accept : type k. kind:k kind -> state -> listen -> k flow =
@@ -516,7 +448,7 @@ let accept : type k. kind:k kind -> state -> listen -> k flow =
           Hashtbl.replace state.accept port (Await c);
           Miou.Computation.await_exn c |> cast kind
       | flow, Direct -> flow
-      | flow, Buffered -> { flow with buffer= Buf.create 0x7ff }
+      | flow, Buffer { len; limit } -> { flow with kind= Ke.create ~limit len }
     end
 
 let listen state port =
@@ -594,11 +526,13 @@ let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow =
   state.tcp <- tcp;
   write_ip state.ipv4 state.ipv6 seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
-  let buffer : k =
-    match kind with Buffered -> Buf.create 0x7ff | Direct -> Direct
+  let kind : k =
+    match kind with
+    | Buffer { len; limit } -> Ke.create ~limit len
+    | Direct -> Direct
   in
   match Notify.await c with
-  | Ok () -> { state; flow; tags; buffer }
+  | Ok () -> { state; flow; tags; kind }
   | Error `Eof ->
       Log.err (fun m ->
           m ~tags "%a error established connection (timeout)" Utcp.pp_flow flow);
@@ -608,6 +542,8 @@ let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow =
           m ~tags "%a error established connection: %s" Utcp.pp_flow flow msg);
       raise Connection_refused
 
-let unsafe_to_bufferize = cast Buffered
-let buffered = Buffered
+let unsafe_to_bufferize ?(limit = Some 0x2000) len =
+  cast (Buffer { len; limit })
+
+let buffer ?(limit = Some 0x2000) len = Buffer { len; limit }
 let direct : direct kind = Direct

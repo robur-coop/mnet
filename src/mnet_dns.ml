@@ -1,5 +1,6 @@
 let pp_addr ppf (ipaddr, port) = Fmt.pf ppf "%a:%d" Ipaddr.pp ipaddr port
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
+let failwithf fmt = Fmt.kstr failwith fmt
 let ( let* ) = Result.bind
 let ( let@ ) finally fn = Fun.protect ~finally fn
 let src = Logs.Src.create "mnet.dns"
@@ -136,12 +137,15 @@ module Transport = struct
   let rec connect_to_nameservers t nameservers =
     let ns = to_pairs nameservers in
     let connect_timeout = Int64.of_int t.timeout in
+    let kind = Mnet.TCP.direct in
     let* addr, flow =
-      Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Direct ~connect_timeout t.he
-        ns
+      Mnet_happy_eyeballs.connect_ip ~kind ~connect_timeout t.he ns
     in
     match tls_config_of_nameserver t.nameservers addr with
-    | None -> Ok (addr, `Plain flow)
+    | None ->
+        let limit = Some 0x4000 in
+        let flow = Mnet.TCP.unsafe_to_bufferize ~limit 0x2000 flow in
+        Ok (addr, `Plain flow)
     | Some cfg -> try_tls_connection t nameservers cfg addr flow
 
   and try_tls_connection t nameservers cfg addr flow =
@@ -164,11 +168,11 @@ module Transport = struct
      We trigger the [ivar]s associated with the [uid]s extracted from the
      packets. The ringbuffer [ke] should not grow more than 8192 bytes.
 
-     A DNS-over-TCP/TLS frame is a 2-byte big-endian length [len] followed by
-     [len] bytes of DNS payload, kept as-is in [packet] (the consumer in
-     [Dns_client] strips the prefix). We therefore must wait until the buffer
-     holds the full [len + 2] bytes before extracting the frame, otherwise
-     [String.sub] raises [Invalid_argument] and kills the reader fiber. *)
+     A DNS-over-TLS frame is a 2-byte big-endian length [len] followed by [len]
+     bytes of DNS payload, kept as-is in [packet] (the consumer in [Dns_client]
+     strips the prefix). We therefore must wait until the buffer holds the full
+     [len + 2] bytes before extracting the frame, otherwise [String.sub] raises
+     [Invalid_argument] and kills the reader fiber. *)
   let process ke reqs =
     let rec go () =
       match Ke.peek ke with
@@ -192,19 +196,22 @@ module Transport = struct
     in
     go ()
 
-  let rec read_from_tcp t ke buf flow =
-    match Mnet.TCP.get flow with
-    | exception Miou.Cancelled ->
-        Log.debug (fun m ->
-            m "TCP connection closed by us (useless connection)")
-    | exception exn ->
-        Log.err (fun m ->
-            m "TCP connection failed with: %s" (Printexc.to_string exn))
-    | Ok sstr ->
-        List.iter (Ke.push ke) sstr;
-        process ke t.reqs;
-        read_from_tcp t ke buf flow
-    | Error _ -> ()
+  let rec read_from_tcp t flow =
+    let hdr = Bytes.create 2 in
+    Mnet.TCP.really_read flow hdr;
+    let len = Bytes.get_uint16_be hdr 0 in
+    let pkt = Bytes.create (2 + len) in
+    Bytes.set_uint16_be pkt 0 len;
+    Mnet.TCP.really_read flow ~off:2 pkt;
+    let packet = Bytes.unsafe_to_string pkt in
+    let uid = String.get_uint16_be packet 2 in
+    Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
+    Log.debug (fun m ->
+        m "Something waiting for this response? %b"
+          (Option.is_some (Reqs.find_opt uid t.reqs)));
+    let fn (_tx, ivar) = ignore (Miou.Computation.try_return ivar packet) in
+    Option.iter fn (Reqs.find_opt uid t.reqs);
+    read_from_tcp t flow
 
   let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with
@@ -267,15 +274,15 @@ module Transport = struct
         Log.debug (fun m -> m "Connected to %a" pp_addr addr);
         let resource = Miou.Ownership.create ~finally flow in
         Miou.Ownership.own resource;
+        let@ () = fun () -> Miou.Ownership.release resource in
         let prm0 =
           Miou.async @@ fun () ->
           match flow with
-          | `Plain flow -> read_from_tcp t ke buf flow
+          | `Plain flow -> read_from_tcp t flow
           | `TLS flow -> read_from_tls t ke buf flow
         in
         let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
-        Miou.Ownership.release resource;
         `Connected
     | Error (`Msg msg) ->
         Log.warn (fun m -> m "Failed to connect to nameservers: %s" msg);
