@@ -104,6 +104,43 @@ val kill : t -> unit
 
     This function should be called when the unikernel is shutting down. *)
 
+module Or_static : sig
+  type _ w =
+    | Dhcp
+      : { timeout : int option
+        ; config : config }
+        -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) w
+    (** [Dhcp { timeout; config }] is a witness for a {!stack}. *)
+    | Static :
+        { ipv4addr : Ipaddr.V4.Prefix.t ; gateway : Ipaddr.V4.t option }
+        -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) w
+    (** [Static { ipv4addr; gateway }] is a witness for a {!Mnet.stack}
+        with ipv4 configuration *)
+  (** ['dhcp_or_static w] is a type witness for either a static
+      {!Mnet.stack} or a DHCP {!stack}. *)
+
+  type any = Any : _ w -> any
+  (** [Any witness] is an existential holding a witness *)
+
+  val dhcp : ?timeout: int -> config
+    -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) w
+
+  val static : ?gateway:Ipaddr.V4.t -> Ipaddr.V4.Prefix.t
+    -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) w
+
+  val stack : ?ipv6:IPv6.mode -> ?max:int option -> name:string -> 'dyn w -> 'dyn Mkernel.arg
+  (** [stack ?ipv6 ?max ~name witness] is either a static {!Mnet.stack} or a DHCP {!stack}. *)
+
+  val kill : 'dyn w -> 'dyn -> unit
+  (** [kill witness dev] calls either {!Mnet.kill} or {!kill}. *)
+
+  val proj_tcp : 'dyn w -> 'dyn -> Mnet.TCP.state
+
+  val proj_udp : 'dyn w -> 'dyn -> Mnet.UDP.state
+
+  val proj_lease : 'dyn w -> 'dyn -> lease option
+end
+
 (**/*)
 
 val tcp : t -> Mnet.TCP.daemon

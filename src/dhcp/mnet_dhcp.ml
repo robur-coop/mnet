@@ -548,3 +548,49 @@ let stack ?(timeout = _5m) ~name ?max ?(ipv6 = IPv6.EUI64) config =
   in
   Mkernel.(map fn [ net name ])
   |> Mkernel.finally (fun (daemon, _, _, _) -> kill daemon)
+
+module Or_static = struct
+  type _ w =
+    | Dhcp : {
+          timeout: int option
+        ; config: config
+      }
+        -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) w
+    | Static : {
+          ipv4addr: Ipaddr.V4.Prefix.t
+        ; gateway: Ipaddr.V4.t option
+      }
+        -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) w
+
+  let dhcp ?timeout config = Dhcp { timeout; config }
+  let static ?gateway ipv4addr = Static { ipv4addr; gateway }
+
+  type any = Any : _ w -> any
+
+  let stack (type dyn) ?ipv6 ?max ~name (w : dyn w) : dyn Mkernel.arg =
+    match w with
+    | Dhcp { timeout; config } -> stack ?timeout ?ipv6 ?max ~name config
+    | Static { ipv4addr; gateway } ->
+        Mnet.stack ~name ?max ?gateway ?ipv6 ipv4addr
+        |> Mnet.finally (fun (daemon, _, _) -> Mnet.kill daemon)
+
+  let kill (type dyn) (w : dyn w) : dyn -> unit =
+    match w with
+    | Dhcp _ -> fun (t, _, _, _) -> kill t
+    | Static _ -> fun (t, _, _) -> Mnet.kill t
+
+  let proj_tcp (type dyn) (w : dyn w) : dyn -> Mnet.TCP.state =
+    match w with
+    | Dhcp _ -> fun (_, tcp, _, _) -> tcp
+    | Static _ -> fun (_, tcp, _) -> tcp
+
+  let proj_udp (type dyn) (w : dyn w) : dyn -> Mnet.UDP.state =
+    match w with
+    | Dhcp _ -> fun (_, _, udp, _) -> udp
+    | Static _ -> fun (_, _, udp) -> udp
+
+  let proj_lease (type dyn) (w : dyn w) : dyn -> lease option =
+    match w with
+    | Dhcp _ -> fun (_, _, _, lease) -> Some lease
+    | Static _ -> fun _ -> None
+end
