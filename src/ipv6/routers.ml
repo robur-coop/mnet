@@ -93,7 +93,7 @@ let select t ~is_reachable ipaddr =
   let rec select ((ipaddr, pref, lmtu) as acc) = function
     | [] -> ipaddr, lmtu
     | ((_, pref', _) as hd) :: tl ->
-      if pref' > pref then go hd tl else go acc tl
+      if pref' > pref then select hd tl else select acc tl
   in
   match Routers.fold_k fn [] t with
   | [] when Routers.is_empty t -> (ipaddr, None, t)
