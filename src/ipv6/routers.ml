@@ -48,7 +48,8 @@ let make ?gateway capacity =
   then failwith "ohno expected link-local gateway";
   let t = Routers.empty capacity in
   Option.fold gateway ~none:t ~some:(fun gw ->
-      let route = { Router.expire_at= None; preference= -1; lmtu= None } in
+      (* preference 2 doesn't occur on the wire; so prioritized highest *)
+      let route = { Router.expire_at= None; preference = 2; lmtu= None } in
       Routers.add gw route t)
 
 let mem t addr = Routers.mem addr t
