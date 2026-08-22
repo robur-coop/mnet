@@ -30,3 +30,7 @@ build: [
 ]
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
+
+pin-depends: [
+  [ "mkernel.dev" "git+https://git.robur.coop/robur/mkernel.git#3d394dcbd6adaf17b9f64f5108a43b6f933b6616" ]
+]
