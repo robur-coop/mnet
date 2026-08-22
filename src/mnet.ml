@@ -162,10 +162,10 @@ let kill t =
   Ethernet.kill t.ethd
 
 let stack ~name ?max ?gateway ?(ipv6 = IPv6.EUI64) cidr =
-  let fn (net, cfg) () =
+  let fn net () =
     let connect mac =
       let ( let* ) = Result.bind in
-      let* ethd, eth = Ethernet.create ~mtu:cfg.Mkernel.Net.mtu mac net in
+      let* ethd, eth = Ethernet.create ~mtu:(Mkernel.Net.mtu net) mac net in
       let ipaddr = Ipaddr.V4.Prefix.address cidr in
       let* arpv4d, arpv4 = ARPv4.create ~ipaddr eth in
       let* ipv4 = IPv4.create eth arpv4 ?gateway ~cidr () in
@@ -180,7 +180,7 @@ let stack ~name ?max ?gateway ?(ipv6 = IPv6.EUI64) cidr =
       let stack = { ethd; arpv4d; udp; icmpv4; ipv6d; tcpd; ipv4; ipv6 } in
       Ok (stack, tcp, udp)
     in
-    let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
+    let mac = Macaddr.of_octets_exn (Mkernel.Net.mac net :> string) in
     match connect mac with
     | Ok daemon -> daemon
     | Error err -> Fmt.failwith "%a" pp_error err

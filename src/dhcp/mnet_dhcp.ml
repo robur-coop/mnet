@@ -500,11 +500,11 @@ let or_raise = function Ok v -> v | Error exn -> raise exn
 let _5m = 300_000_000_000 (* 5 minutes in nanoseconds. *)
 
 let stack ?(timeout = _5m) ~name ?max ?(ipv6 = IPv6.EUI64) config =
-  let fn (net, cfg) () =
+  let fn net () =
     let connect mac =
       (* NOTE(dinosaure): see [Mnet.stack] to understand what we do here. *)
       let ( let* ) = Result.bind in
-      let* ethd, eth = Ethernet.create ~mtu:cfg.Mkernel.Net.mtu mac net in
+      let* ethd, eth = Ethernet.create ~mtu:(Mkernel.Net.mtu net) mac net in
       let* arpv4d, arpv4 = ARPv4.create eth in
       let* ipv4 = IPv4.create eth arpv4 () in
       let* ipv6, ipv6d = IPv6.create eth ipv6 in
@@ -541,7 +541,7 @@ let stack ?(timeout = _5m) ~name ?max ?(ipv6 = IPv6.EUI64) config =
       let lease = Miou.await_first [ prm0; prm1 ] |> or_raise in
       Ok (stack, tcp, udp, lease)
     in
-    let mac = Macaddr.of_octets_exn (cfg.Mkernel.Net.mac :> string) in
+    let mac = Macaddr.of_octets_exn (Mkernel.Net.mac net :> string) in
     match connect mac with
     | Ok daemon -> daemon
     | Error err -> Fmt.failwith "%a" pp_error err
