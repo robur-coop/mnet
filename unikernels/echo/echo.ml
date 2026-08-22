@@ -54,6 +54,8 @@ let rec terminate orphans =
       Result.iter_error fn result;
       terminate orphans
 
+let buffer = Mnet.TCP.buffer ~limit:(Some 0x4000) 0x2000
+
 let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
   @@ fun rng (daemon, tcp, _udp) () ->
@@ -68,7 +70,7 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
         match limit with
         | Some limit when limit <= 0 -> ()
         | None | Some _ ->
-            let flow = Mnet.TCP.accept ~kind:Mnet.TCP.Buffered tcp listen in
+            let flow = Mnet.TCP.accept ~kind:buffer tcp listen in
             let _ = Miou.async ~orphans @@ fun () -> handler flow in
             let limit = Option.map pred limit in
             go orphans listen limit
@@ -79,11 +81,10 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
   | `Client (edn, length) ->
       let result =
         match edn with
-        | `Ipaddr edn ->
-            Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.Buffered he [ edn ]
+        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip ~kind:buffer he [ edn ]
         | `Domain domain_name ->
-            Mnet_happy_eyeballs.connect_host ~kind:Mnet.TCP.Buffered he
-              domain_name [ 9000 ]
+            Mnet_happy_eyeballs.connect_host ~kind:buffer he domain_name
+              [ 9000 ]
       in
       let flow =
         match result with

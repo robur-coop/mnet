@@ -1,6 +1,5 @@
 let pp_addr ppf (ipaddr, port) = Fmt.pf ppf "%a:%d" Ipaddr.pp ipaddr port
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
-let failwithf fmt = Fmt.kstr failwith fmt
 let ( let* ) = Result.bind
 let ( let@ ) finally fn = Fun.protect ~finally fn
 let src = Logs.Src.create "mnet.dns"

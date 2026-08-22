@@ -46,7 +46,8 @@ module Transport : sig
     -> [ `Plaintext of Ipaddr.t * int
        | `Tls of Tls.Config.client * Ipaddr.t * int ]
        list
-    -> ( (Ipaddr.t * int) * [> `Plain of Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+    -> ( (Ipaddr.t * int)
+         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
        , [> `Msg of string ] )
        result
 
@@ -57,17 +58,20 @@ module Transport : sig
        list
     -> Tls.Config.client
     -> Ipaddr.t * int
-    -> Mnet.TCP.flow
-    -> ( (Ipaddr.t * int) * [> `Plain of Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+    -> Mnet.TCP.direct Mnet.TCP.flow
+    -> ( (Ipaddr.t * int)
+         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
        , [> `Msg of string ] )
        result
 
   val process : Ke.t -> ('a * string Miou_sync.Computation.t) Reqs.t -> unit
-  val read_from_tcp : context -> Ke.t -> bytes -> Mnet.TCP.flow -> unit
+  val read_from_tcp : context -> Mnet.TCP.buffer Mnet.TCP.flow -> unit
   val read_from_tls : context -> Ke.t -> bytes -> Mnet_tls.t -> unit
 
   val write_to_connection :
-    context -> [< `Plain of Mnet.TCP.flow | `TLS of Mnet_tls.t ] -> 'a
+       context
+    -> [< `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+    -> 'a
 
   val _backoff_max : int
   val read_from_connection : context -> Ke.t -> [> `Connect_failed | `Connected ]

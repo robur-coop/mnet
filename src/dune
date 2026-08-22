@@ -10,11 +10,6 @@
  (libraries fmt ipaddr macaddr logs))
 
 (library
- (name ke)
- (public_name mnet.ke)
- (modules ke))
-
-(library
  (name mnet_cli)
  (public_name mnet-cli)
  (modules mnet_cli)
