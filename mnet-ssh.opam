@@ -8,8 +8,6 @@ license: "MIT"
 
 depends: [
   "ocaml" {>= "5.0.0"}
-  "utcp"
-  "miou" {>= "0.7.0"}
   "dune" {>= "2.7.0"}
   "mnet" {= version}
   "awa" {>= "0.6.1"}

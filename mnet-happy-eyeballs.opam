@@ -8,7 +8,6 @@ license: "MIT"
 
 depends: [
   "ocaml" {>= "5.0.0"}
-  "utcp"
   "dune" {>= "2.7.0"}
   "mnet" {= version}
   "happy-eyeballs" {>= "2.0.0"}

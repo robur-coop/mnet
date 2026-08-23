@@ -13,6 +13,8 @@ depends: [
   "mnet" {= version}
   "mirage-ptime"
   "re"
+  "logs"
+  "fmt"
   "duration"
   "dns"
   "tls"
