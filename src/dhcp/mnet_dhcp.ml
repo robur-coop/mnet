@@ -547,3 +547,4 @@ let stack ?(timeout = _5m) ~name ?max ?(ipv6 = IPv6.EUI64) config =
     | Error err -> Fmt.failwith "%a" pp_error err
   in
   Mkernel.(map fn [ net name ])
+  |> Mkernel.finally (fun (daemon, _, _, _) -> kill daemon)
