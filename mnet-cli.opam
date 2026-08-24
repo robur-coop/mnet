@@ -11,8 +11,9 @@ depends: [
   "utcp"
   "dune" {>= "2.7.0"}
   "mnet" {= version}
-  "mirage-ptime"
   "re"
+  "logs"
+  "fmt"
   "duration"
   "dns"
   "tls"

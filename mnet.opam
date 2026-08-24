@@ -20,8 +20,8 @@ depends: [
   "ipaddr"
   "macaddr"
   "hxd"
-  "tls"
-  "happy-eyeballs"
+  "logs"
+  "lru"
 ]
 build: [
   ["dune" "subst"] {dev}
