@@ -1,23 +1,3 @@
-module Ke : sig
-  type t = {
-      mutable rd: int
-    ; mutable wr: int
-    ; mutable ln: int
-    ; mutable buf: bytes
-  }
-
-  val unsafe_create : int -> t
-  val mask : t -> int -> int
-  val shift : t -> int -> unit
-  val available : t -> int
-  val length : t -> int
-  val compress : t -> unit
-  val to_power_of_two : int -> int
-  val grow : t -> int -> unit
-  val push : t -> string -> unit
-  val peek : t -> string option
-end
-
 module Key : sig
   type t = Ipaddr.t * int
 
