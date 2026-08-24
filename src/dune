@@ -63,4 +63,4 @@
  (name mnet_happy_eyeballs)
  (modules mnet_happy_eyeballs)
  (public_name mnet-happy-eyeballs)
- (libraries happy-eyeballs mnet))
+ (libraries happy-eyeballs mnet cmdliner))
