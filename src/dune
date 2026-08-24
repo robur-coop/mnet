@@ -53,8 +53,13 @@
   dns
   dns-client
   ca-certs-nss
-  tls
-  cmdliner))
+  tls))
+
+(library
+ (name mnet_dns_cli)
+ (modules mnet_dns_cli)
+ (public_name mnet-dns.cli)
+ (libraries mnet-dns cmdliner))
 
 (library
  (name mnet_ssh)
@@ -67,3 +72,9 @@
  (modules mnet_happy_eyeballs)
  (public_name mnet-happy-eyeballs)
  (libraries happy-eyeballs mnet cmdliner duration))
+
+(library
+ (name mnet_happy_eyeballs_cli)
+ (modules mnet_happy_eyeballs_cli)
+ (public_name mnet-happy-eyeballs.cli)
+ (libraries mnet-happy-eyeballs cmdliner))
