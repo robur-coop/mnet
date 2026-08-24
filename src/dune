@@ -8,18 +8,7 @@
  (name mnet_cli)
  (public_name mnet-cli)
  (modules mnet_cli)
- (libraries
-  re
-  logs.cli
-  logs.fmt
-  fmt.cli
-  duration
-  ca-certs-nss
-  mirage-ptime.solo5
-  dns
-  tls
-  cmdliner
-  mnet))
+ (libraries re logs.cli logs.fmt fmt.cli duration cmdliner mnet))
 
 (library
  (name ethernet)
@@ -51,7 +40,15 @@
  (name mnet_dns)
  (modules mnet_dns)
  (public_name mnet-dns)
- (libraries mnet mnet-happy-eyeballs mnet-tls dns dns-client))
+ (libraries
+  mnet
+  mnet-happy-eyeballs
+  mnet-tls
+  dns
+  dns-client
+  ca-certs-nss
+  tls
+  cmdliner))
 
 (library
  (name mnet_ssh)
@@ -63,4 +60,4 @@
  (name mnet_happy_eyeballs)
  (modules mnet_happy_eyeballs)
  (public_name mnet-happy-eyeballs)
- (libraries happy-eyeballs mnet cmdliner))
+ (libraries happy-eyeballs mnet cmdliner duration))

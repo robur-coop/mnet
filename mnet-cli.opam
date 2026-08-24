@@ -14,12 +14,7 @@ depends: [
   "re"
   "logs"
   "fmt"
-  "duration"
-  "dns"
-  "tls"
   "cmdliner" {>= "2.0.0"}
-  "ca-certs-nss" {>= "3.118"}
-  "mirage-ptime" {>= "5.2.0"}
 ]
 build: [
   ["dune" "subst"] {dev}
