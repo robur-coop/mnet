@@ -127,3 +127,4 @@ val connect :
     See {!val:connect_host} for parameter descriptions. *)
 
 val inject : t -> getaddrinfo -> unit
+(** [inject t getaddrinfo] mutates [t] to use the provided [getaddrinfo]. *)

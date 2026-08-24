@@ -15,6 +15,9 @@ depends: [
   "mnet-happy-eyeballs" {= version}
   "dns"
   "dns-client"
+  "tls"
+  "ca-certs-nss"
+  "cmdliner"
 ]
 build: [
   ["dune" "subst"] {dev}
