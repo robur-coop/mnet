@@ -65,11 +65,11 @@ let kill = Miou.cancel
 
 type mode = NDPv6.mode = Random | EUI64 | Static of Ipaddr.V6.Prefix.t
 
-let create ?(handler = ignore) eth mode =
+let create ?(handler = ignore) ?gateway eth mode =
   let lmtu = Ethernet.mtu eth in
   let mac = Ethernet.mac eth in
   let now = now () in
-  let ndpv6, pkts = NDPv6.make ~now ~lmtu ~mac mode in
+  let ndpv6, pkts = NDPv6.make ?gateway ~now ~lmtu ~mac mode in
   List.iter (write eth) pkts;
   let tags = Logs.Tag.empty in
   let cnt = Atomic.make 0 in

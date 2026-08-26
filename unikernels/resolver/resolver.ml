@@ -6,8 +6,8 @@ let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
 let _5s = Duration.of_sec 5
 
-let run _quiet (cidrv4, gateway, ipv6) nameservers host =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 cidrv4 ])
+let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) nameservers host =
+  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
   @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in

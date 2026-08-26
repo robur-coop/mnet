@@ -32,7 +32,7 @@ end
 (* NOTE(dinosaure): RFC 4191 defines a priority for routers. *)
 
 module Router = struct
-  type t = { expire_at: int; preference: int; lmtu: int option }
+  type t = { expire_at: int option; preference: int; lmtu: int option }
 
   let weight (_t : t) = 1
 end
@@ -41,7 +41,13 @@ module Routers = Lru.F.Make (Ipaddr.V6) (Router)
 
 type t = Routers.t
 
-let make capacity = Routers.empty capacity
+let make ?gateway capacity =
+  let t = Routers.empty capacity in
+  Option.fold gateway ~none:t ~some:(fun gw ->
+      (* preference 2 doesn't occur on the wire; so prioritized highest *)
+      let route = { Router.expire_at= None; preference = 2; lmtu= None } in
+      Routers.add gw route t)
+
 let mem t addr = Routers.mem addr t
 let _1s = 1_000_000_000
 let _9000s = 9000 * _1s
@@ -56,9 +62,10 @@ let rec trim acc routers =
 (* Remove expired routers and return the list of removed addresses *)
 let expire_routers ~now t =
   let capacity = Routers.capacity t in
-  let fn addr { Router.expire_at; _ } (expired, t') =
-    if expire_at <= now then (addr :: expired, t')
-    else (expired, Routers.add addr (Routers.find addr t |> Option.get) t')
+  let fn addr ({ Router.expire_at; _ } as elt) (expired, t') =
+    match expire_at with
+    | Some expire_at when expire_at <= now -> (addr :: expired, t')
+    | _ -> (expired, Routers.add addr elt t)
   in
   Routers.fold_k fn ([], Routers.empty capacity) t
 
@@ -69,7 +76,7 @@ let tick t ~now = function
       let lifetime = Int.min (ra.RA.router_lifetime * _1s) _9000s in
       let preference = ra.RA.preference in
       let lmtu = ra.RA.lmtu in
-      let expire_at = now + lifetime in
+      let expire_at = Some (now + lifetime) in
       let t' =
         if Routers.mem src t then
           Routers.remove src t

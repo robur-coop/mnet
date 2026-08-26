@@ -97,11 +97,13 @@ val stack :
   -> ?max:int option
   -> ?gateway:Ipaddr.V4.t
   -> ?ipv6:IPv6.mode
+  -> ?ipv6_gateway:Ipaddr.V6.t
   -> Ipaddr.V4.Prefix.t
   -> (stack * TCP.state * UDP.state) Mkernel.arg
-(** [stack ~name ?gateway ?ipv6 cidr] creates a {!type:Mkernel.arg} value that,
-    when passed to {!val:Mkernel.run}, provisions a network device and
-    initializes a full TCP/IP stack on top of it.
+(** [stack ~name ?gateway ?ipv6 ?ipv6_gateway cidr] creates a
+    {!type:Mkernel.arg} value that, when passed to {!val:Mkernel.run},
+    provisions a network device and initializes a full TCP/IP stack on top of
+    it.
 
     [name] is the name of the network device given to Solo5. For instance, if
     the user defines a new TCP/IP stack as ["service"], the [solo5-hvt]
