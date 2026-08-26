@@ -42,10 +42,6 @@ module Routers = Lru.F.Make (Ipaddr.V6) (Router)
 type t = Routers.t
 
 let make ?gateway capacity =
-  if
-    Option.fold gateway ~none:false ~some:(fun gw ->
-        not Ipaddr.V6.Prefix.(mem gw link))
-  then failwith "ohno expected link-local gateway";
   let t = Routers.empty capacity in
   Option.fold gateway ~none:t ~some:(fun gw ->
       (* preference 2 doesn't occur on the wire; so prioritized highest *)
