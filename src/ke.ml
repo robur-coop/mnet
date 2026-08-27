@@ -12,7 +12,7 @@ type t = {
 let unsafe_create ?(limit = Some 0x2000) ln =
   { rd= 0; wr= 0; ln; buf= Bytes.create ln; limit }
 
-let is_power_of_two _x = true
+let is_power_of_two x = x <> 0 && x land (lnot x + 1) = x
 
 let create ?(limit = Some 0x2000) ln =
   if not (is_power_of_two ln) then
