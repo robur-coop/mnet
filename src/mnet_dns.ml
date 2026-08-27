@@ -38,7 +38,7 @@ module Transport = struct
       nameservers: io_addr list
     ; timeout: int
     ; mutable ports: Set.t
-    ; mutable mode: [ `Tcp of Ipaddr.t * Ke.t | `Udp ] option
+    ; mutable mode: [ `Tcp of Ipaddr.t | `Udp ] option
     ; mutable reqs: (string * ivar) Reqs.t
     ; mutable ureqs: ivar UReqs.t
     ; queries: string Queue.t
@@ -149,7 +149,7 @@ module Transport = struct
 
   and try_tls_connection t nameservers cfg addr flow =
     match Mnet_tls.client_of_fd cfg flow with
-    | flow -> Ok (addr, `TLS flow)
+    | flow -> Ok (addr, `TLS (flow, Ke.create 0x800))
     | exception exn ->
         Log.warn (fun m ->
             m "Impossible to initiate a TLS connection with %a: %s" pp_addr addr
@@ -248,7 +248,7 @@ module Transport = struct
     let fn query =
       match flow with
       | `Plain flow -> Mnet.TCP.write flow query
-      | `TLS flow -> Mnet_tls.write flow query
+      | `TLS (flow, _) -> Mnet_tls.write flow query
     in
     List.iter fn queries; write_to_connection t flow
 
@@ -262,10 +262,10 @@ module Transport = struct
      forever on a transient network error (e.g. happy-eyeballs timeout, TLS
      handshake failure) and every later [send_recv]/[connect] call would fail
      instantly with "Impossible to initiate a TCP connection to nameservers". *)
-  let read_from_connection t ke =
+  let read_from_connection t =
     let finally = function
       | `Plain flow -> Mnet.TCP.close flow
-      | `TLS flow -> Mnet_tls.close flow
+      | `TLS (flow, _) -> Mnet_tls.close flow
     in
     let buf = Bytes.create 4096 in
     match connect_to_nameservers t t.nameservers with
@@ -278,7 +278,7 @@ module Transport = struct
           Miou.async @@ fun () ->
           match flow with
           | `Plain flow -> read_from_tcp t flow
-          | `TLS flow -> read_from_tls t ke buf flow
+          | `TLS (flow, ke) -> read_from_tls t ke buf flow
         in
         let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
@@ -287,7 +287,7 @@ module Transport = struct
         Log.warn (fun m -> m "Failed to connect to nameservers: %s" msg);
         `Connect_failed
 
-  let connection_loop t ke =
+  let connection_loop t =
     let rec go ~backoff () =
       (* NOTE(dinosaure): we wait a signal from the user. *)
       let () =
@@ -298,7 +298,7 @@ module Transport = struct
         assert (not (Queue.is_empty t.queries))
       in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
-      match read_from_connection t ke with
+      match read_from_connection t with
       | `Connected ->
           (* connection established (and now closed); reset the backoff and
              wait for a new query. *)
@@ -362,7 +362,7 @@ module Transport = struct
   let daemon t =
     match t.mode with
     | Some `Udp -> read_from_udp t (* forever *)
-    | Some (`Tcp (_, ke)) -> connection_loop t ke
+    | Some (`Tcp _) -> connection_loop t
     | None -> ()
 
   let create ?(nameservers = (`Tcp, [ uncensoreddns_org ])) ~timeout (udp, he) =
@@ -374,8 +374,7 @@ module Transport = struct
       | `Tcp ->
           Log.debug (fun m -> m "Initiate a TCP connection to nameservers");
           let ipaddr = Ipaddr.(V4 V4.unspecified) in
-          let ke = Ke.unsafe_create 8192 in
-          Some (`Tcp (ipaddr, ke))
+          Some (`Tcp ipaddr)
     in
     let reqs = Reqs.empty in
     let ureqs = UReqs.empty in

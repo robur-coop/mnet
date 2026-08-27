@@ -47,7 +47,8 @@ module Transport : sig
        | `Tls of Tls.Config.client * Ipaddr.t * int ]
        list
     -> ( (Ipaddr.t * int)
-         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow
+           | `TLS of Mnet_tls.t * Ke.t ]
        , [> `Msg of string ] )
        result
 
@@ -60,7 +61,8 @@ module Transport : sig
     -> Ipaddr.t * int
     -> Mnet.TCP.direct Mnet.TCP.flow
     -> ( (Ipaddr.t * int)
-         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+         * [> `Plain of Mnet.TCP.buffer Mnet.TCP.flow
+           | `TLS of Mnet_tls.t * Ke.t ]
        , [> `Msg of string ] )
        result
 
@@ -70,11 +72,11 @@ module Transport : sig
 
   val write_to_connection :
        context
-    -> [< `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t ]
+    -> [< `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ke.t ]
     -> 'a
 
   val _backoff_max : int
-  val read_from_connection : context -> Ke.t -> [> `Connect_failed | `Connected ]
+  val read_from_connection : context -> [> `Connect_failed | `Connected ]
   val connection_loop : context -> Ke.t -> 'a
   val read_from_udp : context -> 'a
   val daemon : context -> unit
