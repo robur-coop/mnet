@@ -17,9 +17,9 @@
     {2 Zero-copy vs buffered reads.}
 
     Two reading strategies are available:
-    - {!val:get} returns data directly from what [utcp] gives to us. This is the
-      fast path when you can process data in-place.
-    - {!val:read} (and {!val:really_read} copies data into a user-supplied
+    - {!val:read} returns data directly from what [utcp] gives to us. This is
+      the fast path when you can process data in-place.
+    - {!val:input} (and {!val:really_input} copies data into a user-supplied
       buffer. An internal buffer handles overflow when the [utcp]'s payload
       exceeds the user-supplied buffer size.
 
@@ -44,13 +44,14 @@
 
     {[
     let listen = Mnet.TCP.listen tcp 7 in
-    let flow = Mnet.TCP.accept ~kind:Mnet.TCP.buffered tcp listen in
+    let kind = Mnet.TCP.buffer 0x1000 in
+    let flow = Mnet.TCP.accept ~kind tcp listen in
     let resource = Miou.Ownership.create ~finally:Mnet.TCP.close flow in
     Miou.Ownership.own resource;
     let@ () = fun () -> Miou.Ownership.release resource in
     let buf = Bytes.create 4096 in
     let rec go () =
-      let len = Mnet.TCP.read flow buf in
+      let len = Mnet.TCP.input flow buf in
       if len > 0 then begin
         Mnet.TCP.write flow (Bytes.sub_string buf 0 len);
         go ()
@@ -62,13 +63,12 @@
     {2 Example: client.}
 
     {[
-    let flow =
-      Mnet.TCP.connect ~kind:Mnet.TCP.buffered tcp (Ipaddr.V4 server, 9000)
-    in
+    let kind = Mnet.TCP.buffer 0x1000 in
+    let flow = Mnet.TCP.connect ~kind tcp (Ipaddr.V4 server, 7) in
     Mnet.TCP.write flow "Hello!";
     Mnet.TCP.shutdown flow `write;
     let buf = Bytes.create 4096 in
-    let len = Mnet.TCP.read flow buf in
+    let len = Mnet.TCP.input flow buf in
     (* process response *)
     Mnet.TCP.close flow
     ]} *)
@@ -96,9 +96,7 @@ val connections : state -> int
 (** [connections state] returns the number of actual TCP connections. *)
 
 type 'k flow
-(** An individual TCP connection (either incoming or outgoing). Provides
-    {!val:get} or {!val:read} (depending on the kind of flow), {!val:write}, and
-    {!val:close} operations. *)
+(** An individual TCP connection (either incoming or outgoing). *)
 
 and buffer
 and direct
@@ -143,15 +141,12 @@ val connect : kind:'k kind -> state -> Ipaddr.t * int -> 'k flow
 (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
 val read : direct flow -> (string list, [> `Eof | `Refused ]) result
-(** [get flow] allows reading from a given [flow] {b without} involving a
-    temporary buffer. In other words, the data returned is that from the
-    Ethernet frame.
-
-    If data exists in the internal buffer, [get] flushes it and prepends this
-    content to what we obtain from the Ethernet frames. *)
+(** [read flow] allows reading from a given [flow] {b without} involving a
+    temporary buffer. In other words, the data returned is that from the [utcp]
+    state. *)
 
 val input : buffer flow -> ?off:int -> ?len:int -> bytes -> int
-(** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
+(** [input flow buf ~off ~len] reads up to [len] bytes (defaults to
     [Bytes.length buf - off] from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
     It returns the actual number of characters read, between 0 and [len]
@@ -159,19 +154,19 @@ val input : buffer flow -> ?off:int -> ?len:int -> bytes -> int
 
     {b NOTE}: In order to be able to deliver data without loss despite the fixed
     size of the given buffer [buf], an internal buffer is used to store the
-    overflow and ensure that it is delivered to the next [read] call. In other
-    words, [read] is {i buffered}, which involves copying. If, for performance
-    reasons, you would like to avoid copying, we recommend using {!val:get}.
+    overflow and ensure that it is delivered to the next [input] call. In other
+    words, [input] is {i buffered}, which involves copying. If, for performance
+    reasons, you would like to avoid copying, we recommend using {!val:read}.
 
     @raise Net_unreach if network is unreachable.
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
 val really_input : buffer flow -> ?off:int -> ?len:int -> bytes -> unit
-(** [really_read flow buf ~off ~len] reads [len] bytes (defaults to
+(** [really_input flow buf ~off ~len] reads [len] bytes (defaults to
     [Bytes.length buf - off]) from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
-    If [len = 0], [really_read] does nothing.
+    If [len = 0], [really_input] does nothing.
 
     @raise Net_unreach if network is unreachable.
     @raise End_of_file
@@ -276,11 +271,11 @@ val accept : kind:'k kind -> state -> listen -> 'k flow
         | Some (Some prm) -> Miou.await_exn prm; clean_up orphans
 
       let listen = Mnet.TCP.listen tcp 9000 in
-      let rec loop orphans =
+      let rec go orphans =
         clean_up orphans;
         let flow = Mnet.TCP.accept tcp listen in
         let _ = Miou.async ~orphans @@ fun () -> handler flow in
-        loop orphans
+        go orphans
       in
       loop (Miou.orphans ())
     ]} *)
