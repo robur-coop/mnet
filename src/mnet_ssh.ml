@@ -23,7 +23,7 @@ let now () = Mtime.of_uint64_ns (Int64.of_int (Mkernel.clock_monotonic ()))
 let writev t outs = List.iter (fun str -> Mnet.TCP.write t.flow str) outs
 
 let process t =
-  match Mnet.TCP.get t.flow with
+  match Mnet.TCP.read t.flow with
   | Error (`Eof | `Refused) ->
       t.closed <- true;
       false
@@ -239,7 +239,7 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           Log.debug (fun m -> m "%d byte(s) received" (String.length str'));
           let _ =
             Miou.async ~orphans @@ fun () ->
-            match Mnet.TCP.get flow with
+            match Mnet.TCP.read flow with
             | Ok sstr -> `Input (String.concat "" sstr)
             | Error (`Eof | `Refused) -> `Eof
           in
@@ -376,7 +376,7 @@ let server ?stop db priv flow cb =
   let orphans = Miou.orphans () in
   let _ =
     Miou.async ~orphans @@ fun () ->
-    match Mnet.TCP.get flow with
+    match Mnet.TCP.read flow with
     | Ok sstr -> `Input (String.concat "" sstr)
     | Error (`Eof | `Refused) -> `Eof
   in

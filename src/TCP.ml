@@ -137,7 +137,7 @@ let write_without_interruption_ip state (src, dst, seg) =
   | Ipaddr.V6 _, Ipaddr.V4 _ ->
       failwith "Impossible to write an IPv4 packet from an IPv6 host"
 
-let rec get (t : _ flow) =
+let rec read (t : _ flow) =
   match Utcp.recv t.state.tcp (now ()) t.flow with
   | Ok (tcp, [], c, segs) -> begin
       t.state.tcp <- tcp;
@@ -148,7 +148,7 @@ let rec get (t : _ flow) =
           | Ok (tcp, [], _c, segs) ->
               t.state.tcp <- tcp;
               List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
-              get t
+              read t
           | Ok (tcp, data, _c, segs) ->
               t.state.tcp <- tcp;
               List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
@@ -179,22 +179,22 @@ let rec get (t : _ flow) =
       Error `Refused
   | Error `Not_found -> Error `Refused
 
-let read (t : buffer flow) ?(off = 0) ?len buf =
+let input (t : buffer flow) ?(off = 0) ?len buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
-  if Ke.length t.kind = 0 then Result.iter (List.iter (Ke.push t.kind)) (get t);
+  if Ke.length t.kind = 0 then Result.iter (List.iter (Ke.push t.kind)) (read t);
   let len = Ke.peek_into_bytes t.kind ~off ~len buf in
   Ke.unsafe_shift t.kind len; len
 
-let rec really_read (t : buffer flow) off len buf =
-  let len' = read t ~off ~len buf in
+let rec really_input (t : buffer flow) off len buf =
+  let len' = input t ~off ~len buf in
   if len' = 0 then raise End_of_file
-  else if len - len' > 0 then really_read t (off + len') (len - len') buf
+  else if len - len' > 0 then really_input t (off + len') (len - len') buf
 
-let really_read (t : buffer flow) ?(off = 0) ?len buf =
+let really_input (t : buffer flow) ?(off = 0) ?len buf =
   let len = match len with None -> Bytes.length buf - off | Some len -> len in
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "TCP.really_read";
-  if len > 0 then really_read t off len buf
+  if len > 0 then really_input t off len buf
 
 let rec write t str off len =
   match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with

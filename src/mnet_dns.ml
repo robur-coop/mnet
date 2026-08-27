@@ -197,11 +197,11 @@ module Transport = struct
 
   let rec read_from_tcp t flow =
     let hdr = Bytes.create 2 in
-    Mnet.TCP.really_read flow hdr;
+    Mnet.TCP.really_input flow hdr;
     let len = Bytes.get_uint16_be hdr 0 in
     let pkt = Bytes.create (2 + len) in
     Bytes.set_uint16_be pkt 0 len;
-    Mnet.TCP.really_read flow ~off:2 pkt;
+    Mnet.TCP.really_input flow ~off:2 pkt;
     let packet = Bytes.unsafe_to_string pkt in
     let uid = String.get_uint16_be packet 2 in
     Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);

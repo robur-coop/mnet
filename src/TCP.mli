@@ -142,7 +142,7 @@ val kill : daemon -> unit
 val connect : kind:'k kind -> state -> Ipaddr.t * int -> 'k flow
 (** [connect state ipaddr port] is a Solo5 friendly {!val:Unix.connect}. *)
 
-val get : direct flow -> (string list, [> `Eof | `Refused ]) result
+val read : direct flow -> (string list, [> `Eof | `Refused ]) result
 (** [get flow] allows reading from a given [flow] {b without} involving a
     temporary buffer. In other words, the data returned is that from the
     Ethernet frame.
@@ -150,7 +150,7 @@ val get : direct flow -> (string list, [> `Eof | `Refused ]) result
     If data exists in the internal buffer, [get] flushes it and prepends this
     content to what we obtain from the Ethernet frames. *)
 
-val read : buffer flow -> ?off:int -> ?len:int -> bytes -> int
+val input : buffer flow -> ?off:int -> ?len:int -> bytes -> int
 (** [read flow buf ~off ~len] reads up to [len] bytes (defaults to
     [Bytes.length buf - off] from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).
@@ -167,7 +167,7 @@ val read : buffer flow -> ?off:int -> ?len:int -> bytes -> int
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
-val really_read : buffer flow -> ?off:int -> ?len:int -> bytes -> unit
+val really_input : buffer flow -> ?off:int -> ?len:int -> bytes -> unit
 (** [really_read flow buf ~off ~len] reads [len] bytes (defaults to
     [Bytes.length buf - off]) from the given connection [flow], storing them in
     byte sequence [buf], starting at position [off] in [buf] (defaults to [0]).

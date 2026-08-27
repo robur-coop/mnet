@@ -131,7 +131,7 @@ let read_react flow =
     raise End_of_file
   | `Active _ | `Write_closed _ ->
     Log.debug (fun m -> m "read something from the TLS session");
-    match Mnet.TCP.get flow.fd with
+    match Mnet.TCP.read flow.fd with
     | Error err ->
       let exn = match err with
         | `Eof -> End_of_file
