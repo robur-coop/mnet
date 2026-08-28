@@ -1,3 +1,5 @@
+[@@@warning "-duplicate-definitions"]
+
 let pp_addr ppf (ipaddr, port) = Fmt.pf ppf "%a:%d" Ipaddr.pp ipaddr port
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let ( let* ) = Result.bind
@@ -47,15 +49,26 @@ module Transport = struct
     ; condition: Miou.Condition.t
     ; he: Mnet_happy_eyeballs.t
     ; udp: Mnet.UDP.state
+    ; buffer: int * int (* limit, length *)
   }
 
   and ivar = string Miou.Computation.t
-  and t = context * unit Miou.t
+  and daemon = unit Miou.t
+  and t = context * daemon
   and +'a io = 'a
-  and stack = Mnet.UDP.state * Mnet_happy_eyeballs.t
+
+  and stack = {
+      limit: int
+    ; length: int
+    ; udp: Mnet.UDP.state
+    ; happy_eyeballs: Mnet_happy_eyeballs.t
+  }
 
   and io_addr =
     [ `Plaintext of Ipaddr.t * int | `Tls of Tls.Config.client * Ipaddr.t * int ]
+
+  and flow =
+    [ `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ke.t ]
 
   let kill (_, prm) = Miou.cancel prm
   let bind x fn = fn x
@@ -142,14 +155,18 @@ module Transport = struct
     in
     match tls_config_of_nameserver t.nameservers addr with
     | None ->
-        let limit = Some 0x4000 in
-        let flow = Mnet.TCP.unsafe_to_bufferize ~limit 0x2000 flow in
+        let limit, length = t.buffer in
+        let limit = Some limit in
+        let flow = Mnet.TCP.unsafe_to_bufferize ~limit length flow in
         Ok (addr, `Plain flow)
     | Some cfg -> try_tls_connection t nameservers cfg addr flow
 
   and try_tls_connection t nameservers cfg addr flow =
     match Mnet_tls.client_of_fd cfg flow with
-    | flow -> Ok (addr, `TLS (flow, Ke.create 0x800))
+    | flow ->
+        let limit, length = t.buffer in
+        let limit = Some limit in
+        Ok (addr, `TLS (flow, Ke.create ~limit length))
     | exception exn ->
         Log.warn (fun m ->
             m "Impossible to initiate a TLS connection with %a: %s" pp_addr addr
@@ -324,6 +341,7 @@ module Transport = struct
     in
     let fn ~port =
      fun () ->
+      (* NOTE(dinosaure): [4096] comes from RFC6891 (EDNS0) § 6.2.5 *)
       let buf = Bytes.create 4096 in
       let rec go retries =
         let len, (peer, _) = Mnet.UDP.recvfrom t.udp ~port buf in
@@ -365,7 +383,18 @@ module Transport = struct
     | Some (`Tcp _) -> connection_loop t
     | None -> ()
 
-  let create ?(nameservers = (`Tcp, [ uncensoreddns_org ])) ~timeout (udp, he) =
+  (* NOTE(dinosaure): about [limit] and [length], we ensure that our buffered
+     TCP flow has an internal [Ke.t] which can grow up to 65536 bytes
+     ([0x10000]) and start with 1024 bytes ([0x400]). The user can NOT remove the
+     limit but it can enlarge the internal buffer. By default, we avoid a
+     possible memory leak because DNS packets over TCP should never be bigger
+     than 65536 bytes (due to overlap, we double this limit)! *)
+
+  let stack ?buffer:(limit, length = (0x20000, 0x800)) udp happy_eyeballs =
+    { limit; length; udp; happy_eyeballs }
+
+  let create ?(nameservers = (`Tcp, [ uncensoreddns_org ])) ~timeout
+      { limit; length; udp; happy_eyeballs= he } =
     let ports = Set.empty in
     let proto, nameservers = nameservers in
     let mode =
@@ -397,6 +426,7 @@ module Transport = struct
       ; condition
       ; he
       ; udp
+      ; buffer= (limit, length)
       }
     in
     let prm = Miou.async @@ fun () -> daemon context in
