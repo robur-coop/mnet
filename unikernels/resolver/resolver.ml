@@ -7,13 +7,15 @@ let rng = Mkernel.map rng Mkernel.[]
 let _5s = Duration.of_sec 5
 
 let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) nameservers host =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
+  Mkernel.(
+    run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
   @@ fun rng (daemon, tcp, udp) () ->
   let@ () = fun () -> Mnet.kill daemon in
   let@ () = fun () -> Mirage_crypto_rng_mkernel.kill rng in
   let hed, he = Mnet_happy_eyeballs.create tcp in
   let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
-  let dns = Mnet_dns.create ~nameservers (udp, he) in
+  let stack = Mnet_dns.Transport.stack udp he in
+  let dns = Mnet_dns.create ~nameservers stack in
   let t = Mnet_dns.transport dns in
   let@ () = fun () -> Mnet_dns.Transport.kill t in
   match Mnet_dns.gethostbyname dns host with
