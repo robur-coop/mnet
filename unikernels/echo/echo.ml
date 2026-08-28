@@ -57,7 +57,8 @@ let rec terminate orphans =
 let buffer = Mnet.TCP.buffer ~limit:(Some 0x4000) 0x2000
 
 let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
-  Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
+  Mkernel.(
+    run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
   @@ fun rng (daemon, tcp, _udp) () ->
   let hed, he = Mnet_happy_eyeballs.create tcp in
   let@ () = fun () -> Mnet_happy_eyeballs.kill hed in
