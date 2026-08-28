@@ -8,7 +8,7 @@ let rng = Mkernel.map rng Mkernel.[]
 let source_of_flow ?(close = ignore) flow =
   let init () = (flow, Bytes.create 0x7ff)
   and pull (flow, buf) =
-    match Mnet.TCP.read flow buf with
+    match Mnet.TCP.input flow buf with
     | (exception _) | 0 -> None
     | len ->
         let str = Bytes.sub_string buf 0 len in
@@ -54,6 +54,8 @@ let rec terminate orphans =
       Result.iter_error fn result;
       terminate orphans
 
+let buffer = Mnet.TCP.buffer ~limit:(Some 0x4000) 0x2000
+
 let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
   Mkernel.(run [ rng; Mnet.stack ~name:"service" ?gateway ~ipv6 ?ipv6_gateway cidrv4 ])
   @@ fun rng (daemon, tcp, _udp) () ->
@@ -68,7 +70,7 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
         match limit with
         | Some limit when limit <= 0 -> ()
         | None | Some _ ->
-            let flow = Mnet.TCP.accept tcp listen in
+            let flow = Mnet.TCP.accept ~kind:buffer tcp listen in
             let _ = Miou.async ~orphans @@ fun () -> handler flow in
             let limit = Option.map pred limit in
             go orphans listen limit
@@ -79,9 +81,10 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
   | `Client (edn, length) ->
       let result =
         match edn with
-        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip he [ edn ]
+        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip ~kind:buffer he [ edn ]
         | `Domain domain_name ->
-            Mnet_happy_eyeballs.connect_host he domain_name [ 9000 ]
+            Mnet_happy_eyeballs.connect_host ~kind:buffer he domain_name
+              [ 9000 ]
       in
       let flow =
         match result with
@@ -96,7 +99,7 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
         Mnet.TCP.write flow (Bytes.to_string buf) ~off:0 ~len;
         let ctx0 = Digestif.SHA1.feed_bytes ctx0 buf ~off:0 ~len in
         let rem0 = rem0 - len in
-        let len = Mnet.TCP.read flow buf in
+        let len = Mnet.TCP.input flow buf in
         let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in
         let rem1 = rem1 - len in
         if rem0 <= 0 && rem1 <= 0 then Digestif.SHA1.(get ctx0, get ctx1)
@@ -105,7 +108,7 @@ let run _quiet (cidrv4, gateway, ipv6, ipv6_gateway) mode =
           let () = Mnet.TCP.shutdown flow `write in
           remaining (Digestif.SHA1.get ctx0) ctx1 rem1
       and remaining hash0 ctx1 rem1 =
-        match Mnet.TCP.read flow buf with
+        match Mnet.TCP.input flow buf with
         | 0 -> (hash0, Digestif.SHA1.get ctx1)
         | len ->
             let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in

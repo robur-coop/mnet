@@ -16,13 +16,13 @@
     Fragments must not overlap. Inserting a fragment that overlaps with an
     existing one raises {!exception:Overlap}. *)
 
+type fixed = private [ `fixed ]
 (** Uninhabited type used as a phantom marker for ropes whose total size is
     known. *)
-type fixed = private [`fixed]
 
+type unknown = private [ `unknown ]
 (** Uninhabited type used as a phantom marker for ropes whose total size is not
     yet known. *)
-type unknown = private [`unknown]
 
 type 'a t =
   | Str : string -> fixed t

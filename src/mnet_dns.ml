@@ -38,7 +38,7 @@ module Transport = struct
       nameservers: io_addr list
     ; timeout: int
     ; mutable ports: Set.t
-    ; mutable mode: [ `Tcp of Ipaddr.t * Ke.t | `Udp ] option
+    ; mutable mode: [ `Tcp of Ipaddr.t | `Udp ] option
     ; mutable reqs: (string * ivar) Reqs.t
     ; mutable ureqs: ivar UReqs.t
     ; queries: string Queue.t
@@ -136,14 +136,20 @@ module Transport = struct
   let rec connect_to_nameservers t nameservers =
     let ns = to_pairs nameservers in
     let connect_timeout = Int64.of_int t.timeout in
-    let* addr, flow = Mnet_happy_eyeballs.connect_ip ~connect_timeout t.he ns in
+    let kind = Mnet.TCP.direct in
+    let* addr, flow =
+      Mnet_happy_eyeballs.connect_ip ~kind ~connect_timeout t.he ns
+    in
     match tls_config_of_nameserver t.nameservers addr with
-    | None -> Ok (addr, `Plain flow)
+    | None ->
+        let limit = Some 0x4000 in
+        let flow = Mnet.TCP.unsafe_to_bufferize ~limit 0x2000 flow in
+        Ok (addr, `Plain flow)
     | Some cfg -> try_tls_connection t nameservers cfg addr flow
 
   and try_tls_connection t nameservers cfg addr flow =
     match Mnet_tls.client_of_fd cfg flow with
-    | flow -> Ok (addr, `TLS flow)
+    | flow -> Ok (addr, `TLS (flow, Ke.create 0x800))
     | exception exn ->
         Log.warn (fun m ->
             m "Impossible to initiate a TLS connection with %a: %s" pp_addr addr
@@ -161,11 +167,11 @@ module Transport = struct
      We trigger the [ivar]s associated with the [uid]s extracted from the
      packets. The ringbuffer [ke] should not grow more than 8192 bytes.
 
-     A DNS-over-TCP/TLS frame is a 2-byte big-endian length [len] followed by
-     [len] bytes of DNS payload, kept as-is in [packet] (the consumer in
-     [Dns_client] strips the prefix). We therefore must wait until the buffer
-     holds the full [len + 2] bytes before extracting the frame, otherwise
-     [String.sub] raises [Invalid_argument] and kills the reader fiber. *)
+     A DNS-over-TLS frame is a 2-byte big-endian length [len] followed by [len]
+     bytes of DNS payload, kept as-is in [packet] (the consumer in [Dns_client]
+     strips the prefix). We therefore must wait until the buffer holds the full
+     [len + 2] bytes before extracting the frame, otherwise [String.sub] raises
+     [Invalid_argument] and kills the reader fiber. *)
   let process ke reqs =
     let rec go () =
       match Ke.peek ke with
@@ -189,20 +195,22 @@ module Transport = struct
     in
     go ()
 
-  let rec read_from_tcp t ke buf flow =
-    match Mnet.TCP.read flow buf with
-    | 0 -> Log.debug (fun m -> m "TCP connection closed by peer")
-    | exception Miou.Cancelled ->
-        Log.debug (fun m ->
-            m "TCP connection closed by us (useless connection)")
-    | exception exn ->
-        Log.err (fun m ->
-            m "TCP connection failed with: %s" (Printexc.to_string exn))
-    | len ->
-        let str = Bytes.sub_string buf 0 len in
-        Ke.push ke str;
-        process ke t.reqs;
-        read_from_tcp t ke buf flow
+  let rec read_from_tcp t flow =
+    let hdr = Bytes.create 2 in
+    Mnet.TCP.really_input flow hdr;
+    let len = Bytes.get_uint16_be hdr 0 in
+    let pkt = Bytes.create (2 + len) in
+    Bytes.set_uint16_be pkt 0 len;
+    Mnet.TCP.really_input flow ~off:2 pkt;
+    let packet = Bytes.unsafe_to_string pkt in
+    let uid = String.get_uint16_be packet 2 in
+    Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
+    Log.debug (fun m ->
+        m "Something waiting for this response? %b"
+          (Option.is_some (Reqs.find_opt uid t.reqs)));
+    let fn (_tx, ivar) = ignore (Miou.Computation.try_return ivar packet) in
+    Option.iter fn (Reqs.find_opt uid t.reqs);
+    read_from_tcp t flow
 
   let rec read_from_tls t ke buf flow =
     match Mnet_tls.read flow buf with
@@ -240,7 +248,7 @@ module Transport = struct
     let fn query =
       match flow with
       | `Plain flow -> Mnet.TCP.write flow query
-      | `TLS flow -> Mnet_tls.write flow query
+      | `TLS (flow, _) -> Mnet_tls.write flow query
     in
     List.iter fn queries; write_to_connection t flow
 
@@ -254,10 +262,10 @@ module Transport = struct
      forever on a transient network error (e.g. happy-eyeballs timeout, TLS
      handshake failure) and every later [send_recv]/[connect] call would fail
      instantly with "Impossible to initiate a TCP connection to nameservers". *)
-  let read_from_connection t ke =
+  let read_from_connection t =
     let finally = function
       | `Plain flow -> Mnet.TCP.close flow
-      | `TLS flow -> Mnet_tls.close flow
+      | `TLS (flow, _) -> Mnet_tls.close flow
     in
     let buf = Bytes.create 4096 in
     match connect_to_nameservers t t.nameservers with
@@ -265,21 +273,21 @@ module Transport = struct
         Log.debug (fun m -> m "Connected to %a" pp_addr addr);
         let resource = Miou.Ownership.create ~finally flow in
         Miou.Ownership.own resource;
+        let@ () = fun () -> Miou.Ownership.release resource in
         let prm0 =
           Miou.async @@ fun () ->
           match flow with
-          | `Plain flow -> read_from_tcp t ke buf flow
-          | `TLS flow -> read_from_tls t ke buf flow
+          | `Plain flow -> read_from_tcp t flow
+          | `TLS (flow, ke) -> read_from_tls t ke buf flow
         in
         let prm1 = Miou.async @@ fun () -> write_to_connection t flow in
         let _ = Miou.await_first [ prm0; prm1 ] in
-        Miou.Ownership.release resource;
         `Connected
     | Error (`Msg msg) ->
         Log.warn (fun m -> m "Failed to connect to nameservers: %s" msg);
         `Connect_failed
 
-  let connection_loop t ke =
+  let connection_loop t =
     let rec go ~backoff () =
       (* NOTE(dinosaure): we wait a signal from the user. *)
       let () =
@@ -290,7 +298,7 @@ module Transport = struct
         assert (not (Queue.is_empty t.queries))
       in
       (* NOTE(dinosaure): and start a new TCP/IP connection. *)
-      match read_from_connection t ke with
+      match read_from_connection t with
       | `Connected ->
           (* connection established (and now closed); reset the backoff and
              wait for a new query. *)
@@ -354,7 +362,7 @@ module Transport = struct
   let daemon t =
     match t.mode with
     | Some `Udp -> read_from_udp t (* forever *)
-    | Some (`Tcp (_, ke)) -> connection_loop t ke
+    | Some (`Tcp _) -> connection_loop t
     | None -> ()
 
   let create ?(nameservers = (`Tcp, [ uncensoreddns_org ])) ~timeout (udp, he) =
@@ -366,8 +374,7 @@ module Transport = struct
       | `Tcp ->
           Log.debug (fun m -> m "Initiate a TCP connection to nameservers");
           let ipaddr = Ipaddr.(V4 V4.unspecified) in
-          let ke = Ke.unsafe_create 8192 in
-          Some (`Tcp (ipaddr, ke))
+          Some (`Tcp ipaddr)
     in
     let reqs = Reqs.empty in
     let ureqs = UReqs.empty in
