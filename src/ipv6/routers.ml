@@ -45,7 +45,7 @@ let make ?gateway capacity =
   let t = Routers.empty capacity in
   Option.fold gateway ~none:t ~some:(fun gw ->
       (* preference 2 doesn't occur on the wire; so prioritized highest *)
-      let route = { Router.expire_at= None; preference = 2; lmtu= None } in
+      let route = { Router.expire_at= None; preference= 2; lmtu= None } in
       Routers.add gw route t)
 
 let mem t addr = Routers.mem addr t
@@ -98,9 +98,9 @@ let select t ~is_reachable ipaddr =
     if is_reachable key then (key, preference, lmtu) :: acc else acc
   in
   let rec select ((ipaddr, pref, lmtu) as acc) = function
-    | [] -> ipaddr, lmtu
+    | [] -> (ipaddr, lmtu)
     | ((_, pref', _) as hd) :: tl ->
-      if pref' > pref then select hd tl else select acc tl
+        if pref' > pref then select hd tl else select acc tl
   in
   match Routers.fold_k fn [] t with
   | [] when Routers.is_empty t -> (ipaddr, None, t)

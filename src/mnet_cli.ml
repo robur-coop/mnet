@@ -44,7 +44,8 @@ let ipv6_gateway =
   & opt (some ipaddr) None
   & info [ "ipv6-gateway" ] ~doc ~docs:s_network ~docv:"IPv6"
 
-let setup ipv4 ipv4_gateway ipv6 ipv6_gateway = (ipv4, ipv4_gateway, ipv6, ipv6_gateway)
+let setup ipv4 ipv4_gateway ipv6 ipv6_gateway =
+  (ipv4, ipv4_gateway, ipv6, ipv6_gateway)
 
 let setup =
   let open Term in

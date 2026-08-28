@@ -105,39 +105,49 @@ val kill : t -> unit
     This function should be called when the unikernel is shutting down. *)
 
 module Or_static : sig
+  (** ['dhcp_or_static w] is a type witness for either a static {!Mnet.stack} or
+      a DHCP {!stack}. *)
   type _ kind =
-    | Dhcp
-      : { timeout : int option
-        ; config : config }
+    | Dhcp : {
+          timeout: int option
+        ; config: config
+      }
         -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) kind
-    (** [Dhcp { timeout; config }] is a witness for a {!stack}. *)
-    | Static :
-        { ipv4addr : Ipaddr.V4.Prefix.t ; gateway : Ipaddr.V4.t option }
+        (** [Dhcp { timeout; config }] is a witness for a {!stack}. *)
+    | Static : {
+          ipv4addr: Ipaddr.V4.Prefix.t
+        ; gateway: Ipaddr.V4.t option
+      }
         -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) kind
-    (** [Static { ipv4addr; gateway }] is a witness for a {!Mnet.stack}
-        with ipv4 configuration *)
-  (** ['dhcp_or_static w] is a type witness for either a static
-      {!Mnet.stack} or a DHCP {!stack}. *)
+        (** [Static { ipv4addr; gateway }] is a witness for a {!Mnet.stack} with
+            ipv4 configuration *)
 
-  type stack = Stack : _ kind -> stack
-  (** [Any witness] is an existential holding a witness *)
+  type stack =
+    | Stack : _ kind -> stack
+        (** [Any witness] is an existential holding a witness *)
 
-  val dhcp : ?timeout: int -> config
-    -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) kind
+  val dhcp :
+    ?timeout:int -> config -> (t * Mnet.TCP.state * Mnet.UDP.state * lease) kind
 
-  val static : ?gateway:Ipaddr.V4.t -> Ipaddr.V4.Prefix.t
+  val static :
+       ?gateway:Ipaddr.V4.t
+    -> Ipaddr.V4.Prefix.t
     -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) kind
 
-  val stack : ?ipv6:IPv6.mode -> ?max:int option -> name:string -> 'dyn kind -> 'dyn Mkernel.arg
-  (** [stack ?ipv6 ?max ~name witness] is either a static {!Mnet.stack} or a DHCP {!stack}. *)
+  val stack :
+       ?ipv6:IPv6.mode
+    -> ?max:int option
+    -> name:string
+    -> 'dyn kind
+    -> 'dyn Mkernel.arg
+  (** [stack ?ipv6 ?max ~name witness] is either a static {!Mnet.stack} or a
+      DHCP {!stack}. *)
 
   val kill : 'dyn kind -> 'dyn -> unit
   (** [kill witness dev] calls either {!Mnet.kill} or {!kill}. *)
 
   val tcp : 'dyn kind -> 'dyn -> Mnet.TCP.state
-
   val udp : 'dyn kind -> 'dyn -> Mnet.UDP.state
-
   val lease : 'dyn kind -> 'dyn -> lease option
 end
 
