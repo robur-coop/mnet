@@ -1,3 +1,43 @@
+### v0.0.5 (2026-08-28)
+
+- We can close multiple times a TCP connection (@dinosaure, @hannesm,
+  [!47][47])
+- Use warning names instead of numbers (@hannesm, [!46][46])
+- Remove doublon about Ethernet.mac{,addr} (spotted by @hannesm, @dinosaure,
+  [!48][48])
+- Fix how we select our router on IPv6 (@reynir, [!51][51])
+- Upgrade `mnet` with `mkernel.0.0.4` (@hannesm, [!53][53])
+- Use `Mkernel.finally` to finalize our daemon (@dinosaure, @reynir, [!54][54])
+- Sync OPAM files with dune dependencies (@hannesm, [!55][55])
+- Move command-line helpers to their own packages (@hannesm, @dinosaure,
+  [!56][56])
+- Introduce the new module `Mnet_dhcp.Or_static` which mix DHCP and our TCP/IP
+  stack (@reynir, @hannesm, [!52][52])
+- Be able to specify its own IPv6 gateway (instead of get them from RA)
+  (@reynir, @hannesm, [!50][50])
+- Improve the API of `Mnet.TCP` and provide a buffered flow and a direct flow
+
+  **breaking change**
+  `TCP.get` is renamed to `TCP.read` and
+  `TCP.{really_,}read` to `TCP.{really_,}input`.
+
+  (@dinosaure, @hannesm, [!58][58])
+- Improve a bit our `mnet-dns` implementation and our interface (@dinosaure,
+  [!59][59])
+
+[46]: https://git.robur.coop/robur/mnet/pulls/46
+[47]: https://git.robur.coop/robur/mnet/pulls/47
+[48]: https://git.robur.coop/robur/mnet/pulls/48
+[50]: https://git.robur.coop/robur/mnet/pulls/50
+[51]: https://git.robur.coop/robur/mnet/pulls/51
+[52]: https://git.robur.coop/robur/mnet/pulls/52
+[53]: https://git.robur.coop/robur/mnet/pulls/53
+[54]: https://git.robur.coop/robur/mnet/pulls/54
+[55]: https://git.robur.coop/robur/mnet/pulls/55
+[56]: https://git.robur.coop/robur/mnet/pulls/56
+[58]: https://git.robur.coop/robur/mnet/pulls/58
+[59]: https://git.robur.coop/robur/mnet/pulls/59
+
 ### v0.0.4 (2026-07-30)
 
 - Add the support of DHCP and the new package `mnet-dhcp` (@dinosaure, @reynir,
