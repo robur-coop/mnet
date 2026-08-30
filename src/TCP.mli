@@ -162,6 +162,17 @@ val input : buffer flow -> ?off:int -> ?len:int -> bytes -> int
     @raise Invalid_argument
       if [off] and [len] do not designate a valid range of [buf]. *)
 
+val read_bigarray : buffer flow -> ?off:int -> ?len:int -> Bstr.t -> int
+(** [read_bigarray flow bstr ~off ~len] is {!val:input} with a {!type:Bstr.t} as
+    the destination. It exists to avoid an intermediate [bytes] buffer for
+    consumers which accumulate into a bigstring. What [utcp] gives us is blitted
+    straight into [bstr] and only the overflow (what does not fit into [len])
+    goes through the internal buffer.
+
+    @raise Net_unreach if network is unreachable.
+    @raise Invalid_argument
+      if [off] and [len] do not designate a valid range of [bstr]. *)
+
 val really_input : buffer flow -> ?off:int -> ?len:int -> bytes -> unit
 (** [really_input flow buf ~off ~len] reads [len] bytes (defaults to
     [Bytes.length buf - off]) from the given connection [flow], storing them in
