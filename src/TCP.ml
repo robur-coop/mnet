@@ -185,6 +185,46 @@ let input (t : buffer flow) ?(off = 0) ?len buf =
   let len = Ke.peek_into_bytes t.kind ~off ~len buf in
   Ke.unsafe_shift t.kind len; len
 
+let peek_into_bstr ke bstr ~off ~len =
+  let dst_off = ref off and dst_len = ref len in
+  let fn src ~off:src_off ~len:src_len =
+    if !dst_len > 0 then begin
+      let len = Int.min !dst_len src_len in
+      Bstr.blit_from_bytes src ~src_off bstr ~dst_off:!dst_off ~len;
+      dst_off := !dst_off + len;
+      dst_len := !dst_len - len
+    end
+  in
+  Ke.peek_into ke fn; !dst_off - off
+
+let rec blit_into_bstr t bstr dst_off remaining = function
+  | [] -> dst_off
+  | str :: rest ->
+      let len = String.length str in
+      if len <= remaining then begin
+        Bstr.blit_from_string str ~src_off:0 bstr ~dst_off ~len;
+        blit_into_bstr t bstr (dst_off + len) (remaining - len) rest
+      end
+      else begin
+        Bstr.blit_from_string str ~src_off:0 bstr ~dst_off ~len:remaining;
+        Ke.push t.kind (String.sub str remaining (len - remaining));
+        List.iter (Ke.push t.kind) rest;
+        dst_off + remaining
+      end
+
+let read_bigarray (t : buffer flow) ?(off = 0) ?len bstr =
+  let len = match len with Some len -> len | None -> Bstr.length bstr - off in
+  if off < 0 || len < 0 || off > Bstr.length bstr - len then
+    invalid_arg "TCP.read_bigarray";
+  if Ke.length t.kind > 0 then begin
+    let len = peek_into_bstr t.kind bstr ~off ~len in
+    Ke.unsafe_shift t.kind len; len
+  end
+  else
+    match read t with
+    | Ok strs -> blit_into_bstr t bstr off len strs - off
+    | Error _ -> 0
+
 let rec really_input (t : buffer flow) off len buf =
   let len' = input t ~off ~len buf in
   if len' = 0 then raise End_of_file
