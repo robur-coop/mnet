@@ -23,7 +23,7 @@ val create : ?limit:int option -> int -> t
     order to ensure that the entire given [str] string is added. In this case,
     it may be worth imposing a limit so that the ring buffer does not grow
     beyond a certain number of bytes (for example, DNS packets cannot be larger
-    than 65,526 bytes, so a limit of [0x2000] bytes is ideal).
+    than 65,535 bytes, so a limit of [0x2000] bytes is ideal).
 
     By default, [limit] is set to [0x2000]. The given [len] must be lesser or
     equal to the given [limit] ({b by default}, [len] should be always lesser or
