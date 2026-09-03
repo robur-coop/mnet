@@ -19,7 +19,9 @@ module Make (Key : Hashtbl.HashedType) = struct
   let max_expiration = Int64.to_int (Duration.of_sec 10)
 
   let create ?(to_expire = max_expiration) () =
-    { cache= Cache.create (1024 * 256); to_expire }
+    let cache = Cache.create 256 in
+    Cache.resize (256 * 1024) cache;
+    { cache; to_expire }
 
   let catch ~on_exn fn = try fn () with exn -> on_exn exn
 
