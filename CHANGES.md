@@ -1,3 +1,15 @@
+### v0.0.6 (2026-09-03)
+
+- Add `TCP.read_bigarray` (@dinosaure, [!62][62])
+- Add documentation on `mnet.ke` and improve it (@dinosaure, @hannesm,
+  [!63][63], [!64][64])
+- Fix memory usage of `mnet` (@dinosaure, spotted by @hannesm, [!65][65])
+
+[62]: https://git.robur.coop/robur/mnet/pulls/62
+[63]: https://git.robur.coop/robur/mnet/pulls/63
+[64]: https://git.robur.coop/robur/mnet/pulls/64
+[65]: https://git.robur.coop/robur/mnet/pulls/65
+
 ### v0.0.5 (2026-08-28)
 
 - We can close multiple times a TCP connection (@dinosaure, @hannesm,
