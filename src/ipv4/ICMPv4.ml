@@ -69,7 +69,7 @@ module Packet = struct
   let next_hop_mtu =
     let f arr = Hop arr.(1) in
     let g (Hop mtu) = [| 0; mtu |] in
-    map (seq ~len:2 beuint16) f g
+    map (seq (fixed 2) beuint16) f g
 
   let pointer =
     let f byte = Pointer byte in
@@ -89,6 +89,8 @@ module Packet = struct
     | Redirect -> ipaddr
     | Parameter_problem -> pointer
 
+  (* TODO(dinosaure): rewrite it with the new interface of [Bin] (and delete [kind]). *)
+
   let t ~kind:knd =
     let fn _knd code checksum shdr = { kind= knd; code; checksum; shdr } in
     record fn
@@ -98,12 +100,14 @@ module Packet = struct
     |+ field (shdr knd) (fun t -> t.shdr)
     |> sealr
 
+  let decode_kind = Staged.unstage (decode kind)
+  let decode ~kind = Staged.unstage (decode (t ~kind))
+
   let decode ?(off = 0) str =
     let pos = off in
-    let (Kind kind) = decode kind str (ref off) in
-    let off = ref off in
-    let pkt = decode (t ~kind) str off in
-    (* TODO(dinosaure): can we avoid this copy? *)
+    let (Kind kind) = decode_kind str (ref (Off.v off)) in
+    let off = ref (Off.v off) in
+    let pkt = decode ~kind str off in
     let buf = Bytes.of_string str in
     let len = String.length str in
     Bytes.set_uint16_be buf (pos + 2) 0;
@@ -112,7 +116,8 @@ module Packet = struct
     in
     Log.debug (fun m -> m "checksum: %04x, has: %04x" pkt.checksum chk);
     if pkt.checksum != chk then invalid_arg "Invalid ICMPv4 checksum";
-    let payload = String.sub str !off (String.length str - !off) in
+    let off = (!off :> int) in
+    let payload = String.sub str off (String.length str - off) in
     (Packet pkt, payload)
 
   let decode ?off bstr =
@@ -124,7 +129,8 @@ module Packet = struct
       Error `Invalid_ICMPv4_packet
 
   let to_bytes pkt =
-    Bin.to_string (t ~kind:pkt.kind) pkt |> Bytes.unsafe_of_string
+    let to_string = Bin.encode (t ~kind:pkt.kind) in
+    Bytes.unsafe_of_string (Staged.unstage to_string pkt)
 end
 
 let input ipv4 pkt payload =

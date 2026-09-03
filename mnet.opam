@@ -30,3 +30,9 @@ build: [
 ]
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
+
+pin-depends: [
+  [ "bin.dev" "git+https://git.robur.coop/robur/bstr.git#8d765081412fcbe22758f885dba949887e4685ac" ]
+  [ "bstr.dev" "git+https://git.robur.coop/robur/bstr.git#8d765081412fcbe22758f885dba949887e4685ac" ]
+  [ "slice.dev" "git+https://git.robur.coop/robur/bstr.git#8d765081412fcbe22758f885dba949887e4685ac" ]
+]
