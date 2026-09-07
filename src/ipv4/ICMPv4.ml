@@ -22,103 +22,98 @@ module Packet = struct
   and next_hop_mtu = Hop of int [@@unboxed]
   and pointer = Pointer of int [@@unboxed]
   and unused = Unused
-  and pack = Kind : 'a kind -> pack
   and packet = Packet : 'a t -> packet
+
+  type 'a message = 'a t
 
   open Bin
 
-  let kind =
-    let f = function
-      | 0 -> Kind Echo_reply
-      | 3 -> Kind Destination_unreachable
-      | 4 -> Kind Source_quench
-      | 5 -> Kind Redirect
-      | 8 -> Kind Echo_request
-      | 11 -> Kind Time_exceeded
-      | 12 -> Kind Parameter_problem
-      | 13 -> Kind Timestamp_request
-      | 14 -> Kind Timestamp_reply
-      | 15 -> Kind Information_request
-      | 16 -> Kind Information_reply
-      | _ -> invalid_arg "Invalid ICMPv4 message"
-    in
-    let g = function
-      | Kind Echo_reply -> 0
-      | Kind Destination_unreachable -> 3
-      | Kind Source_quench -> 4
-      | Kind Redirect -> 5
-      | Kind Echo_request -> 8
-      | Kind Time_exceeded -> 11
-      | Kind Parameter_problem -> 12
-      | Kind Timestamp_request -> 13
-      | Kind Timestamp_reply -> 14
-      | Kind Information_request -> 15
-      | Kind Information_reply -> 16
-    in
-    map uint8 f g
+  let unused =
+    record ~name:"unused" (fun _ _ -> Unused)
+    |+ field beuint16 (Fun.const 0)
+    |+ field beuint16 (Fun.const 0)
+    |> sealr
 
-  let unused = const Unused
   let ipaddr = map beint32 Ipaddr.V4.of_int32 Ipaddr.V4.to_int32
 
   let id_and_seq =
-    record (fun id seq -> (id, seq))
-    |+ field beuint16 fst
-    |+ field beuint16 snd
+    record ~name:"id-and-seq" (fun id seq -> (id, seq))
+    |+ field ~name:"id" beuint16 fst
+    |+ field ~name:"seq" beuint16 snd
     |> sealr
 
   let next_hop_mtu =
-    let f arr = Hop arr.(1) in
-    let g (Hop mtu) = [| 0; mtu |] in
-    map (seq (fixed 2) beuint16) f g
-
-  let pointer =
-    let f byte = Pointer byte in
-    let g (Pointer byte) = byte in
-    map uint8 f g
-
-  let shdr : type a. a kind -> a Bin.t = function
-    | Echo_request -> id_and_seq
-    | Echo_reply -> id_and_seq
-    | Timestamp_request -> id_and_seq
-    | Timestamp_reply -> id_and_seq
-    | Information_request -> id_and_seq
-    | Information_reply -> id_and_seq
-    | Destination_unreachable -> next_hop_mtu
-    | Time_exceeded -> unused
-    | Source_quench -> unused
-    | Redirect -> ipaddr
-    | Parameter_problem -> pointer
-
-  (* TODO(dinosaure): rewrite it with the new interface of [Bin] (and delete [kind]). *)
-
-  let t ~kind:knd =
-    let fn _knd code checksum shdr = { kind= knd; code; checksum; shdr } in
-    record fn
-    |+ field kind (Fun.const (Kind knd))
-    |+ field uint8 (fun t -> t.code)
-    |+ field beuint16 (fun t -> t.checksum)
-    |+ field (shdr knd) (fun t -> t.shdr)
+    record ~name:"next-hop-mtu" (fun _ mtu -> Hop mtu)
+    |+ field beuint16 (Fun.const 0)
+    |+ field ~name:"mtu" beuint16 (fun (Hop mtu) -> mtu)
     |> sealr
 
-  let decode_kind = Staged.unstage (decode kind)
-  let decode ~kind = Staged.unstage (decode (t ~kind))
+  let pointer =
+    record ~name:"pointer" (fun ptr _ -> Pointer ptr)
+    |+ field ~name:"ptr" uint8 (fun (Pointer ptr) -> ptr)
+    |+ field (bytes (fixed 3)) (Fun.const "\000\000\000")
+    |> sealr
+
+  let body kind shdr =
+    record ~name:"icmpv4" (fun code checksum shdr ->
+        { kind; code; checksum; shdr })
+    |+ field ~name:"code" uint8 (fun t -> t.code)
+    |+ field ~name:"checksum" beuint16 (fun t -> t.checksum)
+    |+ field ~name:"rest-of-header" shdr (fun t -> t.shdr)
+    |> sealr
+
+  let packet =
+    let prj (echo_reply : id_and_seq message -> packet case_p)
+        (destination_unreachable : next_hop_mtu message -> packet case_p)
+        (source_quench : unused message -> packet case_p)
+        (redirect : Ipaddr.V4.t message -> packet case_p)
+        (echo_request : id_and_seq message -> packet case_p)
+        (time_exceeded : unused message -> packet case_p)
+        (parameter_problem : pointer message -> packet case_p)
+        (timestamp_request : id_and_seq message -> packet case_p)
+        (timestamp_reply : id_and_seq message -> packet case_p)
+        (information_request : id_and_seq message -> packet case_p)
+        (information_reply : id_and_seq message -> packet case_p) (Packet t) =
+      match t.kind with
+      | Echo_reply -> echo_reply t
+      | Destination_unreachable -> destination_unreachable t
+      | Source_quench -> source_quench t
+      | Redirect -> redirect t
+      | Echo_request -> echo_request t
+      | Time_exceeded -> time_exceeded t
+      | Parameter_problem -> parameter_problem t
+      | Timestamp_request -> timestamp_request t
+      | Timestamp_reply -> timestamp_reply t
+      | Information_request -> information_request t
+      | Information_reply -> information_reply t
+    in
+    let inj t = Packet t in
+    variant ~name:"icmpv4" prj
+    |~ case1 ~tag:0 (body Echo_reply id_and_seq) inj
+    |~ case1 ~tag:3 (body Destination_unreachable next_hop_mtu) inj
+    |~ case1 ~tag:4 (body Source_quench unused) inj
+    |~ case1 ~tag:5 (body Redirect ipaddr) inj
+    |~ case1 ~tag:8 (body Echo_request id_and_seq) inj
+    |~ case1 ~tag:11 (body Time_exceeded unused) inj
+    |~ case1 ~tag:12 (body Parameter_problem pointer) inj
+    |~ case1 ~tag:13 (body Timestamp_request id_and_seq) inj
+    |~ case1 ~tag:14 (body Timestamp_reply id_and_seq) inj
+    |~ case1 ~tag:15 (body Information_request id_and_seq) inj
+    |~ case1 ~tag:16 (body Information_reply id_and_seq) inj
+    |> sealv ~tag:uint8
+
+  let decode_packet = Staged.unstage (Bin.decode packet)
+  let encode_packet = Staged.unstage (Bin.to_string packet)
 
   let decode ?(off = 0) str =
-    let pos = off in
-    let (Kind kind) = decode_kind str (ref (Off.v off)) in
-    let off = ref (Off.v off) in
-    let pkt = decode ~kind str off in
-    let buf = Bytes.of_string str in
-    let len = String.length str in
-    Bytes.set_uint16_be buf (pos + 2) 0;
-    let chk =
-      Utcp.Checksum.digest_string ~off:pos ~len (Bytes.unsafe_to_string buf)
-    in
-    Log.debug (fun m -> m "checksum: %04x, has: %04x" pkt.checksum chk);
-    if pkt.checksum != chk then invalid_arg "Invalid ICMPv4 checksum";
-    let off = (!off :> int) in
-    let payload = String.sub str off (String.length str - off) in
-    (Packet pkt, payload)
+    let len = String.length str - off in
+    let pos = ref (Off.v off) in
+    let pkt = decode_packet str ~len pos in
+    if Utcp.Checksum.digest_string ~off ~len str != 0 then
+      invalid_arg "Invalid ICMPv4 checksum";
+    let pos = (!pos :> int) in
+    let payload = String.sub str pos (String.length str - pos) in
+    (pkt, payload)
 
   let decode ?off bstr =
     try Ok (decode ?off bstr)
@@ -128,9 +123,7 @@ module Packet = struct
             (Printexc.to_string exn));
       Error `Invalid_ICMPv4_packet
 
-  let to_bytes pkt =
-    let to_string = Bin.encode (t ~kind:pkt.kind) in
-    Bytes.unsafe_of_string (Staged.unstage to_string pkt)
+  let to_bytes pkt = Bytes.unsafe_of_string (encode_packet (Packet pkt))
 end
 
 let input ipv4 pkt payload =
