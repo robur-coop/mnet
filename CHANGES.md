@@ -1,3 +1,11 @@
+### v0.0.7 (2026-09-08)
+
+- Use the last version of `bin` (@dinosaure, [!67][67])
+- Rename `mnet.ke` (conflict with `ke`) to `mnet.ring` (@dinosaure, [!68][68])
+
+[67]: https://git.robur.coop/robur/mnet/pulls/67
+[68]: https://git.robur.coop/robur/mnet/pulls/68
+
 ### v0.0.6 (2026-09-03)
 
 - Add `TCP.read_bigarray` (@dinosaure, [!62][62])
