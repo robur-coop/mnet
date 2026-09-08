@@ -1,3 +1,10 @@
+### v0.0.7 (2026-09-08)
+
+- Use the last version of `bin` (@dinosaure, [!67][67])
+
+
+[65]: https://git.robur.coop/robur/mnet/pulls/67
+
 ### v0.0.6 (2026-09-03)
 
 - Add `TCP.read_bigarray` (@dinosaure, [!62][62])
