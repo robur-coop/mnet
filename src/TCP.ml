@@ -59,7 +59,7 @@ and accept =
   | Pending of direct flow Queue.t
 
 and 'k flow = { state: state; tags: Logs.Tag.set; flow: Utcp.flow; kind: 'k }
-and buffer = Ke.t
+and buffer = Ring.t
 and direct = Direct
 
 and 'k kind =
@@ -181,9 +181,9 @@ let rec read (t : _ flow) =
 
 let input (t : buffer flow) ?(off = 0) ?len buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
-  if Ke.length t.kind = 0 then Result.iter (List.iter (Ke.push t.kind)) (read t);
-  let len = Ke.peek_into_bytes t.kind ~off ~len buf in
-  Ke.unsafe_shift t.kind len; len
+  if Ring.length t.kind = 0 then Result.iter (List.iter (Ring.push t.kind)) (read t);
+  let len = Ring.peek_into_bytes t.kind ~off ~len buf in
+  Ring.unsafe_shift t.kind len; len
 
 let peek_into_bstr ke bstr ~off ~len =
   let dst_off = ref off and dst_len = ref len in
@@ -195,7 +195,7 @@ let peek_into_bstr ke bstr ~off ~len =
       dst_len := !dst_len - len
     end
   in
-  Ke.peek_into ke fn; !dst_off - off
+  Ring.peek_into ke fn; !dst_off - off
 
 let rec blit_into_bstr t bstr dst_off remaining = function
   | [] -> dst_off
@@ -207,8 +207,8 @@ let rec blit_into_bstr t bstr dst_off remaining = function
       end
       else begin
         Bstr.blit_from_string str ~src_off:0 bstr ~dst_off ~len:remaining;
-        Ke.push t.kind (String.sub str remaining (len - remaining));
-        List.iter (Ke.push t.kind) rest;
+        Ring.push t.kind (String.sub str remaining (len - remaining));
+        List.iter (Ring.push t.kind) rest;
         dst_off + remaining
       end
 
@@ -216,9 +216,9 @@ let read_bigarray (t : buffer flow) ?(off = 0) ?len bstr =
   let len = match len with Some len -> len | None -> Bstr.length bstr - off in
   if off < 0 || len < 0 || off > Bstr.length bstr - len then
     invalid_arg "TCP.read_bigarray";
-  if Ke.length t.kind > 0 then begin
+  if Ring.length t.kind > 0 then begin
     let len = peek_into_bstr t.kind bstr ~off ~len in
-    Ke.unsafe_shift t.kind len; len
+    Ring.unsafe_shift t.kind len; len
   end
   else
     match read t with
@@ -463,7 +463,7 @@ let cast : type k. k kind -> direct flow -> k flow =
  fun kind flow ->
   match kind with
   | Direct -> flow
-  | Buffer { len; limit } -> { flow with kind= Ke.create ~limit len }
+  | Buffer { len; limit } -> { flow with kind= Ring.create ~limit len }
 
 (* TODO(dinosaure): clean-up [state.accept] if [accept] is cancelled. *)
 let accept : type k. kind:k kind -> state -> listen -> k flow =
@@ -488,7 +488,7 @@ let accept : type k. kind:k kind -> state -> listen -> k flow =
           Hashtbl.replace state.accept port (Await c);
           Miou.Computation.await_exn c |> cast kind
       | flow, Direct -> flow
-      | flow, Buffer { len; limit } -> { flow with kind= Ke.create ~limit len }
+      | flow, Buffer { len; limit } -> { flow with kind= Ring.create ~limit len }
     end
 
 let listen state port =
@@ -568,7 +568,7 @@ let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow =
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
   let kind : k =
     match kind with
-    | Buffer { len; limit } -> Ke.create ~limit len
+    | Buffer { len; limit } -> Ring.create ~limit len
     | Direct -> Direct
   in
   match Notify.await c with
