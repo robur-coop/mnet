@@ -68,7 +68,7 @@ module Transport = struct
     [ `Plaintext of Ipaddr.t * int | `Tls of Tls.Config.client * Ipaddr.t * int ]
 
   and flow =
-    [ `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ke.t ]
+    [ `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ring.t ]
 
   let kill (_, prm) = Miou.cancel prm
   let bind x fn = fn x
@@ -166,7 +166,7 @@ module Transport = struct
     | flow ->
         let limit, length = t.buffer in
         let limit = Some limit in
-        Ok (addr, `TLS (flow, Ke.create ~limit length))
+        Ok (addr, `TLS (flow, Ring.create ~limit length))
     | exception exn ->
         Log.warn (fun m ->
             m "Impossible to initiate a TLS connection with %a: %s" pp_addr addr
@@ -191,7 +191,7 @@ module Transport = struct
      [Invalid_argument] and kills the reader fiber. *)
   let process ke reqs =
     let rec go () =
-      match Ke.peek ke with
+      match Ring.peek ke with
       | Some str when String.length str >= 2 ->
           let len = String.get_uint16_be str 0 in
           if String.length str >= len + 2 then begin
@@ -205,7 +205,7 @@ module Transport = struct
               ignore (Miou.Computation.try_return ivar packet)
             in
             Option.iter fn (Reqs.find_opt uid reqs);
-            Ke.shift ke (len + 2);
+            Ring.shift ke (len + 2);
             go ()
           end
       | _ -> ()
@@ -240,7 +240,7 @@ module Transport = struct
             m "TLS connection failed with: %s" (Printexc.to_string exn))
     | len ->
         let str = Bytes.sub_string buf 0 len in
-        Ke.push ke str;
+        Ring.push ke str;
         process ke t.reqs;
         read_from_tls t ke buf flow
 
@@ -384,7 +384,7 @@ module Transport = struct
     | None -> ()
 
   (* NOTE(dinosaure): about [limit] and [length], we ensure that our buffered
-     TCP flow has an internal [Ke.t] which can grow up to 65536 bytes
+     TCP flow has an internal [Ring.t] which can grow up to 65536 bytes
      ([0x10000]) and start with 1024 bytes ([0x400]). The user can NOT remove the
      limit but it can enlarge the internal buffer. By default, we avoid a
      possible memory leak because DNS packets over TCP should never be bigger

@@ -1,7 +1,7 @@
 (library
- (name ke)
- (public_name mnet.ke)
- (modules ke))
+ (name ring)
+ (public_name mnet.ring)
+ (modules ring))
 
 (library
  (name mnet_tags)
@@ -33,7 +33,7 @@
  (name mnet)
  (modules mnet UDP TCP)
  (public_name mnet)
- (libraries duration mnet.ke mnet.ipv6 mnet.ipv4 mnet.icmpv4 mnet.ethernet))
+ (libraries duration mnet.ring mnet.ipv6 mnet.ipv4 mnet.icmpv4 mnet.ethernet))
 
 (library
  (name mnet_tls)
@@ -47,7 +47,7 @@
  (public_name mnet-dns)
  (libraries
   mnet
-  mnet.ke
+  mnet.ring
   mnet-happy-eyeballs
   mnet-tls
   dns

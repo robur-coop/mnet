@@ -71,7 +71,7 @@ module Transport : sig
   (** An address for a given context type. *)
 
   and flow =
-    [ `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ke.t ]
+    [ `Plain of Mnet.TCP.buffer Mnet.TCP.flow | `TLS of Mnet_tls.t * Ring.t ]
 
   (** {3 Basic functions required by the DNS client implementation.} *)
 

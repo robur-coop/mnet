@@ -16,11 +16,11 @@ let is_power_of_two x = x <> 0 && x land (lnot x + 1) = x
 
 let create ?(limit = Some 0x2000) ln =
   if not (is_power_of_two ln) then
-    invalid_argf "Ke.create: invalid length (it must be a power of two)";
+    invalid_argf "Ring.create: invalid length (it must be a power of two)";
   let fn limit =
     if (not (is_power_of_two limit)) || limit <= ln then
       invalid_argf
-        "Ke.create: invalid limit (it must be a power of two and greater than \
+        "Ring.create: invalid limit (it must be a power of two and greater than \
          the initial size"
   in
   Option.iter fn limit; unsafe_create ~limit ln
@@ -31,7 +31,7 @@ let available t = t.ln - (t.wr - t.rd)
 let length t = t.wr - t.rd
 
 let shift t len =
-  if t.rd + len > t.wr then invalid_argf "Ke.shift: you are going to far";
+  if t.rd + len > t.wr then invalid_argf "Ring.shift: you are going to far";
   unsafe_shift t len
 
 let compress t =
@@ -71,7 +71,7 @@ let grow t want =
   let ln = to_power_of_two (Int.max 1 (Int.max want (length t))) in
   if ln <> Bytes.length t.buf && ln <= max_ke_length then begin
     if Option.fold ~none:false ~some:(fun limit -> ln > limit) t.limit then
-      failwithf "Ke.grow: the buffer exceeds our limit (%d byte(s))"
+      failwithf "Ring.grow: the buffer exceeds our limit (%d byte(s))"
         (Option.value ~default:0 t.limit);
     let dst = Bytes.create ln in
     let length = length t in
@@ -89,7 +89,7 @@ let grow t want =
     t.rd <- 0
   end
   else if ln > max_ke_length then
-    failwith "Ke.grow: cannot grow buffer (max queue length reached)"
+    failwith "Ring.grow: cannot grow buffer (max queue length reached)"
 
 let push t str =
   let len = String.length str in
