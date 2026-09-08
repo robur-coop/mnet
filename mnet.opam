@@ -11,7 +11,7 @@ depends: [
   "utcp" {>= "0.0.7"}
   "dune" {>= "2.7.0"}
   "bstr" {>= "0.0.4"}
-  "bin"
+  "bin"  {>= "0.1.1"}
   "slice"
   "mkernel" {>= "0.0.4"}
   "mirage-crypto-rng"
@@ -30,9 +30,3 @@ build: [
 ]
 
 synopsis: "An implementation of TCP (Transmission Control Protocol) in OCaml for Miou & Solo5"
-
-pin-depends: [
-  [ "bin.dev" "git+https://git.robur.coop/robur/bstr.git#0e0464a173066ef8cc7892293b37fd84e590b5b5" ]
-  [ "bstr.dev" "git+https://git.robur.coop/robur/bstr.git#0e0464a173066ef8cc7892293b37fd84e590b5b5" ]
-  [ "slice.dev" "git+https://git.robur.coop/robur/bstr.git#0e0464a173066ef8cc7892293b37fd84e590b5b5" ]
-]
