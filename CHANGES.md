@@ -2,8 +2,7 @@
 
 - Use the last version of `bin` (@dinosaure, [!67][67])
 
-
-[65]: https://git.robur.coop/robur/mnet/pulls/67
+[67]: https://git.robur.coop/robur/mnet/pulls/67
 
 ### v0.0.6 (2026-09-03)
 
