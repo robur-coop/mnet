@@ -20,7 +20,8 @@ type flow = {
 }
 
 let now () = Mtime.of_uint64_ns (Int64.of_int (Mkernel.clock_monotonic ()))
-let writev t outs = List.iter (fun str -> Mnet.TCP.write t.flow str) outs
+let writev t outs = List.iter (Mnet.TCP.write t.flow) outs
+let writev_without_interruption t outs = List.iter (Mnet.TCP.write_without_interruption t.flow) outs
 
 let process t =
   match Mnet.TCP.read t.flow with
@@ -126,7 +127,7 @@ let close t =
     let fn id =
       let client, outs = Awa.Client.eof ~id t.client in
       t.client <- client;
-      writev t outs;
+      writev_without_interruption t outs;
       let client, out = Awa.Client.close ~id t.client in
       t.client <- client;
       Option.iter (Mnet.TCP.write_without_interruption t.flow) out
