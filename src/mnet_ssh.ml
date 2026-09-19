@@ -1,5 +1,6 @@
 let src = Logs.Src.create "mnet.ssh"
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
+let inhibit fn value = try fn value with _exn -> ()
 
 module Log = (val Logs.src_log src : Logs.LOG)
 module Q = Flux.Bqueue
@@ -21,7 +22,9 @@ type flow = {
 
 let now () = Mtime.of_uint64_ns (Int64.of_int (Mkernel.clock_monotonic ()))
 let writev t outs = List.iter (Mnet.TCP.write t.flow) outs
-let writev_without_interruption t outs = List.iter (Mnet.TCP.write_without_interruption t.flow) outs
+
+let writev_without_interruption t outs =
+  List.iter (Mnet.TCP.write_without_interruption t.flow) outs
 
 let process t =
   match Mnet.TCP.read t.flow with
@@ -127,7 +130,7 @@ let close t =
     let fn id =
       let client, outs = Awa.Client.eof ~id t.client in
       t.client <- client;
-      writev_without_interruption t outs;
+      inhibit (writev_without_interruption t) outs;
       let client, out = Awa.Client.close ~id t.client in
       t.client <- client;
       Option.iter (Mnet.TCP.write_without_interruption t.flow) out
