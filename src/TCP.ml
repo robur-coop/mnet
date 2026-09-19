@@ -156,8 +156,8 @@ let rec read (t : _ flow) =
           | Error `Not_found -> Error `Refused
           | Error (`Bad_state (err, _state)) ->
               Log.err (fun m ->
-                  m ~tags:t.tags "%a is under a bad state: %s"
-                    Utcp.pp_flow t.flow err);
+                  m ~tags:t.tags "%a is under a bad state: %s" Utcp.pp_flow
+                    t.flow err);
               Error `Refused
           | Error `Eof -> Error `Eof
           | Error (`Msg msg) ->

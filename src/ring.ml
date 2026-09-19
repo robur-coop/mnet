@@ -20,8 +20,8 @@ let create ?(limit = Some 0x2000) ln =
   let fn limit =
     if (not (is_power_of_two limit)) || limit <= ln then
       invalid_argf
-        "Ring.create: invalid limit (it must be a power of two and greater than \
-         the initial size"
+        "Ring.create: invalid limit (it must be a power of two and greater \
+         than the initial size"
   in
   Option.iter fn limit; unsafe_create ~limit ln
 
