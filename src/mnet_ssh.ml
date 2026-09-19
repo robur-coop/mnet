@@ -153,7 +153,7 @@ and event =
   | `Rekey
   | `SSH_out of int32 * string
   | `SSH_err of int32 * string
-  | `Close of int32 ]
+  | `Close of int32 * int32 ]
 
 and callback = string -> request -> unit
 
@@ -203,6 +203,26 @@ let sendv flow server msgs =
   List.fold_left fn server msgs
 
 let lookup t id = List.find_opt (fun c -> id = c.id) t.channels
+
+let send_exit_status flow server id status =
+  match Awa.Channel.lookup id server.Awa.Server.channels with
+  | None -> server
+  | Some c ->
+      let them = c.Awa.Channel.them.Awa.Channel.id in
+      let msg =
+        let open Awa.Ssh in
+        Msg_channel_request (them, false, Exit_status status)
+      in
+      send flow server msg
+
+let run fn =
+  match fn () with
+  | () -> 0l
+  | exception (Miou.Cancelled as exn) -> raise exn
+  | exception exn ->
+      Log.err (fun m ->
+          m "Unexpected exception from a channel: %s" (Printexc.to_string exn));
+      1l
 
 let username server =
   match server.Awa.Server.auth_state with
@@ -256,13 +276,15 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           let server = sendv flow server msgs in
           let _ = Miou.async ~orphans @@ fun () -> Q.get t.queue in
           nexus t flow server str orphans
-      | Some (Ok (`Close id)) ->
-          Log.debug (fun m -> m "close channel %04lx" id);
+      | Some (Ok (`Close (id, status))) ->
+          Log.debug (fun m ->
+              m "close channel %04lx (exit status %ld)" id status);
           let fn c =
             ignore (Miou.await c.prm);
             Q.close c.q
           in
           Option.iter fn (lookup t id);
+          let server = send_exit_status flow server id status in
           let server, eof_msgs = Awa.Server.eof server id in
           List.iter (Mnet.TCP.write flow) eof_msgs;
           let server, close_msg = Awa.Server.close server id in
@@ -321,16 +343,15 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           let user = username server in
           let prm =
             Miou.async @@ fun () ->
-            t.cb user (Shell { ic; oc; ec });
-            Q.put t.queue (`Close id)
+            let status = run @@ fun () -> t.cb user (Shell { ic; oc; ec }) in
+            Q.put t.queue (`Close (id, status))
           in
           let c = { cmd= None; id; q; prm } in
           let t = { t with channels= c :: t.channels } in
           nexus t flow server str orphans
       | Some (Awa.Server.Channel_eof id) ->
-          let fn c = Q.close c.q; Miou.cancel c.prm in
+          let fn c = Q.close c.q in
           Option.iter fn (lookup t id);
-          (* TODO(dinosaure): on the mirage implementation, we don't recurse and just stop. *)
           nexus t flow server str orphans
       | Some (Awa.Server.Channel_data (id, data)) ->
           let fn c = Q.put c.q data in
@@ -346,8 +367,8 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           let channel = Channel { cmd; ic; oc; ec } in
           let prm =
             Miou.async @@ fun () ->
-            t.cb user channel;
-            Q.put t.queue (`Close id)
+            let status = run @@ fun () -> t.cb user channel in
+            Q.put t.queue (`Close (id, status))
           in
           let c = { cmd= Some cmd; id; q; prm } in
           let t = { t with channels= c :: t.channels } in
