@@ -129,7 +129,7 @@ let close t =
       writev t outs;
       let client, out = Awa.Client.close ~id t.client in
       t.client <- client;
-      Option.iter (Mnet.TCP.write t.flow) out
+      Option.iter (Mnet.TCP.write_without_interruption t.flow) out
     in
     Option.iter fn t.id; Mnet.TCP.close t.flow
   end
