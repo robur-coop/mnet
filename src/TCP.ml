@@ -154,6 +154,11 @@ let rec read (t : _ flow) =
               List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
               Ok data
           | Error `Not_found -> Error `Refused
+          | Error (`Bad_state (err, _state)) ->
+              Log.err (fun m ->
+                  m ~tags:t.tags "%a is under a bad state: %s"
+                    Utcp.pp_flow t.flow err);
+              Error `Refused
           | Error `Eof -> Error `Eof
           | Error (`Msg msg) ->
               Log.err (fun m ->
@@ -178,12 +183,18 @@ let rec read (t : _ flow) =
           m ~tags:t.tags "%a error while read: %s" Utcp.pp_flow t.flow msg);
       Error `Refused
   | Error `Not_found -> Error `Refused
+  | Error (`Bad_state (err, _state)) ->
+      Log.err (fun m ->
+          m ~tags:t.tags "%a is under a bad state: %s" Utcp.pp_flow t.flow err);
+      Error `Refused
 
 let input (t : buffer flow) ?(off = 0) ?len buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
-  if Ring.length t.kind = 0 then Result.iter (List.iter (Ring.push t.kind)) (read t);
+  if Ring.length t.kind = 0 then
+    Result.iter (List.iter (Ring.push t.kind)) (read t);
   let len = Ring.peek_into_bytes t.kind ~off ~len buf in
-  Ring.unsafe_shift t.kind len; len
+  Ring.unsafe_shift t.kind len;
+  len
 
 let peek_into_bstr ke bstr ~off ~len =
   let dst_off = ref off and dst_len = ref len in
@@ -218,7 +229,8 @@ let read_bigarray (t : buffer flow) ?(off = 0) ?len bstr =
     invalid_arg "TCP.read_bigarray";
   if Ring.length t.kind > 0 then begin
     let len = peek_into_bstr t.kind bstr ~off ~len in
-    Ring.unsafe_shift t.kind len; len
+    Ring.unsafe_shift t.kind len;
+    len
   end
   else
     match read t with
@@ -239,6 +251,10 @@ let really_input (t : buffer flow) ?(off = 0) ?len buf =
 let rec write t str off len =
   match Utcp.send t.state.tcp (now ()) t.flow ~off ~len str with
   | Error `Not_found -> raise Connection_refused
+  | Error (`Bad_state (err, _state)) ->
+      Log.err (fun m ->
+          m ~tags:t.tags "%a is under bad state: %s" Utcp.pp_flow t.flow err);
+      raise Closed_by_peer
   | Error (`Msg msg) ->
       Log.err (fun m ->
           m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
@@ -272,6 +288,10 @@ let write_without_interruption t ?(off = 0) ?len str =
   match Utcp.force_enqueue t.state.tcp (now ()) t.flow ~off ~len str with
   | Ok tcp -> t.state.tcp <- tcp
   | Error `Not_found -> raise Connection_refused
+  | Error (`Bad_state (err, _state)) ->
+      Log.err (fun m ->
+          m ~tags:t.tags "%a is under a bad state: %s" Utcp.pp_flow t.flow err);
+      raise Connection_refused
   | Error (`Msg msg) ->
       Log.err (fun m ->
           m ~tags:t.tags "%a error while write: %s" Utcp.pp_flow t.flow msg);
@@ -291,7 +311,7 @@ let close t =
          connection has been properly terminated.
          NOTE(dinosaure): we also must not emit effects here if we would
          like to use [Mnet.TCP.close] as a finalizer with [Miou.Ownership]. *)
-  | Error `Not_found -> ()
+  | Error (`Not_found | `Bad_state _) -> ()
   | Error (`Msg msg) ->
       Log.err (fun m ->
           m ~tags:t.tags "%a error in close: %s" Utcp.pp_flow t.flow msg)
@@ -306,6 +326,9 @@ let shutdown t mode =
       Log.err (fun m ->
           m ~tags:t.tags "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
   | Error `Not_found -> ()
+  | Error (`Bad_state (err, _state)) ->
+      Log.err (fun m ->
+          m ~tags:t.tags "%a is under a bad state: %s" Utcp.pp_flow t.flow err)
 
 let peers { flow; _ } = Utcp.peers flow
 let tags { tags; _ } = tags
@@ -488,7 +511,8 @@ let accept : type k. kind:k kind -> state -> listen -> k flow =
           Hashtbl.replace state.accept port (Await c);
           Miou.Computation.await_exn c |> cast kind
       | flow, Direct -> flow
-      | flow, Buffer { len; limit } -> { flow with kind= Ring.create ~limit len }
+      | flow, Buffer { len; limit } ->
+          { flow with kind= Ring.create ~limit len }
     end
 
 let listen state port =
