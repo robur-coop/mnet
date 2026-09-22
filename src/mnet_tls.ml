@@ -57,7 +57,7 @@ let inhibit fn v = try fn v with _ -> ()
 
 let write flow str =
   Log.debug (fun m -> m "try to write %d byte(s)" (String.length str));
-  try Mnet.TCP.write_without_interruption flow.fd str with
+  try Mnet.TCP.write flow.fd str with
   | Mnet.TCP.Closed_by_peer ->
       flow.state <- half_close flow.state `write;
       raise Closed_by_peer
@@ -67,7 +67,7 @@ let write flow str =
 
 let write_without_interruption flow str =
   Log.debug (fun m -> m "try to write %d byte(s)" (String.length str));
-  try Mnet.TCP.write flow.fd str with
+  try Mnet.TCP.write_without_interruption flow.fd str with
   | Mnet.TCP.Closed_by_peer ->
       flow.state <- half_close flow.state `write;
       raise Closed_by_peer
