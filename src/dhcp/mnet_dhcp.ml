@@ -13,9 +13,11 @@ let opts (l : lease) = l.Dhcp_wire.options
 
 let cidr l =
   let address = l.Dhcp_wire.yiaddr in
+  let default = Ipaddr.V4.Prefix.make 32 address in
   match Dhcp_wire.find_subnet_mask (opts l) with
-  | Some netmask -> Ipaddr.V4.Prefix.of_netmask_exn ~netmask ~address
-  | None -> Ipaddr.V4.Prefix.make 32 address
+  | Some netmask ->
+      Ipaddr.V4.Prefix.of_netmask ~netmask ~address |> Result.value ~default
+  | None -> default
 
 let gateway l =
   match Dhcp_wire.collect_routers (opts l) with [] -> None | g :: _ -> Some g
