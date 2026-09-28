@@ -231,9 +231,12 @@ let await_actions_or_events t =
   while Queue.is_empty t.queue do
     Miou.Condition.wait t.condition t.mutex
   done;
-  let seq = Queue.to_seq t.queue in
-  let lst = List.of_seq seq in
-  Queue.clear t.queue; `Queue lst
+  `Ready
+
+let drain t =
+  Miou.Mutex.protect t.mutex @@ fun () ->
+  let lst = List.of_seq (Queue.to_seq t.queue) in
+  Queue.clear t.queue; lst
 
 exception Timeout
 
@@ -258,8 +261,8 @@ let continue t cont he =
         await_actions_or_events t
   in
   match fn () with
-  | `Timeout -> (he, [], [])
-  | `Queue actions_and_events ->
+  | `Timeout | `Ready ->
+      let actions_and_events = drain t in
       let user's_actions, events =
         let fn = function
           | #action as action -> Either.Left action
