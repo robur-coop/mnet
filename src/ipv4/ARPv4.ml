@@ -369,10 +369,12 @@ let create ?(delay = 1_500_000_000) ?(timeout = 800) ?(retries = 5) ?ipaddr eth
   Ok (prm, t)
 
 let transfer t pkt =
-  let payload = Slice_bstr.sub_string pkt.Ethernet.payload ~off:0 ~len:28 in
-  let pkt = { pkt with Ethernet.payload } in
-  Miou.Mutex.protect t.mutex @@ fun () ->
-  Queue.push pkt t.queue;
-  Miou.Condition.signal t.condition
+  if Slice_bstr.length pkt.Ethernet.payload >= 28 then begin
+    let payload = Slice_bstr.sub_string pkt.Ethernet.payload ~off:0 ~len:28 in
+    let pkt = { pkt with Ethernet.payload } in
+    Miou.Mutex.protect t.mutex @@ fun () ->
+    Queue.push pkt t.queue;
+    Miou.Condition.signal t.condition
+  end
 
 let kill = Miou.cancel
