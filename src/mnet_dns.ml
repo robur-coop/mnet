@@ -120,7 +120,7 @@ module Transport = struct
         if retries > 0 then begin
           Mirage_crypto_rng.generate_into tmp 2;
           let rnd = Bytes.get_uint16_be tmp 0 in
-          let port = (1024 + rnd) mod (65536 - 1024) in
+          let port = 1024 + (rnd mod (65536 - 1024)) in
           if Set.mem port t.ports then go (retries - 1)
           else begin
             t.ports <- Set.add port t.ports;
