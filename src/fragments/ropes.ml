@@ -108,7 +108,7 @@ let to_bytes : fixed t -> Diet.t * bytes =
     | Unknown (Length len) ->
         Bytes.fill buf off len '\000';
         Log.debug (fun m -> m "+[%d, %d] (unknown)" off (off + len));
-        Diet.add ~off ~len diet
+        diet
     | App { l; r; l_len; _ } ->
         let diet = go diet off l in
         go diet (off + l_len) r
