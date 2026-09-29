@@ -53,11 +53,11 @@ module Packet = struct
 
   let decode slice =
     let ( let* ) = Result.bind in
-    let version_and_ihl = SBstr.get_uint8 slice 0 in
-    let ihl = version_and_ihl land 0b1111 in
     let* () =
       guard `Invalid_IPv4_packet @@ fun () -> SBstr.length slice >= 20
     in
+    let version_and_ihl = SBstr.get_uint8 slice 0 in
+    let ihl = version_and_ihl land 0b1111 in
     let length = SBstr.get_uint16_be slice 2 in
     let uid = SBstr.get_uint16_be slice 4 in
     let flags_and_off = SBstr.get_uint16_be slice 6 in
@@ -66,6 +66,9 @@ module Packet = struct
     let ttl = SBstr.get_uint8 slice 8 in
     let protocol = SBstr.get_uint8 slice 9 in
     let checksum = SBstr.get_uint16_be slice 10 in
+    let* () =
+      guard `Invalid_IPv4_packet @@ fun () -> SBstr.length slice >= ihl * 4
+    in
     let chk =
       let { Slice.buf; off; _ } = slice in
       Utcp.Checksum.digest ~off ~len:(ihl * 4) buf
