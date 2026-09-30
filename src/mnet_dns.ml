@@ -194,7 +194,7 @@ module Transport = struct
       match Ring.peek ke with
       | Some str when String.length str >= 2 ->
           let len = String.get_uint16_be str 0 in
-          if String.length str >= len + 2 then begin
+          if String.length str >= len + 2 && len >= 2 then begin
             let packet = String.sub str 0 (len + 2) in
             let uid = String.get_uint16_be packet 2 in
             Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
@@ -216,17 +216,21 @@ module Transport = struct
     let hdr = Bytes.create 2 in
     Mnet.TCP.really_input flow hdr;
     let len = Bytes.get_uint16_be hdr 0 in
-    let pkt = Bytes.create (2 + len) in
-    Bytes.set_uint16_be pkt 0 len;
-    Mnet.TCP.really_input flow ~off:2 pkt;
-    let packet = Bytes.unsafe_to_string pkt in
-    let uid = String.get_uint16_be packet 2 in
-    Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
-    Log.debug (fun m ->
-        m "Something waiting for this response? %b"
-          (Option.is_some (Reqs.find_opt uid t.reqs)));
-    let fn (_tx, ivar) = ignore (Miou.Computation.try_return ivar packet) in
-    Option.iter fn (Reqs.find_opt uid t.reqs);
+    (* TODO(dinosaure): should we read even if it does not correspond to a
+       valid DNS packet? *)
+    if len >= 2 then begin
+      let pkt = Bytes.create (2 + len) in
+      Bytes.set_uint16_be pkt 0 len;
+      Mnet.TCP.really_input flow ~off:2 pkt;
+      let packet = Bytes.unsafe_to_string pkt in
+      let uid = String.get_uint16_be packet 2 in
+      Log.debug (fun m -> m "New DNS response (uid:%02x)" uid);
+      Log.debug (fun m ->
+          m "Something waiting for this response? %b"
+            (Option.is_some (Reqs.find_opt uid t.reqs)));
+      let fn (_tx, ivar) = ignore (Miou.Computation.try_return ivar packet) in
+      Option.iter fn (Reqs.find_opt uid t.reqs)
+    end;
     read_from_tcp t flow
 
   let rec read_from_tls t ke buf flow =
