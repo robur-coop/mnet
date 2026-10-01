@@ -132,13 +132,17 @@ let fill state ~peer ~pkt payload =
 
 let handler_ipv4 state (pkt, payload) =
   let peer = Ipaddr.V4 pkt.IPv4.src in
-  match payload with
-  | IPv4.String _ -> assert false
-  | IPv4.Slice slice ->
-      begin match Packet.decode slice with
-      | Ok (pkt, payload) -> fill state ~peer ~pkt payload
-      | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
-      end
+  let slice =
+    match payload with
+    | IPv4.String str ->
+        (* TODO(dinosaure): we probably can avoid a copy here... *)
+        let bstr = Bstr.of_string str in
+        SBstr.make bstr
+    | IPv4.Slice slice -> slice
+  in
+  match Packet.decode slice with
+  | Ok (pkt, payload) -> fill state ~peer ~pkt payload
+  | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
 
 let handler_ipv6 state src _dst (payload : Bstr.t) =
   let peer = Ipaddr.V6 src in
