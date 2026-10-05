@@ -52,6 +52,8 @@ type t = {
   ; mac: Macaddr.t
   ; bstr_ic: Bstr.t
   ; bstr_oc: Bstr.t
+  ; tmp: Bstr.t (* [bstr_oc] without the Ethernet header *)
+  ; tags: Logs.Tag.set
   ; extern: extern option
   ; cnt: int Atomic.t
 }
@@ -77,25 +79,35 @@ exception Packet_ignored
 
 let mac { mac; _ } = mac
 let mtu { mtu; _ } = mtu
-let tags { mac; _ } tags = Logs.Tag.add Mnet_tags.mac mac tags
+
+let tags t tags =
+  if Logs.Tag.is_empty tags then t.tags
+  else Logs.Tag.add Mnet_tags.mac t.mac tags
+
 let uninteresting_packet _ = raise_notrace Packet_ignored
 
 let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
   let fn = packet.payload in
   let src = Option.value ~default:t.mac packet.src in
-  let tags = tags t Logs.Tag.empty in
   let pkt = { Packet.src; dst= packet.dst; protocol= Some packet.protocol } in
-  (* NOTE(dinosaure): clean-up our buffer. *)
   Packet.encode_into pkt ~off:0 t.bstr_oc;
-  let bstr = Bstr.sub t.bstr_oc ~off:14 ~len:(Bstr.length t.bstr_oc - 14) in
-  Bstr.memset bstr ~off:0 ~len:(Bstr.length bstr) '\000';
-  let plus' = fn bstr in
+  (* NOTE(dinosaure): clean-up our buffer. Some writers (like [IPv4]) expect
+     zeros (for instance, to compute a checksum). Only the bytes which will be
+     sent need to be cleaned up: if [len] is given, [fn] must write exactly
+     [len] bytes (see the assertion below). *)
+  let len =
+    match plus with
+    | Some plus when plus >= 0 && plus <= Bstr.length t.tmp -> plus
+    | Some _ | None -> Bstr.length t.tmp
+  in
+  Bstr.memset t.tmp ~off:0 ~len '\000';
+  let plus' = fn t.tmp in
   Option.iter (fun plus -> assert (plus = plus')) plus;
   Log.debug (fun m ->
-      m ~tags "write ethernet packet src:%a -> dst:%a (%d byte(s))" Macaddr.pp
-        src Macaddr.pp packet.dst plus');
+      m ~tags:t.tags "write ethernet packet src:%a -> dst:%a (%d byte(s))"
+        Macaddr.pp src Macaddr.pp packet.dst plus');
   Log.debug (fun m ->
-      m ~tags "@[<hov>%a@]"
+      m ~tags:t.tags "@[<hov>%a@]"
         (Hxd_string.pp Hxd.default)
         (Bstr.sub_string t.bstr_oc ~off:0 ~len:(14 + plus')));
   (* TODO(dinosaure): we must figure out about the impact of such branch. We
@@ -103,7 +115,8 @@ let write_directly_into t ?len:plus (packet : (Bstr.t -> int) packet) =
      wrap [read]/[write] into an [External] value (to simplify the API). *)
   match t.extern with
   | None ->
-      (* TODO(dinosaure): use [Mkernel.Net.write_into]. *)
+      (* NOTE(dinosaure): don't use [Mkernel.Net.write_into], it allocates a
+         new bigarray for each frame when we can reuse [t.bstr_oc]. *)
       Mkernel.Net.write_bigstring t.net ~off:0 ~len:(14 + plus') t.bstr_oc
   | Some (External { device; swr; _ }) ->
       swr device ~off:0 ~len:(14 + plus') t.bstr_oc
@@ -113,12 +126,12 @@ let of_interest t dst =
 
 let handler t bstr ~len =
   if len >= 14 then
-    let tags = tags t Logs.Tag.empty in
     match Packet.decode bstr ~len with
     | Error _ ->
         let str = Bstr.sub_string t.bstr_ic ~off:0 ~len in
-        Log.err (fun m -> m ~tags "Invalid Ethernet packet");
-        Log.err (fun m -> m ~tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
+        Log.err (fun m -> m ~tags:t.tags "Invalid Ethernet packet");
+        Log.err (fun m ->
+            m ~tags:t.tags "@[<hov>%a@]" (Hxd_string.pp Hxd.default) str)
     | Ok ({ Packet.protocol= Some protocol; src; dst }, payload) ->
         begin try
           if of_interest t dst then
@@ -127,7 +140,8 @@ let handler t bstr ~len =
         | Packet_ignored -> ()
         | exn ->
             Log.err (fun m ->
-                m ~tags "Unexpected exception from the user's handler: %s"
+                m ~tags:t.tags
+                  "Unexpected exception from the user's handler: %s"
                   (Printexc.to_string exn))
         end
     | Ok _ -> ()
@@ -167,8 +181,12 @@ let create ?(mtu = 1500) ?(handler = uninteresting_packet) ?hypercalls:extern
      [Bstr.sub] are cheap. We should use [Slice] instead of [Bstr]. TODO! *)
   let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:(14 + mtu) in
   let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
+  let tmp = Bstr.sub bstr_oc ~off:14 ~len:mtu in
+  let tags = Logs.Tag.add Mnet_tags.mac mac Logs.Tag.empty in
   let cnt = Atomic.make 0 in
-  let t = { net; handler; mtu; mac; bstr_ic; bstr_oc; extern; cnt } in
+  let t =
+    { net; handler; mtu; mac; bstr_ic; bstr_oc; tmp; tags; extern; cnt }
+  in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (daemon, t)
 

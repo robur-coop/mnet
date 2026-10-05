@@ -132,7 +132,10 @@ val write_directly_into :
     where [buf] starts after the Ethernet header. [fn] should write the payload
     and return the number of payload bytes written.
 
-    - [?len] is a hint for the total frame size (including the Ethernet header).
+    - [?len] is the number of payload bytes that [fn] writes (the Ethernet
+      header is {b not} included). If it is given, [fn] must return exactly
+      [len] and only these [len] bytes are cleaned up (set to ['\000']) before
+      calling [fn]. Otherwise, the whole buffer is cleaned up.
     - [?src] overrides the source MAC address (defaults to the device's own MAC
       address).
 
