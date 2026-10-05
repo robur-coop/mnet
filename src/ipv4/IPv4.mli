@@ -50,6 +50,7 @@ module Packet : sig
   type 'a packet = {
       src: Ipaddr.V4.t
     ; dst: Ipaddr.V4.t
+    ; tos: int
     ; uid: int
     ; flags: Flag.t list
     ; off: int
@@ -60,6 +61,7 @@ module Packet : sig
   }
   (** An IPv4 packet header parameterized by its checksum state (['a] is either
       {!type:partial} or {!type:complete}).
+      - [tos]: the Type of Service field (DSCP and ECN bits)
       - [uid]: the IP identification field, used for fragment reassembly.
       - [off]: the fragment offset (in 8-byte units).
       - [ttl]: Time-To-Live.
@@ -84,10 +86,18 @@ val tags : t -> Logs.Tag.set -> Logs.Tag.set
     better characterize the information that IPv4 can send (especially with
     regard to debugging). *)
 
-type packet = { src: Ipaddr.V4.t; dst: Ipaddr.V4.t; protocol: int; uid: int }
+type packet = {
+    src: Ipaddr.V4.t
+  ; dst: Ipaddr.V4.t
+  ; protocol: int
+  ; uid: int
+  ; tos: int
+}
 (** Metadata about a received IPv4 packet, passed to upper-layer handlers.
     - [protocol]: the upper-layer protocol (6 = TCP, 17 = UDP, 1 = ICMP).
-    - [uid]: the IP identification field. *)
+    - [uid]: the IP identification field.
+    - [tos]: the Type of Service field (DSCP and ECN bits). For a reassembled
+      packet, it is the one of the last received fragment. *)
 
 (** The payload of a received IPv4 packet. See the module documentation for the
     distinction between {!constructor:Slice} (zero-copy, non-fragmented) and
@@ -188,27 +198,31 @@ end
 val write_directly :
      t
   -> ?ttl:int
+  -> ?tos:int
   -> Ipaddr.V4.t
   -> Ipaddr.V4.t * Macaddr.t
   -> protocol:int
   -> Writer.t
   -> unit
-(** [write_directly ipv4 ?ttl src (dst, macaddr) ~protocol w] writes a new IPv4
-    packet [w] {b effectively} (without interruption) (fragmented or not) to the
-    specified destination [macaddr]. *)
+(** [write_directly ipv4 ?ttl ?tos src (dst, macaddr) ~protocol w] writes a new
+    IPv4 packet [w] {b effectively} (without interruption) (fragmented or not)
+    to the specified destination [macaddr]. [tos] is the Type of Service field
+    (DSCP and ECN bits) of every emitted packet (defaults to [0]). *)
 
 val write :
      t
   -> ?ttl:int
+  -> ?tos:int
   -> ?src:Ipaddr.V4.t
   -> Ipaddr.V4.t
   -> protocol:int
   -> Writer.t
   -> (unit, [> `Route_not_found ]) result
-(** [write ipv4 ?ttl ?src dst ~protocol w] writes a new IPv4 packet [w]
-    (fragmented or not) to the specified destination [dst]. This function may
-    have an interruption to discover the route to send the given packet to [dst]
-    (an underlying cache exists for such discovery). *)
+(** [write ipv4 ?ttl ?tos ?src dst ~protocol w] writes a new IPv4 packet [w]
+    (fragmented or not) to the specified destination [dst] (see
+    {!val:write_directly} for [tos]). This function may have an interruption to
+    discover the route to send the given packet to [dst] (an underlying cache
+    exists for such discovery). *)
 
 val attempt_to_discover_destination : t -> Ipaddr.V4.t -> Macaddr.t option
 (** [attempt_to_discover_destination ipv4 dst] attempts to return the MAC

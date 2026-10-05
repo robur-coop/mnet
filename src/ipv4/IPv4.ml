@@ -37,6 +37,7 @@ module Packet = struct
   type 'a packet = {
       src: Ipaddr.V4.t
     ; dst: Ipaddr.V4.t
+    ; tos: int
     ; uid: int
     ; flags: Flag.t list
     ; off: int
@@ -58,6 +59,7 @@ module Packet = struct
     in
     let version_and_ihl = SBstr.get_uint8 slice 0 in
     let ihl = version_and_ihl land 0b1111 in
+    let tos = SBstr.get_uint8 slice 1 in
     let length = SBstr.get_uint16_be slice 2 in
     let uid = SBstr.get_uint16_be slice 4 in
     let flags_and_off = SBstr.get_uint16_be slice 6 in
@@ -82,7 +84,18 @@ module Packet = struct
     in
     let checksum_and_length = { checksum; length } in
     let pkt =
-      { src; dst; uid; flags; off; ttl; protocol; checksum_and_length; opt }
+      {
+        src
+      ; dst
+      ; tos
+      ; uid
+      ; flags
+      ; off
+      ; ttl
+      ; protocol
+      ; checksum_and_length
+      ; opt
+      }
     in
     let payload = SBstr.shift slice (20 + SBstr.length opt) in
     Ok (pkt, payload)
@@ -94,7 +107,7 @@ module Packet = struct
   let unsafe_encode_into t ?(off = 0) bstr =
     let version_and_ihl = (4 lsl 4) lor 5 in
     Bstr.set_uint8 bstr (off + 0) version_and_ihl;
-    Bstr.set_uint8 bstr (off + 1) 0;
+    Bstr.set_uint8 bstr (off + 1) t.tos;
     Bstr.set_uint16_be bstr (off + 2) 0;
     Bstr.set_uint16_be bstr (off + 4) t.uid;
     Bstr.set_uint16_be bstr (off + 6) (flags_and_off_to_int t);
@@ -106,7 +119,13 @@ module Packet = struct
 end
 
 module Key = struct
-  type t = { src: Ipaddr.V4.t; dst: Ipaddr.V4.t; protocol: int; uid: int }
+  type t = {
+      src: Ipaddr.V4.t
+    ; dst: Ipaddr.V4.t
+    ; protocol: int
+    ; uid: int
+    ; tos: int
+  }
 
   let equal a b =
     Ipaddr.V4.compare a.src b.src == 0
@@ -114,7 +133,8 @@ module Key = struct
     && a.protocol == b.protocol
     && a.uid == b.uid
 
-  let hash = Hashtbl.hash
+  let hash { src; dst; protocol; uid; _ } =
+    Hashtbl.hash (src, dst, protocol, uid)
 end
 
 module Frags = Fragments.Make (Key)
@@ -124,6 +144,7 @@ type packet = Key.t = {
   ; dst: Ipaddr.V4.t
   ; protocol: int
   ; uid: int
+  ; tos: int
 }
 
 and payload = Fragments.payload = Slice of SBstr.t | String of string
@@ -267,7 +288,7 @@ let fixed pkt user's_fn len bstr =
   Bstr.set_uint16_be bstr 10 chk;
   20 + len
 
-let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
+let write_directly t ?(ttl = 38) ?(tos = 0) src (dst, macaddr) ~protocol p =
   Log.debug (fun m ->
       let tags = tags t Logs.Tag.empty in
       m ~tags "%a is-at %a" Ipaddr.V4.pp dst Macaddr.pp macaddr);
@@ -278,6 +299,7 @@ let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
         {
           Packet.src
         ; dst
+        ; tos
         ; uid= 0
         ; flags= Flag._none
         ; off= 0
@@ -304,6 +326,7 @@ let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
               {
                 Packet.src
               ; dst
+              ; tos
               ; uid
               ; flags
               ; off= off lsr 3
@@ -322,7 +345,7 @@ let write_directly t ?(ttl = 38) src (dst, macaddr) ~protocol p =
       in
       go 0 total_length (fn ())
 
-let write t ?(ttl = 38) ?src dst ~protocol p =
+let write t ?(ttl = 38) ?tos ?src dst ~protocol p =
   match t.cidr with
   | None ->
       Log.err (fun m ->
@@ -355,7 +378,7 @@ let write t ?(ttl = 38) ?src dst ~protocol p =
                 src Ipaddr.V4.pp dst);
           Ok ()
       | Ok macaddr ->
-          write_directly t ~ttl src (dst, macaddr) ~protocol p;
+          write_directly t ~ttl ?tos src (dst, macaddr) ~protocol p;
           Ok ()
     end
 
@@ -393,8 +416,9 @@ let input t pkt =
           let src = ipv4.Packet.src
           and dst = ipv4.Packet.dst
           and protocol = ipv4.Packet.protocol
-          and uid = ipv4.Packet.uid in
-          { Key.src; dst; protocol; uid }
+          and uid = ipv4.Packet.uid
+          and tos = ipv4.Packet.tos in
+          { Key.src; dst; protocol; uid; tos }
         and off = ipv4.Packet.off * 8
         and len = ipv4.Packet.checksum_and_length.length - 20
         and last = not (List.exists (( = ) Flag.MF) ipv4.Packet.flags) in
