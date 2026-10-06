@@ -1,7 +1,7 @@
 type flow
 
 val client :
-     ?authenticator:Awa.Keys.authenticator
+     Awa.Keys.authenticator
   -> user:string
   -> [ `Pubkey of Awa.Hostkey.priv | `Password of string ]
   -> string
@@ -10,7 +10,7 @@ val client :
 
 val read : flow -> bytes -> off:int -> len:int -> int
 val write : flow -> string -> off:int -> len:int -> unit
-val exit_status : flow -> int32 option
+val exit_status : flow -> int option
 val close : flow -> unit
 
 module Stop : sig
@@ -33,17 +33,17 @@ type callback = string -> request -> unit
 
 and request =
   | Pty_req of {
-        width: int32
-      ; height: int32
-      ; max_width: int32
-      ; max_height: int32
+        width: int
+      ; height: int
+      ; max_width: int
+      ; max_height: int
       ; term: string
     }
   | Pty_set of {
-        width: int32
-      ; height: int32
-      ; max_width: int32
-      ; max_height: int32
+        width: int
+      ; height: int
+      ; max_width: int
+      ; max_height: int
     }
   | Set_env of { key: string; value: string }
   | Channel of {
@@ -60,7 +60,7 @@ and request =
 
 and channel = {
     cmd: string option
-  ; id: int32
+  ; id: int
   ; q: string Flux.Bqueue.c
   ; prm: unit Miou.t
 }
