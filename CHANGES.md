@@ -1,3 +1,34 @@
+### v0.0.8 (2026-10-07)
+
+- Upgrade to `utcp.0.0.8` (@dinosaure, [!70][70])
+- Be sure that `Mnet_{ssh,tls}` don't emit effects when we close the connection
+  (@dinosaure, [!70][70])
+  * Also fix `Mnet_ssh.close` to use `write_without_interruption in all
+    situation (@dinosaure, [c552a4a][c552a4a])
+  * Inhibit possible exception when we send EOF through SSH (@dinosaure,
+    [c2fc7fe][c2fc7fe])
+- Send back the exit-code through SSH (@dinosaure, [!71][71])
+- Intervene `write_{,without_}interruption` on `mnet-tls` (@dinosaure, fix
+  [!70][70], [876adfa][876adfa])
+- Avoid an exception leak on `mnet-dhcp` (@dinosaure, [!72][72])
+- Fix `mnet-happy-eyeballs` and don't lose some events when we timeout
+  (@dinosaure, [!73][73])
+- Fix a possible exception when we decode ARPv4 packets (@dinosaure, [!74][74])
+- Only use unprivileged ports for DNS packets (@dinosaure, [!76][76])
+- Don't fill our ropes/diet with unknown datas when we receive fragments
+  (@dinosaure, [!77][77])
+- Fix a possible exception when we decode IPv4 packets (@dinosaure, [!78][78])
+- Fix a possible exception when we decode DNS packets (@dinosaure, [!79][79])
+- Remove an assert false on our UDP stack (@dinosaure, [!80][80])
+- Be able to read/write TOS flags on IPv4 packets (@dinosaure, [!81][81])
+- Optimize a bit when we write Ethernet frame (@dinosaure, [!82][82])
+- Update to `awa.0.7.0` (@hannesm, [!83][83])
+- Remove `bin` dependency to generate smaller unikernels (@dinosaure, [!84][84])
+- Improve `Mnet_cli.stack` and returns directly a `'a Mkernel.arg` instead of
+  arguments (@dinosaure, [!85][85])
+- Come back to the CLI for logs as Mirage (and remove the `re` dependency)
+  (@dinosaure, [!86][86])
+
 ### v0.0.7 (2026-09-08)
 
 - Use the last version of `bin` (@dinosaure, [!67][67])
