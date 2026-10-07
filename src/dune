@@ -13,7 +13,7 @@
  (name mnet_cli)
  (public_name mnet-cli)
  (modules mnet_cli)
- (libraries re logs.cli logs.fmt fmt.cli duration cmdliner mnet))
+ (libraries logs.cli logs.fmt fmt.cli duration cmdliner mnet))
 
 (library
  (name ethernet)
