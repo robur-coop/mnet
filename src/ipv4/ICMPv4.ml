@@ -23,96 +23,95 @@ module Packet = struct
   and pointer = Pointer of int [@@unboxed]
   and unused = Unused
   and packet = Packet : 'a t -> packet
+  and k = Kind : 'a kind -> k
+  and 'a message = 'a t
 
-  type 'a message = 'a t
+  let kind_of_int : int -> k option = function
+    | 0 -> Some (Kind Echo_reply)
+    | 3 -> Some (Kind Destination_unreachable)
+    | 4 -> Some (Kind Source_quench)
+    | 5 -> Some (Kind Redirect)
+    | 8 -> Some (Kind Echo_request)
+    | 11 -> Some (Kind Time_exceeded)
+    | 12 -> Some (Kind Parameter_problem)
+    | 13 -> Some (Kind Timestamp_request)
+    | 14 -> Some (Kind Timestamp_reply)
+    | 15 -> Some (Kind Information_request)
+    | 16 -> Some (Kind Information_reply)
+    | _ -> None
 
-  open Bin
+  let kind_to_int : type a. a kind -> int = function
+    | Echo_reply -> 0
+    | Destination_unreachable -> 3
+    | Source_quench -> 4
+    | Redirect -> 5
+    | Echo_request -> 8
+    | Time_exceeded -> 11
+    | Parameter_problem -> 12
+    | Timestamp_request -> 13
+    | Timestamp_reply -> 14
+    | Information_request -> 15
+    | Information_reply -> 16
 
-  let unused =
-    record ~name:"unused" (fun _ _ -> Unused)
-    |+ field beuint16 (Fun.const 0)
-    |+ field beuint16 (Fun.const 0)
-    |> sealr
+  (* NOTE(dinosaure): the rest-of-header is always 4 bytes. *)
+  let decode_id_and_seq str off : id_and_seq =
+    (String.get_uint16_be str off, String.get_uint16_be str (off + 2))
 
-  let ipaddr = map beint32 Ipaddr.V4.of_int32 Ipaddr.V4.to_int32
+  let decode_shdr : type a. a kind -> string -> int -> a =
+   fun kind str off ->
+    match kind with
+    | Echo_reply -> decode_id_and_seq str off
+    | Echo_request -> decode_id_and_seq str off
+    | Timestamp_request -> decode_id_and_seq str off
+    | Timestamp_reply -> decode_id_and_seq str off
+    | Information_request -> decode_id_and_seq str off
+    | Information_reply -> decode_id_and_seq str off
+    | Destination_unreachable -> Hop (String.get_uint16_be str (off + 2))
+    | Source_quench -> Unused
+    | Time_exceeded -> Unused
+    | Redirect -> Ipaddr.V4.of_int32 (String.get_int32_be str off)
+    | Parameter_problem -> Pointer (String.get_uint8 str off)
 
-  let id_and_seq =
-    record ~name:"id-and-seq" (fun id seq -> (id, seq))
-    |+ field ~name:"id" beuint16 fst
-    |+ field ~name:"seq" beuint16 snd
-    |> sealr
+  let encode_id_and_seq ((id, seq) : id_and_seq) buf off =
+    Bytes.set_uint16_be buf off id;
+    Bytes.set_uint16_be buf (off + 2) seq
 
-  let next_hop_mtu =
-    record ~name:"next-hop-mtu" (fun _ mtu -> Hop mtu)
-    |+ field beuint16 (Fun.const 0)
-    |+ field ~name:"mtu" beuint16 (fun (Hop mtu) -> mtu)
-    |> sealr
-
-  let pointer =
-    record ~name:"pointer" (fun ptr _ -> Pointer ptr)
-    |+ field ~name:"ptr" uint8 (fun (Pointer ptr) -> ptr)
-    |+ field (bytes (fixed 3)) (Fun.const "\000\000\000")
-    |> sealr
-
-  let body kind shdr =
-    record ~name:"icmpv4" (fun code checksum shdr ->
-        { kind; code; checksum; shdr })
-    |+ field ~name:"code" uint8 (fun t -> t.code)
-    |+ field ~name:"checksum" beuint16 (fun t -> t.checksum)
-    |+ field ~name:"rest-of-header" shdr (fun t -> t.shdr)
-    |> sealr
-
-  let packet =
-    let prj (echo_reply : id_and_seq message -> packet case_p)
-        (destination_unreachable : next_hop_mtu message -> packet case_p)
-        (source_quench : unused message -> packet case_p)
-        (redirect : Ipaddr.V4.t message -> packet case_p)
-        (echo_request : id_and_seq message -> packet case_p)
-        (time_exceeded : unused message -> packet case_p)
-        (parameter_problem : pointer message -> packet case_p)
-        (timestamp_request : id_and_seq message -> packet case_p)
-        (timestamp_reply : id_and_seq message -> packet case_p)
-        (information_request : id_and_seq message -> packet case_p)
-        (information_reply : id_and_seq message -> packet case_p) (Packet t) =
-      match t.kind with
-      | Echo_reply -> echo_reply t
-      | Destination_unreachable -> destination_unreachable t
-      | Source_quench -> source_quench t
-      | Redirect -> redirect t
-      | Echo_request -> echo_request t
-      | Time_exceeded -> time_exceeded t
-      | Parameter_problem -> parameter_problem t
-      | Timestamp_request -> timestamp_request t
-      | Timestamp_reply -> timestamp_reply t
-      | Information_request -> information_request t
-      | Information_reply -> information_reply t
-    in
-    let inj t = Packet t in
-    variant ~name:"icmpv4" prj
-    |~ case1 ~tag:0 (body Echo_reply id_and_seq) inj
-    |~ case1 ~tag:3 (body Destination_unreachable next_hop_mtu) inj
-    |~ case1 ~tag:4 (body Source_quench unused) inj
-    |~ case1 ~tag:5 (body Redirect ipaddr) inj
-    |~ case1 ~tag:8 (body Echo_request id_and_seq) inj
-    |~ case1 ~tag:11 (body Time_exceeded unused) inj
-    |~ case1 ~tag:12 (body Parameter_problem pointer) inj
-    |~ case1 ~tag:13 (body Timestamp_request id_and_seq) inj
-    |~ case1 ~tag:14 (body Timestamp_reply id_and_seq) inj
-    |~ case1 ~tag:15 (body Information_request id_and_seq) inj
-    |~ case1 ~tag:16 (body Information_reply id_and_seq) inj
-    |> sealv ~tag:uint8
-
-  let decode_packet = Staged.unstage (Bin.decode packet)
-  let encode_packet = Staged.unstage (Bin.to_string packet)
+  let encode_shdr : type a. a kind -> a -> bytes -> int -> unit =
+   fun kind shdr buf off ->
+    match kind with
+    | Echo_reply -> encode_id_and_seq shdr buf off
+    | Echo_request -> encode_id_and_seq shdr buf off
+    | Timestamp_request -> encode_id_and_seq shdr buf off
+    | Timestamp_reply -> encode_id_and_seq shdr buf off
+    | Information_request -> encode_id_and_seq shdr buf off
+    | Information_reply -> encode_id_and_seq shdr buf off
+    | Destination_unreachable ->
+        let (Hop mtu) = shdr in
+        Bytes.set_uint16_be buf off 0;
+        Bytes.set_uint16_be buf (off + 2) mtu
+    | Source_quench -> Bytes.set_int32_be buf off 0l
+    | Time_exceeded -> Bytes.set_int32_be buf off 0l
+    | Redirect -> Bytes.set_int32_be buf off (Ipaddr.V4.to_int32 shdr)
+    | Parameter_problem ->
+        let (Pointer ptr) = shdr in
+        Bytes.set_int32_be buf off 0l;
+        Bytes.set_uint8 buf off ptr
 
   let decode ?(off = 0) str =
     let len = String.length str - off in
-    let pos = ref (Off.v off) in
-    let pkt = decode_packet str ~len pos in
+    if off < 0 || len < 8 then invalid_arg "ICMPv4 packet too small";
+    let pkt =
+      match kind_of_int (String.get_uint8 str off) with
+      | None -> invalid_arg "Unknown ICMPv4 type"
+      | Some (Kind kind) ->
+          let code = String.get_uint8 str (off + 1) in
+          let checksum = String.get_uint16_be str (off + 2) in
+          let shdr = decode_shdr kind str (off + 4) in
+          Packet { kind; code; checksum; shdr }
+    in
     if Utcp.Checksum.digest_string ~off ~len str != 0 then
       invalid_arg "Invalid ICMPv4 checksum";
-    let pos = (!pos :> int) in
-    let payload = String.sub str pos (String.length str - pos) in
+    let payload = String.sub str (off + 8) (len - 8) in
     (pkt, payload)
 
   let decode ?off bstr =
@@ -123,7 +122,13 @@ module Packet = struct
             (Printexc.to_string exn));
       Error `Invalid_ICMPv4_packet
 
-  let to_bytes pkt = Bytes.unsafe_of_string (encode_packet (Packet pkt))
+  let to_bytes pkt =
+    let buf = Bytes.create 8 in
+    Bytes.set_uint8 buf 0 (kind_to_int pkt.kind);
+    Bytes.set_uint8 buf 1 pkt.code;
+    Bytes.set_uint16_be buf 2 pkt.checksum;
+    encode_shdr pkt.kind pkt.shdr buf 4;
+    buf
 end
 
 let input ipv4 pkt payload =
