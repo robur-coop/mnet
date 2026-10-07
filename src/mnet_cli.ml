@@ -44,12 +44,12 @@ let ipv6_gateway =
   & opt (some ipaddr) None
   & info [ "ipv6-gateway" ] ~doc ~docs:s_network ~docv:"IPv6"
 
-let setup ipv4 ipv4_gateway ipv6 ipv6_gateway =
-  (ipv4, ipv4_gateway, ipv6, ipv6_gateway)
+let setup ~name ?max ipv4 gateway ipv6 ipv6_gateway =
+  Mnet.stack ~name ?max ?gateway ~ipv6 ?ipv6_gateway ipv4
 
-let setup =
+let setup ?max name =
   let open Term in
-  const setup $ ipv4 $ ipv4_gateway $ ipv6 $ ipv6_gateway
+  const (setup ~name ?max) $ ipv4 $ ipv4_gateway $ ipv6 $ ipv6_gateway
 
 let s_output = "OUTPUT OPTIONS"
 let s_logs = "LOGS OPTIONS"

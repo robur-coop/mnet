@@ -27,11 +27,9 @@ val ipv6_gateway : Ipaddr.V6.t option Term.t
     destined for a node outside the link-local network). *)
 
 val setup :
-  (Ipaddr.V4.Prefix.t
-  * Ipaddr.V4.t option
-  * Mnet.IPv6.mode
-  * Ipaddr.V6.t option)
-  Term.t
+     ?max:int option
+  -> string
+  -> (Mnet.stack * Mnet.TCP.state * Mnet.UDP.state) Mkernel.arg Term.t
 (** [setup] aggregates {!val:ipv4}, {!val:ipv4_gateway}, {!val:ipv6} and
     {!val:ipv6_gateway} to be able to create a [mnet] {!type:Mnet.stack} (via
     {!val:Mnet.stack}). *)
