@@ -1,3 +1,22 @@
+(*
+ * For the level part:
+ *
+ * Copyright (c) 2014 David Sheets <sheets@alum.mit.edu>
+ * Copyright (c) 2023 Thomas Gazagnaire <thomas@gazagnaire.org>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *)
+
 open Cmdliner
 
 let s_network = "NETWORK"
@@ -53,7 +72,6 @@ let setup ?max name =
 
 let s_output = "OUTPUT OPTIONS"
 let s_logs = "LOGS OPTIONS"
-let verbosity = Logs_cli.level ~docs:s_logs ()
 let renderer = Fmt_cli.style_renderer ~docs:s_output ()
 
 let utf_8 =
@@ -63,14 +81,68 @@ let utf_8 =
 
 let t0 = Mkernel.clock_monotonic ()
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
-let neg fn = fun x -> not (fn x)
 
-let reporter sources ppf =
-  let re = Option.map Re.compile sources in
-  let print src =
-    let some re = (neg List.is_empty) (Re.matches re (Logs.Src.name src)) in
-    Option.fold ~none:true ~some re
+type threshold = [ `All | `Src of string ] * Logs.level option
+
+let threshold : threshold Arg.conv =
+  let parser str =
+    let source = function "*" -> `All | s -> `Src s in
+    let level src s =
+      match Logs.level_of_string s with
+      | Ok s -> Ok (src, s)
+      | Error _ as e -> e
+    in
+    match String.split_on_char ':' str with
+    | [ src; "-" ] -> Ok (source src, None)
+    | [ src; lvl ] -> level (source src) lvl
+    | _ -> error_msgf "Invalid threshold: %s" str
   in
+  let serialize ppf = function
+    | `All, l -> Format.pp_print_string ppf (Logs.level_to_string l)
+    | `Src s, l -> Format.fprintf ppf "%s:%s" s (Logs.level_to_string l)
+  in
+  Arg.conv (parser, serialize)
+
+let setup_levels ~default l =
+  let srcs = Logs.Src.list () in
+  let default =
+    try snd @@ List.find (function `All, _ -> true | _ -> false) l
+    with Not_found -> default
+  in
+  Logs.set_level default;
+  let fn = function
+    | `All, _ -> ()
+    | `Src src, level ->
+        begin try
+          let s = List.find (fun s -> Logs.Src.name s = src) srcs in
+          Logs.Src.set_level s level
+        with Not_found ->
+          Logs.warn (fun m -> m "%s is not a valid log source" src)
+        end
+  in
+  List.iter fn l; default
+
+let levels ?(docs = s_logs) () =
+  let logs = Arg.list threshold in
+  let env = Cmd.Env.info "LOGS_LEVELS" in
+  let doc =
+    "Be more or less verbose. $(docv) must be of the form \
+     $(b,'*:info,foo:debug') means that that the log threshold is set to \
+     $(b,'info') for every log sources but the $(b,'foo') which is set to \
+     $(b,'debug'). Use $(b,'quiet') or $(b,'-') to disable a souce. And \
+     $(b,'*') to consider all sources. For instance $(b, '*-,foo:debug') \
+     disable all sources but $(b,foo) which is set to $(b, debug).'"
+  in
+  let doc = Arg.info ~env ~docv:"LEVEL" ~doc ~docs [ "l"; "logging-levels" ] in
+  Arg.(value & opt logs [] doc)
+
+let setup_levels =
+  let open Term in
+  const (fun default levels -> setup_levels ~default levels)
+  $ Logs_cli.level ~docs:s_logs ()
+  $ levels ~docs:s_logs ()
+
+let reporter ppf =
   let report src level ~over k msgf =
     let k _ = over (); k () in
     let pp header _tags k ppf fmt =
@@ -87,47 +159,14 @@ let reporter sources ppf =
         Fmt.(styled `Magenta string)
         (Logs.Src.name src)
     in
-    match (level, print src) with
-    | Logs.Debug, false -> k ()
-    | _, true | _ -> msgf @@ fun ?header ?tags fmt -> pp header tags k ppf fmt
+    msgf @@ fun ?header ?tags fmt -> pp header tags k ppf fmt
   in
   { Logs.report }
 
-let regexp =
-  let parser str =
-    match Re.Pcre.re str with
-    | re -> Ok (str, `Re re)
-    | exception _ -> error_msgf "Invalid PCRegexp: %S" str
-  in
-  let pp ppf (str, _) = Fmt.string ppf str in
-  Arg.conv (parser, pp)
-
-let sources =
-  let doc = "A regexp (PCRE syntax) to identify which log we print." in
-  let open Arg in
-  value
-  & opt_all regexp [ ("", `None) ]
-  & info [ "l" ] ~doc ~docs:s_logs ~docv:"REGEXP"
-
-let setup_sources = function
-  | [ (_, `None) ] -> None
-  | res ->
-      let res = List.map snd res in
-      let res =
-        List.fold_left
-          (fun acc -> function `Re re -> re :: acc | _ -> acc)
-          [] res
-      in
-      Some (Re.alt res)
-
-let setup_sources = Term.(const setup_sources $ sources)
-
-let setup_logs utf_8 style_renderer sources level =
+let setup_logs utf_8 style_renderer level =
   Option.iter (Fmt.set_style_renderer Fmt.stdout) style_renderer;
   Fmt.set_utf_8 Fmt.stdout utf_8;
-  Logs.set_level level;
-  Logs.set_reporter (reporter sources Fmt.stdout);
+  Logs.set_reporter (reporter Fmt.stdout);
   Option.is_none level
 
-let setup_logs =
-  Term.(const setup_logs $ utf_8 $ renderer $ setup_sources $ verbosity)
+let setup_logs = Term.(const setup_logs $ utf_8 $ renderer $ setup_levels)
