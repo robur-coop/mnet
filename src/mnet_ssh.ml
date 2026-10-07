@@ -14,9 +14,9 @@ end
 type flow = {
     flow: Mnet.TCP.direct Mnet.TCP.flow
   ; mutable client: Awa.Client.t
-  ; mutable id: int32 option
+  ; mutable id: int option
   ; mutable closed: bool
-  ; mutable exit_status: int32 option
+  ; mutable exit_status: int option
   ; pendings: string Queue.t
 }
 
@@ -35,7 +35,7 @@ let process t =
       let str = String.concat "" sstr in
       let fn client = function
         | `Established id ->
-            Log.debug (fun m -> m "channel %04lx established" id);
+            Log.debug (fun m -> m "channel %04x established" id);
             t.id <- Some id;
             client
         | `Channel_data (_id, str) -> Queue.push str t.pendings; client
@@ -46,7 +46,7 @@ let process t =
             t.closed <- true;
             client
         | `Channel_exit_status (_id, status) ->
-            Log.debug (fun m -> m "exit status: %ld" status);
+            Log.debug (fun m -> m "exit status: %d" status);
             t.exit_status <- Some status;
             client
         | `Disconnected ->
@@ -72,9 +72,9 @@ let rec wait_established t =
       else if process t then wait_established t
       else error_msgf "SSH connection closed during handshake"
 
-let client ?authenticator ~user auth cmd flow =
+let client authenticator ~user auth cmd flow =
   let ( let* ) = Result.bind in
-  let client, outs = Awa.Client.make ?authenticator ~user auth in
+  let client, outs = Awa.Client.make authenticator ~user auth in
   let t =
     {
       flow
@@ -151,25 +151,25 @@ and event =
   [ `Eof
   | `Input of string
   | `Rekey
-  | `SSH_out of int32 * string
-  | `SSH_err of int32 * string
-  | `Close of int32 * int32 ]
+  | `SSH_out of int * string
+  | `SSH_err of int * string
+  | `Close of int * int ]
 
 and callback = string -> request -> unit
 
 and request =
   | Pty_req of {
-        width: int32
-      ; height: int32
-      ; max_width: int32
-      ; max_height: int32
+        width: int
+      ; height: int
+      ; max_width: int
+      ; max_height: int
       ; term: string
     }
   | Pty_set of {
-        width: int32
-      ; height: int32
-      ; max_width: int32
-      ; max_height: int32
+        width: int
+      ; height: int
+      ; max_width: int
+      ; max_height: int
     }
   | Set_env of { key: string; value: string }
   | Channel of {
@@ -184,7 +184,7 @@ and request =
       ; ec: string -> unit
     }
 
-and channel = { cmd: string option; id: int32; q: string Q.c; prm: unit Miou.t }
+and channel = { cmd: string option; id: int; q: string Q.c; prm: unit Miou.t }
 
 let or_fail ~where = function
   | Ok value -> value
@@ -217,12 +217,12 @@ let send_exit_status flow server id status =
 
 let run fn =
   match fn () with
-  | () -> 0l
+  | () -> 0
   | exception (Miou.Cancelled as exn) -> raise exn
   | exception exn ->
       Log.err (fun m ->
           m "Unexpected exception from a channel: %s" (Printexc.to_string exn));
-      1l
+      1
 
 let username server =
   match server.Awa.Server.auth_state with
@@ -270,7 +270,7 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           nexus t flow server (str ^ str') orphans
       | Some (Ok (`SSH_out (id, str') | `SSH_err (id, str'))) ->
           Log.debug (fun m ->
-              m "write %d byte(s) on %04lx" (String.length str') id);
+              m "write %d byte(s) on %04x" (String.length str') id);
           let result = Awa.Server.output_channel_data server id str' in
           let server, msgs = or_fail ~where result in
           let server = sendv flow server msgs in
@@ -278,7 +278,7 @@ let rec nexus t flow (server : string Awa.Server.t) str orphans =
           nexus t flow server str orphans
       | Some (Ok (`Close (id, status))) ->
           Log.debug (fun m ->
-              m "close channel %04lx (exit status %ld)" id status);
+              m "close channel %04x (exit status %d)" id status);
           let fn c =
             ignore (Miou.await c.prm);
             Q.close c.q
