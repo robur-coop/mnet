@@ -12,7 +12,6 @@
   lru
   ipaddr
   macaddr
-  bin
   fmt
   slice.bstr))
 
@@ -26,4 +25,4 @@
  (name ICMPv4)
  (public_name mnet.icmpv4)
  (modules ICMPv4)
- (libraries mnet.ipv4 utcp bin ipaddr macaddr fmt slice.bstr))
+ (libraries mnet.ipv4 utcp ipaddr macaddr fmt slice.bstr))
