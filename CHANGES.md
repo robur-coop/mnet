@@ -29,6 +29,26 @@
 - Come back to the CLI for logs as Mirage (and remove the `re` dependency)
   (@dinosaure, [!86][86])
 
+[70]: https://git.robur.coop/robur/mnet/pulls/70
+[71]: https://git.robur.coop/robur/mnet/pulls/71
+[72]: https://git.robur.coop/robur/mnet/pulls/72
+[73]: https://git.robur.coop/robur/mnet/pulls/73
+[74]: https://git.robur.coop/robur/mnet/pulls/74
+[75]: https://git.robur.coop/robur/mnet/pulls/75
+[76]: https://git.robur.coop/robur/mnet/pulls/76
+[77]: https://git.robur.coop/robur/mnet/pulls/77
+[78]: https://git.robur.coop/robur/mnet/pulls/78
+[79]: https://git.robur.coop/robur/mnet/pulls/79
+[80]: https://git.robur.coop/robur/mnet/pulls/80
+[81]: https://git.robur.coop/robur/mnet/pulls/81
+[82]: https://git.robur.coop/robur/mnet/pulls/82
+[83]: https://git.robur.coop/robur/mnet/pulls/83
+[84]: https://git.robur.coop/robur/mnet/pulls/84
+[85]: https://git.robur.coop/robur/mnet/pulls/85
+[86]: https://git.robur.coop/robur/mnet/pulls/86
+[c552a4a]: https://git.robur.coop/robur/mnet/commit/c552a4a5dffcff8d7d0a6b4a07abfb3575f7db7c
+[c2fc7fe]: https://git.robur.coop/robur/mnet/commit/c2fc7fe8d6d5a887dfaa16178eb4d4a7f89212b3
+
 ### v0.0.7 (2026-09-08)
 
 - Use the last version of `bin` (@dinosaure, [!67][67])
