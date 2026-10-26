@@ -44,6 +44,7 @@ type state = {
     mutable tcp: w Utcp.state
   ; ipv4: IPv4.t
   ; ipv6: IPv6.t
+  ; eth: Ethernet.t
   ; queue: Utcp.output Queue.t
   ; outs: (Ipaddr.t * Ipaddr.t * Utcp.Segment.t) Queue.t
   ; accept: (int, accept) Hashtbl.t
@@ -87,7 +88,7 @@ let write_without_interruption_ipv4 state (src, dst, seg) =
   | Some macaddr ->
       IPv4.write_directly state.ipv4 src (dst, macaddr) ~protocol:6 pkt
 
-let write_ipv4 ipv4 (src, dst, seg) =
+let write_ipv4 state (src, dst, seg) =
   let len = Utcp.Segment.length seg in
   let fn bstr =
     let cs = Cstruct.of_bigarray bstr in
@@ -95,20 +96,20 @@ let write_ipv4 ipv4 (src, dst, seg) =
     Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
   in
   let pkt = IPv4.Writer.into ipv4 ~len fn in
-  match IPv4.write ipv4 ~src dst ~protocol:6 pkt with
+  match IPv4.write state.ipv4 ~src dst ~protocol:6 pkt with
   | Ok () -> ()
   | Error `Route_not_found ->
       Log.err (fun m -> m "%a is unreachable" Ipaddr.V4.pp dst);
       raise Net_unreach
 
-let write_ipv6 ipv6 (src, dst, seg) =
+let write_ipv6 state (src, dst, seg) =
   let len = Utcp.Segment.length seg in
   let fn bstr =
     let cs = Cstruct.of_bigarray ~off:0 ~len bstr in
     let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
     Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
   in
-  match IPv6.write_directly ipv6 ~src dst ~protocol:6 ~len fn with
+  match IPv6.write_directly state.ipv6 ~src dst ~protocol:6 ~len fn with
   | Ok () -> ()
   | Error `Packet_too_big ->
       Log.warn (fun m ->
@@ -118,10 +119,10 @@ let write_ipv6 ipv6 (src, dst, seg) =
       Log.err (fun m -> m "%a is unreachable" Ipaddr.V6.pp dst);
       raise Net_unreach
 
-let write_ip ipv4 ipv6 (src, dst, seg) =
+let write_ip state (src, dst, seg) =
   match (src, dst) with
-  | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 ipv4 (src, dst, seg)
-  | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 ipv6 (src, dst, seg)
+  | Ipaddr.V4 src, Ipaddr.V4 dst -> write_ipv4 state (src, dst, seg)
+  | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state (src, dst, seg)
   | Ipaddr.V4 _, Ipaddr.V6 _ ->
       failwith "Impossible to write an IPv6 packet from an IPv4 host"
   | Ipaddr.V6 _, Ipaddr.V4 _ ->
@@ -131,7 +132,7 @@ let write_without_interruption_ip state (src, dst, seg) =
   match (src, dst) with
   | Ipaddr.V4 src, Ipaddr.V4 dst ->
       write_without_interruption_ipv4 state (src, dst, seg)
-  | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state.ipv6 (src, dst, seg)
+  | Ipaddr.V6 src, Ipaddr.V6 dst -> write_ipv6 state (src, dst, seg)
   | Ipaddr.V4 _, Ipaddr.V6 _ ->
       failwith "Impossible to write an IPv6 packet from an IPv4 host"
   | Ipaddr.V6 _, Ipaddr.V4 _ ->
@@ -141,17 +142,17 @@ let rec read (t : _ flow) =
   match Utcp.recv t.state.tcp (now ()) t.flow with
   | Ok (tcp, [], c, segs) -> begin
       t.state.tcp <- tcp;
-      List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
+      List.iter (write_ip t.state) segs;
       match Notify.await c with
       | Ok () ->
           begin match Utcp.recv t.state.tcp (now ()) t.flow with
           | Ok (tcp, [], _c, segs) ->
               t.state.tcp <- tcp;
-              List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
+              List.iter (write_ip t.state) segs;
               read t
           | Ok (tcp, data, _c, segs) ->
               t.state.tcp <- tcp;
-              List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
+              List.iter (write_ip t.state) segs;
               Ok data
           | Error `Not_found -> Error `Refused
           | Error (`Bad_state (err, _state)) ->
@@ -175,7 +176,7 @@ let rec read (t : _ flow) =
     end
   | Ok (tcp, data, _c, segs) ->
       t.state.tcp <- tcp;
-      List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
+      List.iter (write_ip t.state) segs;
       Ok data
   | Error `Eof -> Error `Eof
   | Error (`Msg msg) ->
@@ -261,7 +262,7 @@ let rec write t str off len =
       raise Closed_by_peer
   | Ok (tcp, bytes_sent, c, segs) -> begin
       t.state.tcp <- tcp;
-      List.iter (write_ip t.state.ipv4 t.state.ipv6) segs;
+      List.iter (write_ip t.state) segs;
       Log.debug (fun m -> m ~tags:t.tags "write %d byte(s)" bytes_sent);
       if bytes_sent < len then
         let result = Notify.await c in
@@ -321,7 +322,7 @@ let shutdown t mode =
   | Ok (tcp, cs, segs) ->
       t.state.tcp <- tcp;
       List.iter (Notify.signal _eof) cs;
-      List.iter (write_ip t.state.ipv4 t.state.ipv6) segs
+      List.iter (write_ip t.state) segs
   | Error (`Msg msg) ->
       Log.err (fun m ->
           m ~tags:t.tags "%a error in shutdown: %s" Utcp.pp_flow t.flow msg)
@@ -440,9 +441,7 @@ let rec daemon state n =
       Log.debug (fun m ->
           m "Write %d remaining TCP packet(s)" (List.length outs));
       let fn out =
-        try write_ip state.ipv4 state.ipv6 out with
-        | Net_unreach -> ()
-        | _exn -> ()
+        try write_ip state out with Net_unreach -> () | _exn -> ()
       in
       List.iter fn outs
   | `Timeout ->
@@ -455,7 +454,7 @@ let rec daemon state n =
       let outs = List.rev_append handler's_outs outs in
       let fn out =
         Log.debug (fun m -> m "write new TCP packet from daemon");
-        try write_ip state.ipv4 state.ipv6 out with
+        try write_ip state out with
         | Net_unreach ->
             let _, dst, _ = out in
             Log.err (fun m -> m "Network unreachable for %a" Ipaddr.pp dst)
@@ -540,7 +539,7 @@ let max_connections () =
   (* 96 Kb = (so_rcvbuf) 64 Kb + (so_sndbuf) 32 Kb *)
   max * 65 / 100
 
-let create ~name ?(max = Some (max_connections ())) ipv4 ipv6 =
+let create ~name ?(max = Some (max_connections ())) eth ipv4 ipv6 =
   let tcp = Utcp.empty Notify.create name in
   let accept = Hashtbl.create 0x10 in
   let mutex = Miou.Mutex.create () in
@@ -549,6 +548,7 @@ let create ~name ?(max = Some (max_connections ())) ipv4 ipv6 =
   let state =
     {
       tcp
+    ; eth
     ; ipv4
     ; ipv6
     ; queue= Queue.create ()
@@ -588,7 +588,7 @@ let connect : type k. kind:k kind -> state -> Ipaddr.t * int -> k flow =
     | Error (`Msg _msg) -> raise Connection_refused
   in
   state.tcp <- tcp;
-  write_ip state.ipv4 state.ipv6 seg;
+  write_ip state seg;
   Log.debug (fun m -> m ~tags "Waiting for a TCP handshake");
   let kind : k =
     match kind with

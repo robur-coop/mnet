@@ -114,14 +114,19 @@ type daemon
 
 (** {1 Stack initialization.} *)
 
-val handler : state -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
+val handler : state -> eligible:bool -> Ipaddr.t -> Ipaddr.t -> Bstr.t -> unit
 (** [handler state src dst payload] processes an incoming TCP segment. This
     function is installed by {!val:Mnet.stack} as the protocol handler for TCP
     segments (protocol number 6) received by the IPv4 and IPv6 layers. Users
     normally do not need to call this directly. *)
 
 val create :
-  name:string -> ?max:int option -> IPv4.t -> IPv6.t -> daemon * state
+     name:string
+  -> ?max:int option
+  -> Ethernet.t
+  -> IPv4.t
+  -> IPv6.t
+  -> daemon * state
 (** [create ~name ?max ipv4 ipv4] creates a TCP {!type:state} and a background
     task capable of managing the state over time. It is generally agreed that
     the user then attaches the {!val:handler} to the task managing incoming IP
