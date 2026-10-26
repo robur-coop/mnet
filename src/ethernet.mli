@@ -150,6 +150,8 @@ val write_frame : t -> string -> unit
 
 val create :
      ?mtu:int
+  -> ?max_frame:int
+  -> ?offloads:Mkernel.Net.Offload.t
   -> ?handler:(Slice_bstr.t packet -> unit)
   -> ?hypercalls:extern
   -> Macaddr.t
@@ -177,6 +179,9 @@ val mtu : t -> int
 (** [mtu t] returns the Maximum Transmission Unit (in bytes) of the underlying
     network device. This is the maximum payload size for a single Ethernet frame
     (typically 1500 bytes). *)
+
+val max_frame : t -> int
+val offloads : t -> Mkernel.Net.Offload.t
 
 val tags : t -> Logs.Tag.set -> Logs.Tag.set
 (** [tags t] returns logging tags containing the MAC address of the device.

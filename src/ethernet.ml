@@ -49,6 +49,8 @@ type t = {
     net: Mkernel.Net.t
   ; mutable handler: handler
   ; mtu: int
+  ; max_frame: int
+  ; offloads: Mkernel.Net.Offload.t
   ; mac: Macaddr.t
   ; bstr_ic: Bstr.t
   ; bstr_oc: Bstr.t
@@ -79,6 +81,8 @@ exception Packet_ignored
 
 let mac { mac; _ } = mac
 let mtu { mtu; _ } = mtu
+let max_frame { max_frame; _ } = max_frame
+let offloads { offloads; _ } = offloads
 
 let tags t tags =
   if Logs.Tag.is_empty tags then t.tags
@@ -170,22 +174,37 @@ let guard err fn = if fn () then Ok () else Error err
 
 type daemon = unit Miou.t
 
-let create ?(mtu = 1500) ?(handler = uninteresting_packet) ?hypercalls:extern
-    mac net =
+let create ?(mtu = 1500) ?max_frame ?(offloads = Mkernel.Net.Offload.none)
+    ?(handler = uninteresting_packet) ?hypercalls:extern mac net =
   let ( let* ) = Result.bind in
   let* () = guard `MTU_too_small @@ fun () -> mtu > 14 in
+  let max_frame = Option.value ~default:(14 + mtu) max_frame in
+  let* () = guard `MTU_too_small @@ fun () -> max_frame >= 14 + mtu in
   (* enough for Ethernet packets *)
-  let bstr_ic = Bstr.create (14 + mtu) in
-  let bstr_oc = Bstr.create (14 + mtu) in
+  let bstr_ic = Bstr.create max_frame in
+  let bstr_oc = Bstr.create max_frame in
   (* NOTE(dinosaure): the first [Bstr.sub] does a [malloc()], then any
      [Bstr.sub] are cheap. We should use [Slice] instead of [Bstr]. TODO! *)
-  let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:(14 + mtu) in
-  let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:(14 + mtu) in
-  let tmp = Bstr.sub bstr_oc ~off:14 ~len:mtu in
+  let bstr_ic = Bstr.sub bstr_ic ~off:0 ~len:max_frame in
+  let bstr_oc = Bstr.sub bstr_oc ~off:0 ~len:max_frame in
+  let tmp = Bstr.sub bstr_oc ~off:14 ~len:(max_frame - 14) in
   let tags = Logs.Tag.add Mnet_tags.mac mac Logs.Tag.empty in
   let cnt = Atomic.make 0 in
   let t =
-    { net; handler; mtu; mac; bstr_ic; bstr_oc; tmp; tags; extern; cnt }
+    {
+      net
+    ; handler
+    ; mtu
+    ; max_frame
+    ; offloads
+    ; mac
+    ; bstr_ic
+    ; bstr_oc
+    ; tmp
+    ; tags
+    ; extern
+    ; cnt
+    }
   in
   let daemon = Miou.async @@ fun () -> daemon t in
   Ok (daemon, t)
