@@ -3,6 +3,7 @@
  (public_name mnet.ipv6)
  (libraries
   mnet.fragments
+  mnet.l4csum
   hxd.core
   hxd.string
   mnet.ethernet

@@ -100,13 +100,14 @@ let with_hdr ~src ~dst ~protocol ~len fn =
   in
   fn
 
-let into ~mtu ~src ~dst ~protocol ~len user's_fn =
+let into ~mtu ~tx_csum ~src ~dst ~protocol ~len user's_fn =
   if len > mtu - 40 then begin
     let bstr = Bstr.create len in
     let tmp = Bytes.create 4 in
     Mirage_crypto_rng.generate_into tmp ~off:0 4;
     let uid = Bytes.get_int32_ne tmp 0 in
     user's_fn bstr;
+    if protocol = 6 && tx_csum then L4csum.complete ~protocol bstr ~len;
     let max = (mtu - 48) / 8 * 8 in
     (* must be multiple of 8 *)
     let rec go acc src_off =
@@ -129,6 +130,13 @@ let into ~mtu ~src ~dst ~protocol ~len user's_fn =
     go [] 0
   end
   else
+    let user's_fn bstr =
+      user's_fn bstr;
+      if tx_csum then begin
+        let sum = L4csum.pseudo_v6 ~src ~dst ~protocol len in
+        L4csum.set_partial ~protocol ~sum bstr
+      end
+    in
     let fn = with_hdr ~src ~dst ~protocol ~len user's_fn in
     [ { NDPv6.Packet.len= len + 40; fn } ]
 
@@ -137,12 +145,14 @@ let src t ~dst = NDPv6.src t.ndpv6 dst
 let addresses t = NDPv6.addresses t.ndpv6
 
 let write_directly t ?src dst ~protocol ~len user's_fn =
+  let offloads = Ethernet.offloads t.eth in
+  let tx_csum = Mkernel.Net.Offload.(mem tx_csum offloads) in
   let src = NDPv6.src t.ndpv6 ?src dst in
   let* ndpv6, next_hop, mtu = NDPv6.next_hop t.ndpv6 dst in
   match mtu with
   | None ->
       let mtu = 1280 in
-      let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      let pkts = into ~mtu ~tx_csum ~src ~dst ~protocol ~len user's_fn in
       (* NOTE(dinosaure): we should never fragment a TCP packet. *)
       if protocol = 6 (* TCP *) && not (at_most_one pkts) then
         Log.warn (fun m -> m "Fragmentation of IPv6/TCP packets");
@@ -152,7 +162,7 @@ let write_directly t ?src dst ~protocol ~len user's_fn =
       t.ndpv6 <- ndpv6;
       Ok ()
   | Some mtu ->
-      let pkts = into ~mtu ~src ~dst ~protocol ~len user's_fn in
+      let pkts = into ~mtu ~tx_csum ~src ~dst ~protocol ~len user's_fn in
       let now = now () in
       let ndpv6, outs = NDPv6.send ndpv6 ~now ~dst next_hop pkts in
       List.iter (write t.eth) outs;
