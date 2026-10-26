@@ -73,14 +73,21 @@ let[@inline always] now () =
   let now = Mkernel.clock_monotonic () in
   Mtime.of_uint64_ns (Int64.of_int now)
 
+let encode state =
+  let offloads = Ethernet.offloads state.eth in
+  if Mkernel.Net.Offload.(mem tx_csum offloads) then
+    Utcp.Segment.encode_and_partial_checksum_into
+  else Utcp.Segment.encode_and_checksum_into
+
 let write_without_interruption_ipv4 state (src, dst, seg) =
   let len = Utcp.Segment.length seg in
+  let enc = encode state in
   let fn bstr =
     let cs = Cstruct.of_bigarray bstr in
     let src = Ipaddr.V4 src and dst = Ipaddr.V4 dst in
-    Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    enc (now ()) cs ~src ~dst seg
   in
-  let pkt = IPv4.Writer.into state.ipv4 ~len fn in
+  let pkt = IPv4.Writer.tcp state.ipv4 ~len fn in
   match IPv4.attempt_to_discover_destination state.ipv4 dst with
   | None ->
       Log.debug (fun m -> m "A packet is kept in our internal queue");
@@ -90,12 +97,13 @@ let write_without_interruption_ipv4 state (src, dst, seg) =
 
 let write_ipv4 state (src, dst, seg) =
   let len = Utcp.Segment.length seg in
+  let enc = encode state in
   let fn bstr =
     let cs = Cstruct.of_bigarray bstr in
     let src = Ipaddr.V4 src and dst = Ipaddr.V4 dst in
-    Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    enc (now ()) cs ~src ~dst seg
   in
-  let pkt = IPv4.Writer.into ipv4 ~len fn in
+  let pkt = IPv4.Writer.tcp state.ipv4 ~len fn in
   match IPv4.write state.ipv4 ~src dst ~protocol:6 pkt with
   | Ok () -> ()
   | Error `Route_not_found ->
@@ -104,10 +112,11 @@ let write_ipv4 state (src, dst, seg) =
 
 let write_ipv6 state (src, dst, seg) =
   let len = Utcp.Segment.length seg in
+  let enc = encode state in
   let fn bstr =
     let cs = Cstruct.of_bigarray ~off:0 ~len bstr in
     let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
-    Utcp.Segment.encode_and_checksum_into (now ()) cs ~src ~dst seg
+    enc (now ()) cs ~src ~dst seg
   in
   match IPv6.write_directly state.ipv6 ~src dst ~protocol:6 ~len fn with
   | Ok () -> ()
@@ -357,13 +366,17 @@ let admit state ~src cs =
         else true
       end
 
-let handler state src dst payload =
+let handler state ~eligible src dst payload =
   Log.debug (fun m -> m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
   let cs = Cstruct.of_bigarray payload in
+  let offloads = Ethernet.offloads state.eth in
+  let verify = not (eligible && Mkernel.Net.Offload.(mem rx_csum offloads)) in
   Log.debug (fun m ->
       m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
   if admit state ~src cs then begin
-    let tcp, evs, segs = Utcp.handle_buf state.tcp (now ()) ~src ~dst cs in
+    let tcp, evs, segs =
+      Utcp.handle_buf ~verify state.tcp (now ()) ~src ~dst cs
+    in
     state.tcp <- tcp;
     let fn = function
       | `Established (flow, `Passive) ->
@@ -535,12 +548,22 @@ type daemon = {
 let max_connections () =
   let b = Mkernel.heap_size () in
   let kb = b / 1024 in
-  let max = kb / 96 in
+  let max = kb / 512 in
+  (* TODO(dinosaure): configure from [{snd,rcv}buf]. *)
   (* 96 Kb = (so_rcvbuf) 64 Kb + (so_sndbuf) 32 Kb *)
   max * 65 / 100
 
 let create ~name ?(max = Some (max_connections ())) eth ipv4 ipv6 =
-  let tcp = Utcp.empty Notify.create name in
+  let mtu = Ethernet.mtu eth in
+  let offloads = Ethernet.offloads eth in
+  let max_frame = Ethernet.max_frame eth in
+  let tso = Int.min 65535 (max_frame - 14) in
+  let tso_v4 = if Mkernel.Net.Offload.(mem tx_tso4 offloads) then tso else 0 in
+  let tso_v6 = 0 in
+  let sndbuf = 256 * 1024 and rcvbuf = 256 * 1024 in
+  let tcp =
+    Utcp.empty ~mtu ~tso_v4 ~tso_v6 ~sndbuf ~rcvbuf Notify.create name
+  in
   let accept = Hashtbl.create 0x10 in
   let mutex = Miou.Mutex.create () in
   let condition = Miou.Condition.create () in
