@@ -30,6 +30,12 @@
   slice.bstr))
 
 (library
+ (name l4csum)
+ (public_name mnet.l4csum)
+ (modules l4csum)
+ (libraries ipaddr utcp bstr))
+
+(library
  (name mnet)
  (modules mnet UDP TCP)
  (public_name mnet)
