@@ -175,8 +175,11 @@ module Writer = struct
     | Fixed of { total_length: int; fn: Bstr.t -> unit }
       (* invariant: [total_length <= mtu - 20] *)
     | Fragmented of { total_length: int; fn: (Bstr.t -> unit) Seq.t }
-  (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
+      (* invariant: [bstr] is filled to [(mtu - 20) land (lnot 0b111)]
          until the last element (which contains remaining unaligned bytes. *)
+    | Large of { total_length: int; fn: Bstr.t -> unit }
+  (* a TCP super-segment, cut by the host.
+     invariant: [20 + total_length <= min 65535 (max_frame - 14)] *)
 
   let of_string t str =
     let mtu = Ethernet.mtu t.eth in
@@ -256,6 +259,16 @@ module Writer = struct
     if 20 + total_length > Ethernet.mtu t.eth then
       invalid_arg "IPv4.Writer.into: too huge IPv4 packet";
     Fixed { total_length; fn }
+
+  let tcp t ~len:total_length fn =
+    let mtu = Ethernet.mtu t.eth in
+    let offloads = Ethernet.offloads t.eth in
+    let max_frame = Ethernet.max_frame t.eth in
+    let tso4 = Mkernel.Net.Offload.(mem tx_tso4 offloads) in
+    if 20 + total_length <= mtu then Fixed { total_length; fn }
+    else if tso4 && 20 + total_length <= Int.min 65535 (max_frame - 14) then
+      Large { total_length; fn }
+    else invalid_arg "IPv4.Writer.tcp: too huge IPv4 packet"
 end
 
 let create ?to_expire eth arp ?gateway ?(handler = ignore) ?cidr () =
@@ -279,11 +292,18 @@ let src t ~dst:_ =
   | Some cidr -> Ipaddr.V4.Prefix.address cidr
   | None -> Ipaddr.V4.any
 
-let fixed pkt user's_fn len bstr =
+let fixed ?(partial = false) pkt user's_fn len bstr =
   Packet.unsafe_encode_into pkt bstr;
   Bstr.set_uint16_be bstr 2 (20 + len);
   let rest = Bstr.sub bstr ~off:20 ~len in
   user's_fn rest;
+  if partial then begin
+    let protocol = pkt.Packet.protocol in
+    let src = pkt.Packet.src in
+    let dst = pkt.Packet.dst in
+    let sum = L4csum.pseudo_v4 ~src ~dst ~protocol len in
+    L4csum.set_partial ~protocol ~sum rest
+  end;
   let chk = Utcp.Checksum.digest ~off:0 ~len:20 bstr in
   Bstr.set_uint16_be bstr 10 chk;
   20 + len
@@ -310,7 +330,28 @@ let write_directly t ?(ttl = 38) ?(tos = 0) src (dst, macaddr) ~protocol p =
         }
       in
       let protocol = Ethernet.IPv4 in
-      let fn = fixed pkt user's_fn total_length in
+      let offloads = Ethernet.offloads t.eth in
+      let partial = Mkernel.Net.Offload.(mem tx_csum offloads) in
+      let fn = fixed ~partial pkt user's_fn total_length in
+      Ethernet.write_directly_into t.eth ~len:(20 + total_length) ~dst:macaddr
+        ~protocol fn
+  | Writer.Large { total_length; fn= user's_fn } ->
+      let pkt =
+        {
+          Packet.src
+        ; dst
+        ; tos
+        ; uid= 0
+        ; flags= Flag._df
+        ; off= 0
+        ; ttl
+        ; protocol
+        ; checksum_and_length= Packet.Partial
+        ; opt= SBstr.empty
+        }
+      in
+      let protocol = Ethernet.IPv4 in
+      let fn = fixed ~partial:true pkt user's_fn total_length in
       Ethernet.write_directly_into t.eth ~len:(20 + total_length) ~dst:macaddr
         ~protocol fn
   | Writer.Fragmented { total_length; fn } ->

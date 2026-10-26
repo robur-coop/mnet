@@ -193,6 +193,8 @@ module Writer : sig
       [fn buf], where [buf] is a buffer of size [len] positioned after the IPv4
       header. This is the zero-copy path for upper-layer protocols (like UDP's
       {!val:UDP.sendfn}) that can write directly into the outgoing frame. *)
+
+  val tcp : ipv4 -> len:int -> (Bstr.t -> unit) -> t
 end
 
 val write_directly :

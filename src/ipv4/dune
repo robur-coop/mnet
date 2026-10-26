@@ -6,6 +6,7 @@
   mnet.ethernet
   mnet.arpv4
   mnet.fragments
+  mnet.l4csum
   utcp
   mirage-crypto-rng
   logs
