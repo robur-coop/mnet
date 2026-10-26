@@ -398,15 +398,15 @@ let ipv4_handler icmpv4 udp tcp =
     match hdr.IPv4.protocol with
     | 1 -> ICMPv4.transfer icmpv4 pkt
     | 6 ->
-        let payload =
+        let payload, eligible =
           match payload with
           | IPv4.Slice slice ->
               let { Slice.buf; off; len } = slice in
-              Bstr.sub ~off ~len buf
-          | IPv4.String str -> Bstr.of_string str
+              (Bstr.sub ~off ~len buf, true)
+          | IPv4.String str -> (Bstr.of_string str, false)
         in
         let src = Ipaddr.V4 hdr.IPv4.src and dst = Ipaddr.V4 hdr.IPv4.dst in
-        TCP.handler tcp src dst payload
+        TCP.handler tcp ~eligible src dst payload
     | 17 -> UDP.handler_ipv4 udp pkt
     | _ -> ()
 
@@ -426,7 +426,7 @@ let ipv6_handler ipv6 udp tcp =
     match protocol with
     | 6 ->
         let src = Ipaddr.V6 src and dst = Ipaddr.V6 dst in
-        TCP.handler tcp src dst payload
+        TCP.handler tcp ~eligible:false src dst payload
     | 17 -> UDP.handler_ipv6 udp src dst payload
     | 58 ->
         let len = Bstr.length payload in
@@ -506,7 +506,13 @@ let stack ?(timeout = _5m) ~name ?max ?(ipv6 = IPv6.EUI64) config =
     let connect mac =
       (* NOTE(dinosaure): see [Mnet.stack] to understand what we do here. *)
       let ( let* ) = Result.bind in
-      let* ethd, eth = Ethernet.create ~mtu:(Mkernel.Net.mtu net) mac net in
+      let offloads = Mkernel.Net.offloads net in
+      if Mkernel.Net.Offload.unknown offloads <> 0 then
+        Fmt.failwith "Unsupported network offloads: %a" Mkernel.Net.Offload.pp
+          offloads;
+      let mtu = Mkernel.Net.mtu net in
+      let max_frame = Mkernel.Net.max_frame net in
+      let* ethd, eth = Ethernet.create ~mtu ~max_frame ~offloads mac net in
       let* arpv4d, arpv4 = ARPv4.create eth in
       let* ipv4 = IPv4.create eth arpv4 () in
       let* ipv6, ipv6d = IPv6.create eth ipv6 in
