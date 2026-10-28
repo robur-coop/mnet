@@ -11,6 +11,11 @@
  (action
   (copy %{deps} %{targets})))
 
+(test
+ (name neighbors)
+ (modules neighbors)
+ (libraries mnet.ipv6 ipaddr macaddr))
+
 (rule
  (targets resolver.hvt)
  (deps ../resolver.hvt)
