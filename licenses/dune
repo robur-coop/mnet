@@ -1,0 +1,34 @@
+(install
+  (files AGPL.md as LICENSE.md)
+  (section doc)
+  (package mnet-dhcp))
+
+(install
+  (files AGPL.md as LICENSE.md)
+  (section doc)
+  (package mnet-dns))
+
+(install
+  (files AGPL.md as LICENSE.md)
+  (section doc)
+  (package mnet-happy-eyeballs))
+
+(install
+  (files AGPL.md as LICENSE.md)
+  (section doc)
+  (package mnet-ssh))
+
+(install
+  (files AGPL.md as LICENSE.md)
+  (section doc)
+  (package mnet-tls))
+
+(install
+  (files MIT.md as LICENSE.md)
+  (section doc)
+  (package mnet))
+
+(install
+  (files MIT.md as LICENSE.md)
+  (section doc)
+  (package mnet-cli))

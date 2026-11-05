@@ -38,8 +38,10 @@ advantage of effects and our [Miou][miou] scheduler.
 
 ## License
 
-It is licensed under the AGPL-3.0 or later. If you want to pay for a more
-permissive license, reach out to team@robur.coop.
+Some packages (mnet, mnet-cli) are licensed under the MIT.
+
+The other packages are licensed under the AGPL-3.0 or later. If you want to pay
+for a more permissive license, reach out to team@robur.coop.
 
 ## AI
 
