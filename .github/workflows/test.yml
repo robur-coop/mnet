@@ -31,6 +31,7 @@ jobs:
           sudo usermod -a -G kvm,libvirt $USER
       - name: Test
         run: |
-          opam install unic mfetch
+          opam pin add mfetch https://git.robur.coop/robur/mfetch.git#574261504493660f0b578bf6d404684fa4fe114e
           opam pin add git+https://github.com/mirage/Zarith.git#1.14+dune+mirage
+          opam install unic mfetch
           opam exec -- dune runtest --profile=unikernels
