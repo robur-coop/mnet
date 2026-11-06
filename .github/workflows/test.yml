@@ -33,5 +33,5 @@ jobs:
         run: |
           opam pin add mfetch https://git.robur.coop/robur/mfetch.git#574261504493660f0b578bf6d404684fa4fe114e
           opam pin add git+https://github.com/mirage/Zarith.git#1.14+dune+mirage
-          opam install unic mfetch
+          opam install unic mfetch mnet mnet-cli mnet-happy-eyeballs mnet-dns mnet-tls mirage-crypto-rng-mkernel ca-certs-nss
           opam exec -- dune runtest --profile=unikernels
