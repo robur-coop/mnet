@@ -1,7 +1,12 @@
-vendors:
-	test ! -d $@
-	mkdir vendors
-	@./source.sh
+_mfetch:
+	@echo " INFER"
+	unic infer -r . -x _build -x vendors \
+		--prefer digestif.c --prefer mirage-ptime.solo5 \
+		-o _mfetch
+
+vendors: _mfetch
+	@echo " FETCH"
+	mfetch -q
 
 echo.hvt.target: | vendors
 	@rm -f ./echo/echo.exe

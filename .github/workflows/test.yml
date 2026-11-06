@@ -31,6 +31,6 @@ jobs:
           sudo usermod -a -G kvm,libvirt $USER
       - name: Test
         run: |
-          opam install re mirage-crypto-rng-mkernel kdf gmp digestif mirage-ptime bos ca-certs-nss
+          opam install unic mfetch
           opam pin add git+https://github.com/mirage/Zarith.git#1.14+dune+mirage
           opam exec -- dune runtest --profile=unikernels
