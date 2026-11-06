@@ -36,6 +36,18 @@ let () =
 `mnet` is a replacement for [mirage-tcpip][mirage-tcpip], designed to take
 advantage of effects and our [Miou][miou] scheduler.
 
+## License
+
+Some packages (mnet, mnet-cli) are licensed under the MIT.
+
+The other packages are licensed under the AGPL-3.0 or later. If you want to pay
+for a more permissive license, reach out to team@robur.coop.
+
+## AI
+
+Contributions involving AI must comply with the rules set out [here](./AI.md).
+If they do not comply, we reserve the right to reject your contribution.
+
 [mkernel]: https://git.robur.coop/robur/mkernel
 [utcp]: https://github.com/robur-coop/utcp
 [solo5]: https://github.com/solo5/solo5
