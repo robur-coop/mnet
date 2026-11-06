@@ -196,16 +196,22 @@ let handler_ipv6 state src _dst (payload : Bstr.t) =
   | Ok (pkt, payload) -> fill state ~peer ~pkt payload
   | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
 
-let recvfrom state ?src:_ ~port ?(off = 0) ?len ?trigger buf =
+let rec recvfrom state ?src ~port ?(off = 0) ?len ?trigger buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "UDP.recvfrom: out of bounds";
+  let ip_is_src peer =
+    Option.value ~default:true (Option.map (fun s -> Ipaddr.compare peer s = 0) src)
+  in
   match Hashtbl.find_opt state.pending port with
   | Some pending when not (Pending.is_empty pending) ->
       let peer, src_port, data = Pending.pop pending in
-      let length = Int.min len (String.length data) in
-      Bytes.blit_string data 0 buf off length;
-      (length, (peer, src_port))
+      if ip_is_src peer then
+        let length = Int.min len (String.length data) in
+        Bytes.blit_string data 0 buf off length;
+        (length, (peer, src_port))
+      else
+        recvfrom state ?src ~port ~off ~len ?trigger buf
   | _ -> begin
       let waiter = Miou.Computation.create () in
       let attach t = ignore (Miou.Computation.try_attach waiter t) in
@@ -228,14 +234,20 @@ let recvfrom state ?src:_ ~port ?(off = 0) ?len ?trigger buf =
           let { length; peer; port } =
             Miou.Computation.await_exn waiter.waiter
           in
-          (length, (peer, port))
+          if ip_is_src peer then
+            (length, (peer, port))
+          else
+            recvfrom state ?src ~port ~off ~len ?trigger buf
       | waiters ->
           Hashtbl.replace state.readers port (waiter :: waiters);
           Fun.protect ~finally @@ fun () ->
           let { length; peer; port } =
             Miou.Computation.await_exn waiter.waiter
           in
-          (length, (peer, port))
+          if ip_is_src peer then
+            (length, (peer, port))
+          else
+            recvfrom state ?src ~port ~off ~len ?trigger buf
     end
 
 let sendto state ~dst ?src_port ~port:dst_port ?(off = 0) ?len payload =
