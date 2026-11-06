@@ -208,9 +208,10 @@ module Transport = struct
             Ring.shift ke (len + 2);
             go ()
           end
-          else if len < 2 then
-            let max = String.length str - 2 in
-            Ring.shift ke (2 + Int.min len max)
+          else if String.length str >= len + 2 && len < 2 then begin
+            Ring.shift ke (len + 2);
+            go ()
+          end
       | _ -> ()
     in
     go ()
