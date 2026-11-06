@@ -253,13 +253,12 @@ let sendto state ~dst ?src_port ~port:dst_port ?(off = 0) ?len payload =
   match dst with
   | Ipaddr.V4 dst ->
       let src = IPv4.src state.ipv4 ~dst in
-      let srcv6 = Ipaddr.V4 src and dstv6 = Ipaddr.V4 dst in
-      let str = Packet.encode ~src:srcv6 ~dst:dstv6 pkt ~off ~len payload in
+      let srcv4 = Ipaddr.V4 src and dstv4 = Ipaddr.V4 dst in
+      let str = Packet.encode ~src:srcv4 ~dst:dstv4 pkt ~off ~len payload in
       let payload =
         if off <> 0 || len <> String.length payload then
           String.sub payload off len
-        else
-          payload
+        else payload
       in
       let writer = IPv4.Writer.of_strings state.ipv4 [ str; payload ] in
       IPv4.write state.ipv4 ~src dst ~protocol:17 writer
