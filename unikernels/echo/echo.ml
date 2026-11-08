@@ -7,14 +7,12 @@ let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
 let rng = Mkernel.map rng Mkernel.[]
 
 let source_of_flow ?(close = ignore) flow =
-  let init () = (flow, Bytes.create 0x7ff)
-  and pull (flow, buf) =
-    match Mnet.TCP.input flow buf with
-    | (exception _) | 0 -> None
-    | len ->
-        let str = Bytes.sub_string buf 0 len in
-        Some (str, (flow, buf))
-  and stop (flow, _) = close flow in
+  let init () = flow
+  and pull flow =
+    match Mnet.TCP.read flow with
+    | (exception _) | Error _ -> None
+    | Ok strs -> Some (String.concat "" strs, flow)
+  and stop flow = close flow in
   Flux.Source { init; pull; stop }
 
 let sink_of_flow ?(close = ignore) flow =
@@ -55,8 +53,6 @@ let rec terminate orphans =
       Result.iter_error fn result;
       terminate orphans
 
-let buffer = Mnet.TCP.buffer ~limit:(Some 0x4000) 0x2000
-
 let run _quiet stack mode =
   Mkernel.(run [ rng; stack ])
   @@ fun rng (daemon, tcp, _udp) () ->
@@ -71,7 +67,7 @@ let run _quiet stack mode =
         match limit with
         | Some limit when limit <= 0 -> ()
         | None | Some _ ->
-            let flow = Mnet.TCP.accept ~kind:buffer tcp listen in
+            let flow = Mnet.TCP.accept ~kind:Mnet.TCP.direct tcp listen in
             let _ = Miou.async ~orphans @@ fun () -> handler flow in
             let limit = Option.map pred limit in
             go orphans listen limit
@@ -82,9 +78,10 @@ let run _quiet stack mode =
   | `Client (edn, length) ->
       let result =
         match edn with
-        | `Ipaddr edn -> Mnet_happy_eyeballs.connect_ip ~kind:buffer he [ edn ]
+        | `Ipaddr edn ->
+            Mnet_happy_eyeballs.connect_ip ~kind:Mnet.TCP.direct he [ edn ]
         | `Domain domain_name ->
-            Mnet_happy_eyeballs.connect_host ~kind:buffer he domain_name
+            Mnet_happy_eyeballs.connect_host ~kind:Mnet.TCP.direct he domain_name
               [ 9000 ]
       in
       let flow =
@@ -94,26 +91,33 @@ let run _quiet stack mode =
       in
       let@ () = fun () -> Mnet.TCP.close flow in
       let buf = Bytes.create 0x7ff in
+      let feed ctx rem strs =
+        let fn (ctx, rem) str =
+          (Digestif.SHA1.feed_string ctx str, rem - String.length str)
+        in
+        List.fold_left fn (ctx, rem) strs
+      in
       let rec go ctx0 ctx1 rem0 rem1 =
         let len = Int.min rem0 (Bytes.length buf) in
         Mirage_crypto_rng.generate_into buf len;
         Mnet.TCP.write flow (Bytes.to_string buf) ~off:0 ~len;
         let ctx0 = Digestif.SHA1.feed_bytes ctx0 buf ~off:0 ~len in
         let rem0 = rem0 - len in
-        let len = Mnet.TCP.input flow buf in
-        let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in
-        let rem1 = rem1 - len in
+        let ctx1, rem1 =
+          match Mnet.TCP.read flow with
+          | Ok strs -> feed ctx1 rem1 strs
+          | Error _ -> (ctx1, rem1)
+        in
         if rem0 <= 0 && rem1 <= 0 then Digestif.SHA1.(get ctx0, get ctx1)
         else if rem0 > 0 then go ctx0 ctx1 rem0 rem1
         else (* if rem1 > 0 *)
           let () = Mnet.TCP.shutdown flow `write in
           remaining (Digestif.SHA1.get ctx0) ctx1 rem1
       and remaining hash0 ctx1 rem1 =
-        match Mnet.TCP.input flow buf with
-        | 0 -> (hash0, Digestif.SHA1.get ctx1)
-        | len ->
-            let ctx1 = Digestif.SHA1.feed_bytes ctx1 buf ~off:0 ~len in
-            let rem1 = rem1 - len in
+        match Mnet.TCP.read flow with
+        | Error _ -> (hash0, Digestif.SHA1.get ctx1)
+        | Ok strs ->
+            let ctx1, rem1 = feed ctx1 rem1 strs in
             if rem1 > 0 then remaining hash0 ctx1 rem1
             else (hash0, Digestif.SHA1.get ctx1)
       in
