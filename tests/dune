@@ -1,3 +1,8 @@
+(library
+ (name test)
+ (modules test)
+ (libraries fmt unix))
+
 (cram
  (enabled_if
   (= %{profile} unikernels))
