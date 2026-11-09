@@ -19,7 +19,7 @@
 (test
  (name neighbors)
  (modules neighbors)
- (libraries mnet.ipv6 ipaddr macaddr))
+ (libraries test mnet.ipv6 ipaddr macaddr))
 
 (rule
  (targets resolver.hvt)
