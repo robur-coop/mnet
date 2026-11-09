@@ -145,3 +145,7 @@ val input : t -> SBstr.t Ethernet.packet -> unit
     state [ipv6]. NDP messages (Router Advertisements, Neighbor Solicitations,
     etc.) are processed internally; upper-layer packets are forwarded to the
     installed {!type:handler}. *)
+
+(**/*)
+
+module Neighbors = Neighbors

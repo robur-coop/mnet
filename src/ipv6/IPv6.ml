@@ -1,6 +1,7 @@
 let src = Logs.Src.create "mnet.ipv6"
 let[@inline always] now () = Mkernel.clock_monotonic ()
 
+module Neighbors = Neighbors
 module SBstr = Slice_bstr
 module Log = (val Logs.src_log src : Logs.LOG)
 
