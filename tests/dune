@@ -1,3 +1,8 @@
+(library
+ (name test)
+ (modules test)
+ (libraries fmt unix))
+
 (cram
  (enabled_if
   (= %{profile} unikernels))
@@ -10,6 +15,11 @@
   (= %{profile} unikernels))
  (action
   (copy %{deps} %{targets})))
+
+(test
+ (name neighbors)
+ (modules neighbors)
+ (libraries test mnet.ipv6 ipaddr macaddr))
 
 (rule
  (targets resolver.hvt)
