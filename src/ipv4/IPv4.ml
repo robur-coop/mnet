@@ -320,7 +320,7 @@ let write_directly t ?(ttl = 38) ?(tos = 0) src (dst, macaddr) ~protocol p =
         | Seq.Nil -> ()
         | Seq.Cons (user's_fn, next) ->
             let next = next () in
-            let size = Int.min total_length (mtu - 20) in
+            let size = Int.min total_length ((mtu - 20) land lnot 0b111) in
             let flags = if next != Seq.Nil then Flag._mf else Flag._none in
             let pkt =
               {
