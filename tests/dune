@@ -24,7 +24,7 @@
 (test
  (name ndp)
  (modules ndp)
- (libraries test mnet.ipv6 ipaddr macaddr))
+ (libraries test mnet.ipv6 bstr ipaddr macaddr))
 
 (rule
  (targets resolver.hvt)

@@ -5,6 +5,8 @@ open Test
 let mac = Macaddr.of_string_exn "02:00:00:00:00:01"
 let router = Ipaddr.V6.of_string_exn "fe80::1"
 let router_mac = Macaddr.of_string_exn "02:00:00:00:00:fe"
+let host = Ipaddr.V6.of_string_exn "fe80::2"
+let host_mac = Macaddr.of_string_exn "02:00:00:00:00:02"
 let remote = Ipaddr.V6.of_string_exn "2001:db8::1"
 let s = 1_000_000_000
 
@@ -51,8 +53,41 @@ let test00 =
   let _, pkts = NDP.tick t ~now:(now + s) `Tick in
   check (sent ~len:1234 ~dst:router_mac pkts = 0)
 
+(* Neighbor Advertisements of [pkts]: link-layer destination, IPv6 destination
+   and Solicited flag. *)
+let nas pkts =
+  let fn (pkt : NDP.Packet.t) =
+    let bstr = Bstr.create pkt.len in
+    pkt.fn bstr;
+    if Bstr.get_uint8 bstr 6 = 58 && Bstr.get_uint8 bstr 40 = 136 then
+      let dst = Bstr.sub_string bstr ~off:24 ~len:16 in
+      let solicited = Bstr.get_uint8 bstr 44 land 0x40 <> 0 in
+      Some (pkt.dst, Ipaddr.V6.of_octets_exn dst, solicited)
+    else None
+  in
+  List.filter_map fn pkts
+
+let test01 =
+  let description = {text|A probe without SLLA gets a unicast NA|text} in
+  Test.test ~title:"test01" ~description @@ fun () ->
+  let t = make () in
+  (* our link-local address is no more tentative *)
+  let t, _ = NDP.tick t ~now:(2 * s) `Tick in
+  let me = NDP.src t host in
+  let ns = { N.NS.target= me; slla= None } in
+  (* [host] is unknown: an NA to all nodes *)
+  let _, pkts = NDP.tick t ~now:(2 * s) (`NS (host, me, ns)) in
+  let all_nodes = Ipaddr.V6.link_nodes in
+  let all_nodes_mac = Ipaddr.V6.multicast_to_mac all_nodes in
+  check (nas pkts = [ (all_nodes_mac, all_nodes, false) ]);
+  (* [host] is in our cache: a solicited NA to [host] *)
+  let t, _ = NDP.send t ~now:(2 * s) ~dst:host host [ user's_packet 1234 ] in
+  let t, _ = NDP.tick t ~now:(2 * s) (na ~src:host ~dst:me ~tlla:host_mac) in
+  let _, pkts = NDP.tick t ~now:(2 * s) (`NS (host, me, ns)) in
+  check (nas pkts = [ (host_mac, host, true) ])
+
 let () =
-  let tests = [ test00 ] in
+  let tests = [ test00; test01 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in

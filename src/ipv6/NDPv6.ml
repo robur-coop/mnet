@@ -585,12 +585,20 @@ let tick t ~now (event : event) =
             let lladdr = Ipaddr.V6.multicast_to_mac dst in
             (lladdr, dst, false)
           else
+            (* RFC 4861 7.2.4: a solicited NA, unicast to the source of the NS.
+               A unicast NS (a probe of our entry) may come without a Source
+               Link-Layer Address option: the link-layer address is then the
+               one of our cache and, only if we have none, the NA goes to all
+               nodes. *)
             match slla with
-            | None ->
-                let dst = Ipaddr.V6.link_nodes in
-                let lladdr = Ipaddr.V6.multicast_to_mac dst in
-                (lladdr, dst, false)
             | Some lladdr -> (lladdr, src, true)
+            | None -> (
+                match Neighbors.lladdr t.neighbors src with
+                | Some lladdr -> (lladdr, src, true)
+                | None ->
+                    let dst = Ipaddr.V6.link_nodes in
+                    let lladdr = Ipaddr.V6.multicast_to_mac dst in
+                    (lladdr, dst, false))
         in
         let pkt =
           NA.encode_into ~mac:t.mac ~src:target ~dst:(lladdr, dst) ~solicited
