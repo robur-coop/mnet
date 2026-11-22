@@ -136,11 +136,20 @@ type action =
    and we can use the [List.cons]/[List.rev] pair rather than [List.rev_append]
    when aggregating all actions for all our entries. *)
 
+(* An NA about [key]. *)
+let na_about key = function
+  | `NA (_src, _dst, { NA.target; _ }) -> Ipaddr.V6.compare key target = 0
+  | _ -> false
+
 let transition ~mac key (state, is_router) now event =
   let open Neighbor in
+  let expired expire_at = expire_at <= now && not (na_about key event) in
   match (state, event) with
-  (* 1. Timers: whatever the event, an entry whose deadline has passed
-     retransmits, expires or is dropped. *)
+  (* 1. Timers: an entry whose deadline has passed retransmits, expires or is
+     dropped, whatever the event, except an NA about this entry: the answer
+     received with the timeout of the last probe must reach the state machine
+     (3.), not let the entry be dropped with its queued packets. The timer
+     then runs at the next event. *)
   (* | INCOMPLETE | Retransmit timeout, | Retransmit NS    | INCOMPLETE
      |            | less than N         | Start retransmit |
      |            | retransmissions.    | timer            |
@@ -149,7 +158,7 @@ let transition ~mac key (state, is_router) now event =
      |            | N or more           | Send ICMP error  |
      |            | retransmissions.    |                  |
    *)
-  | Incomplete { expire_at: int; sent_probes; _ }, _ when expire_at <= now ->
+  | Incomplete { expire_at: int; sent_probes; _ }, _ when expired expire_at ->
       if sent_probes >= 3 (* MAX_MULTICAST_SOLICIT *) then
         (None, Some (Cancel key))
       else begin
@@ -168,12 +177,12 @@ let transition ~mac key (state, is_router) now event =
      |           | N seconds since       |   |
      |           | reachability confirm. |   |
    *)
-  | Reachable { expire_at; lladdr }, _ when expire_at <= now ->
+  | Reachable { expire_at; lladdr }, _ when expired expire_at ->
       (Some (Stale lladdr, is_router), None)
   (* | DELAY | Delay timeout | Send unicast NS probe  | PROBE
      |       |               | Start retransmit timer |
    *)
-  | Delay { lladdr; expire_at }, _ when expire_at <= now ->
+  | Delay { lladdr; expire_at }, _ when expired expire_at ->
       let expire_at = now + _1s in
       let sent_probes = 1 in
       (* RFC 4861: SLLA must be the sender's link-layer address *)
@@ -189,7 +198,7 @@ let transition ~mac key (state, is_router) now event =
      |       | N or more           |               |
      |       | retransmissions.    |               |
    *)
-  | Probe { lladdr; expire_at; sent_probes }, _ when expire_at <= now ->
+  | Probe { lladdr; expire_at; sent_probes }, _ when expired expire_at ->
       if sent_probes >= 3 (* MAX_UNICAST_SOLICIT *) then (None, None)
       else begin
         let expire_at = now + _1s in

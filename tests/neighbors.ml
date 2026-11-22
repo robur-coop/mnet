@@ -137,8 +137,34 @@ let test04 =
   check (N.lladdr t router = Some router_mac);
   check (N.is_router t router = Some true)
 
+let releases actions =
+  let fn = function N.Release_with _ -> true | _ -> false in
+  List.length (List.filter fn actions)
+
+let test05 =
+  let description = {text|An NA wins over the timeout of the last probe|text} in
+  Test.test ~title:"test05" ~description @@ fun () ->
+  (* INCOMPLETE: the NA comes when the last multicast NS times out. *)
+  let t = query (N.make 16) ~now:0 host in
+  let fn t n = snd (tick t ~now:(n * s) `Tick) in
+  let t = List.fold_left fn t [ 1; 2; 3 ] in
+  let actions, t = tick t ~now:(4 * s) (na ~target:host ~tlla:host_mac) in
+  check (cancels actions = 0);
+  check (releases actions = 1);
+  check (N.lladdr t host = Some host_mac);
+  (* PROBE: the NA comes when the last unicast NS times out. *)
+  let t, now = probe (N.make 16) ~now:0 router ~tlla:router_mac in
+  let fn t n = snd (tick t ~now:(now + (n * s)) `Tick) in
+  let t = List.fold_left fn t [ 1; 2 ] in
+  let now = now + (3 * s) in
+  let _, t = tick t ~now (na ~target:router ~tlla:router_mac) in
+  check (N.lladdr t router = Some router_mac);
+  let actions, t = tick t ~now `Tick in
+  check (packets actions = 0);
+  check (N.lladdr t router = Some router_mac)
+
 let () =
-  let tests = [ test00; test01; test02; test03; test04 ] in
+  let tests = [ test00; test01; test02; test03; test04; test05 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in
