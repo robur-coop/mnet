@@ -21,6 +21,11 @@
  (modules neighbors)
  (libraries test mnet.ipv6 ipaddr macaddr))
 
+(test
+ (name ndp)
+ (modules ndp)
+ (libraries test mnet.ipv6 ipaddr macaddr))
+
 (rule
  (targets resolver.hvt)
  (deps ../resolver.hvt)

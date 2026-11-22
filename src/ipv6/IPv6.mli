@@ -149,3 +149,4 @@ val input : t -> SBstr.t Ethernet.packet -> unit
 (**/*)
 
 module Neighbors = Neighbors
+module NDPv6 = NDPv6

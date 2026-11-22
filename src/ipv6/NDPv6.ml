@@ -513,7 +513,7 @@ let process t = function
    effect (we can write directly or keep the packets). This allows us to offer
    an [IPv6.write] function that does not reschedule (and can be used in a
    [Miou.Ownership] "finally" without any problems). *)
-let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
+let send t ~now ~dst:_ next_hop (user's_pkts : Packet.user's_packet list) =
   if Ipaddr.V6.is_multicast next_hop then
     let dst = Ipaddr.V6.multicast_to_mac next_hop in
     let fn { Packet.len; fn } = { Packet.dst; len; fn } in
@@ -532,7 +532,10 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         let pkts = List.rev_append (List.map fn user's_pkts) pkts in
         (t, pkts)
     | None ->
-        let queues = push dst user's_pkts t.queues in
+        (* NOTE: the packets wait under [next_hop], not under their final
+           destination: [Release_with] and [Cancel] come from the neighbor
+           entry of [next_hop]. *)
+        let queues = push next_hop user's_pkts t.queues in
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
