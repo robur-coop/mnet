@@ -293,10 +293,21 @@ let transition ~mac key (state, is_router) now event =
   (* | !INCOMPLETE | NA, Solicited=any, | Update content of | unchanged
      |             | Override=any, No   | IsRouter flag.    |
      |             | link-layer address |                   |
+
+     The table of Appendix C leaves the state unchanged, but the text it
+     summarises (RFC 4861 7.2.5) handles an NA without a Target Link-Layer
+     Address option like an NA with the cached address: if the Solicited flag
+     is set, the entry becomes REACHABLE. It is the usual answer to a unicast
+     NS, i.e. to our probes (7.2.4 allows to omit the option then, and Linux
+     does).
    *)
   | ( (Stale _ | Probe _ | Delay _ | Reachable _)
-    , `NA (_src, _dst, { NA.tlla= None; router; _ }) ) ->
-      (Some (state, router), None)
+    , `NA (_src, _dst, { NA.tlla= None; router; solicited; _ }) ) ->
+      if solicited then
+        let lladdr = Option.get (Neighbor.lladdr state) in
+        let expire_at = now + _30s in
+        (Some (Reachable { lladdr; expire_at }, router), None)
+      else (Some (state, router), None)
   (* | !INCOMPLETE | NA, Solicited=0, | - | unchanged
      |             | Override=0       |   |
    *)

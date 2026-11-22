@@ -32,6 +32,9 @@ let tick t ~now event = N.tick t ~mac ~now event
 let cancels actions =
   List.length (List.filter (function N.Cancel _ -> true | _ -> false) actions)
 
+let packets actions =
+  List.length (List.filter (function N.Packet _ -> true | _ -> false) actions)
+
 let test00 =
   let description = {text|An NA only resolves the entry of its range|text} in
   Test.test ~title:"test00" ~description @@ fun () ->
@@ -86,8 +89,56 @@ let test03 =
   let actions, _ = tick t ~now:(4 * s) `Tick in
   check (cancels actions = 0)
 
+(* Resolves [addr] at [now], then lets its entry go from REACHABLE to PROBE:
+   returns the cache and the time of the first unicast probe. *)
+let probe t ~now addr ~tlla =
+  let t = query t ~now addr in
+  let _, t = tick t ~now (na ~target:addr ~tlla) in
+  let now = now + (30 * s) in
+  let _, t =
+    tick t ~now `Tick
+    (* REACHABLE -> STALE *)
+  in
+  let t =
+    query t ~now addr
+    (* STALE -> DELAY *)
+  in
+  let now = now + (5 * s) in
+  let actions, t =
+    tick t ~now `Tick
+    (* DELAY -> PROBE *)
+  in
+  check (packets actions = 1);
+  (t, now)
+
+let test04 =
+  let description =
+    {text|A solicited NA without TLLA confirms the entry|text}
+  in
+  Test.test ~title:"test04" ~description @@ fun () ->
+  let t, now = probe (N.make 16) ~now:0 router ~tlla:router_mac in
+  let confirmation =
+    {
+      N.NA.router= true
+    ; solicited= true
+    ; override= false
+    ; target= router
+    ; tlla= None
+    }
+  in
+  let _, t = tick t ~now (`NA (router, me, confirmation)) in
+  (* No more probe, and the entry outlives MAX_UNICAST_SOLICIT probes. *)
+  let fn t n =
+    let actions, t = tick t ~now:(now + (n * s)) `Tick in
+    check (packets actions = 0);
+    t
+  in
+  let t = List.fold_left fn t [ 1; 2; 3; 4 ] in
+  check (N.lladdr t router = Some router_mac);
+  check (N.is_router t router = Some true)
+
 let () =
-  let tests = [ test00; test01; test02; test03 ] in
+  let tests = [ test00; test01; test02; test03; test04 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in
