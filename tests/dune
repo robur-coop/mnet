@@ -28,3 +28,8 @@
   (= %{profile} unikernels))
  (action
   (copy %{deps} %{targets})))
+
+(test
+ (name router_solicitation)
+ (modules router_solicitation)
+ (libraries test mnet.ipv6 ipaddr macaddr))

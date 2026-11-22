@@ -395,7 +395,11 @@ type t = {
   ; lmtu: int
   ; iid: string
   ; mac: Macaddr.t
+  ; rs: (int * int) option
 }
+
+let _RTR_SOLICITATION_INTERVAL = 4_000_000_000
+let _MAX_RTR_SOLICITATIONS = 3
 
 let src t ?src dst =
   match src with Some src -> src | None -> Addrs.select t.addrs dst
@@ -561,13 +565,29 @@ let tick t ~now (event : event) =
     | _ -> event
   in
   let dsts = Dsts.tick dsts ~now event in
-  let t = { t with neighbors; routers; prefixes; addrs; dsts } in
+  (* NOTE(dinosaure): Here, a Router Solicitation is resent until a Router
+     Advertisement is received with a lifetime greater than 0. *)
+  let rs, pkts =
+    match (event, t.rs) with
+    | `RA (_, _, { Routers.RA.router_lifetime; _ }), Some _
+      when router_lifetime > 0 ->
+        (None, [])
+    | _, Some (at, left) when at <= now ->
+        let pkt = RS.encode_into ~mac:t.mac (Addrs.select addrs) in
+        let next =
+          if left > 1 then Some (now + _RTR_SOLICITATION_INTERVAL, left - 1)
+          else None
+        in
+        (next, [ pkt ])
+    | _, rs -> (rs, [])
+  in
+  let t = { t with neighbors; routers; prefixes; addrs; dsts; rs } in
   let t, pkts =
     let fn (t, pkts) act =
       let t, pkts' = process t act in
       (t, List.rev_append pkts' pkts)
     in
-    List.fold_left fn (t, []) (List.rev_append acts0 acts1)
+    List.fold_left fn (t, pkts) (List.rev_append acts0 acts1)
   in
   (* NOTE(dinosaure): Here, we want to manage NS packets and respond to them
      with a NA. The generated packet can statically know its MAC destination
@@ -632,8 +652,10 @@ let make ?gateway ~now ~lmtu ~mac mode =
   let addrs, acts = Addrs.make ~now ~iid ?addr 16 in
   let dsts = Dsts.make ~lmtu 0x100 in
   let queues = Ipaddr.V6.Map.empty in
+  let next_router_solicitation = now + _RTR_SOLICITATION_INTERVAL in
+  let rs = Some (next_router_solicitation, _MAX_RTR_SOLICITATIONS - 1) in
   let t =
-    { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac }
+    { neighbors; routers; prefixes; addrs; dsts; queues; lmtu; iid; mac; rs }
   in
   let t, pkts' =
     let fn (t, pkts) act =
