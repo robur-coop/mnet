@@ -255,7 +255,11 @@ let transition ~mac key (state, is_router) now event =
          address is recorded (see below). *)
       if Macaddr.compare lladdr lladdr' != 0 then
         (Some (Stale lladdr, is_router), None)
-      else (Some (state, is_router), None)
+      else
+        (* the same address: a reachability confirmation (the first case of
+           the table below, which is about REACHABLE too). *)
+        let expire_at = now + _30s in
+        (Some (Reachable { lladdr; expire_at }, is_router), None)
   (* | !INCOMPLETE  | NA, Solicited=1,     | - | REACHABLE
      |              | Override=0           |   |
      |              | Same link-layer      |   |

@@ -183,8 +183,25 @@ let test06 =
   let _, t' = tick t ~now:s na in
   check (N.lladdr t' host = Some other_mac)
 
+let test07 =
+  let description = {text|A solicited NA confirms a REACHABLE entry|text} in
+  Test.test ~title:"test07" ~description @@ fun () ->
+  let t = query (N.make 16) ~now:0 host in
+  let _, t = tick t ~now:0 (na ~target:host ~tlla:host_mac) in
+  (* confirmed again at 20 s: still REACHABLE at 40 s, so that sending a packet
+     does not start the DELAY timer, nor the probe that follows it. *)
+  let na = solicited ~override:false ~target:host ~tlla:host_mac in
+  let _, t = tick t ~now:(20 * s) na in
+  let _, t = tick t ~now:(40 * s) `Tick in
+  let t = query t ~now:(40 * s) host in
+  let actions, t = tick t ~now:(45 * s) `Tick in
+  check (packets actions = 0);
+  check (N.lladdr t host = Some host_mac)
+
 let () =
-  let tests = [ test00; test01; test02; test03; test04; test05; test06 ] in
+  let tests =
+    [ test00; test01; test02; test03; test04; test05; test06; test07 ]
+  in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in
