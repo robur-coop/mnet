@@ -163,8 +163,28 @@ let test05 =
   check (packets actions = 0);
   check (N.lladdr t router = Some router_mac)
 
+let solicited ~override ~target ~tlla =
+  let na =
+    { N.NA.router= false; solicited= true; override; target; tlla= Some tlla }
+  in
+  `NA (target, me, na)
+
+let test06 =
+  let description = {text|The Override flag on a REACHABLE entry|text} in
+  Test.test ~title:"test06" ~description @@ fun () ->
+  let t = query (N.make 16) ~now:0 host in
+  let _, t = tick t ~now:0 (na ~target:host ~tlla:host_mac) in
+  (* without it, another link-layer address is not recorded *)
+  let na = solicited ~override:false ~target:host ~tlla:other_mac in
+  let _, t' = tick t ~now:s na in
+  check (N.lladdr t' host = Some host_mac);
+  (* with it, it is *)
+  let na = solicited ~override:true ~target:host ~tlla:other_mac in
+  let _, t' = tick t ~now:s na in
+  check (N.lladdr t' host = Some other_mac)
+
 let () =
-  let tests = [ test00; test01; test02; test03; test04; test05 ] in
+  let tests = [ test00; test01; test02; test03; test04; test05; test06 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in

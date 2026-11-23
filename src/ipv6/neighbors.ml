@@ -247,7 +247,12 @@ let transition ~mac key (state, is_router) now event =
      |            | address than cached. |   |
    *)
   | ( Reachable { lladdr; _ }
-    , `NA (_src, _dst, { NA.solicited= true; tlla= Some lladdr'; _ }) ) ->
+    , `NA
+        ( _src
+        , _dst
+        , { NA.solicited= true; override= false; tlla= Some lladdr'; _ } ) ) ->
+      (* NOTE: only without the Override flag. With it, the new link-layer
+         address is recorded (see below). *)
       if Macaddr.compare lladdr lladdr' != 0 then
         (Some (Stale lladdr, is_router), None)
       else (Some (state, is_router), None)
