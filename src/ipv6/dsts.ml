@@ -24,7 +24,12 @@ end
 type error = [ `Packet_too_big | `Destination_unreachable of int ]
 
 module Dst = struct
-  type t = { pmtu: int; next_hop: Ipaddr.V6.t; errored: error option }
+  type t = {
+      pmtu: int
+    ; next_hop: Ipaddr.V6.t
+    ; errored: (error * int) option
+          (* the error, and the time at which the entry is forgotten *)
+  }
 
   let weight (_t : t) = 1
 end
@@ -39,7 +44,7 @@ let next_hop addr t =
   match Dsts.find addr t.cache with
   | Some { pmtu; next_hop; errored= None } ->
       Ok (next_hop, pmtu, { t with cache= Dsts.promote addr t.cache })
-  | Some { errored= Some err; _ } -> Error (err :> [ `Not_found | error ])
+  | Some { errored= Some (err, _); _ } -> Error (err :> [ `Not_found | error ])
   | None -> Error `Not_found
 
 (* NOTE(dinosaure): by default, we use the Link-MTU for any [addr]. *)
@@ -57,7 +62,28 @@ let clean_old_routers routers t =
   let cache = Dsts.fold_k fn (Dsts.empty capacity) t.cache in
   { t with cache }
 
-let tick t ~now:_ = function
+(* How long a destination stays unreachable after an ICMPv6 Destination
+   Unreachable. The error tells about the past: the route may come back (the
+   router lost its uplink for a moment), and nothing else would tell us. *)
+let _10s = 10_000_000_000
+
+(* An errored entry is removed, not only cleared: it may have been made for the
+   error, without a real next hop. *)
+let expire t ~now =
+  let fn addr { Dst.errored; _ } acc =
+    match errored with
+    | Some (_, expire_at) when expire_at <= now -> addr :: acc
+    | _ -> acc
+  in
+  match Dsts.fold fn [] t.cache with
+  | [] -> t
+  | addrs ->
+      let cache = List.fold_left (Fun.flip Dsts.remove) t.cache addrs in
+      { t with cache }
+
+let tick t ~now event =
+  let t = expire t ~now in
+  match event with
   | `Redirect (_src, r) ->
       begin match Dsts.find r.Redirect.destination t.cache with
       | Some { Dst.pmtu; _ } ->
@@ -76,16 +102,21 @@ let tick t ~now:_ = function
   | `Destination_unreachable u ->
       (* RFC 4443: Mark the destination as errored in the cache.
          This prevents further attempts to send to this destination
-         until the entry expires or is cleared. *)
+         until the entry expires (see [expire]). *)
+      let expire_at = now + _10s in
       begin match Dsts.find u.Unreachable.destination t.cache with
       | Some { Dst.pmtu; next_hop; _ } ->
-          let errored = Some (`Destination_unreachable u.Unreachable.code) in
+          let errored =
+            Some (`Destination_unreachable u.Unreachable.code, expire_at)
+          in
           let value = { Dst.pmtu; next_hop; errored } in
           let cache = Dsts.add u.Unreachable.destination value t.cache in
           { t with cache= Dsts.trim cache }
       | None ->
           (* No cached entry, create one with the error *)
-          let errored = Some (`Destination_unreachable u.Unreachable.code) in
+          let errored =
+            Some (`Destination_unreachable u.Unreachable.code, expire_at)
+          in
           let value =
             { Dst.pmtu= t.lmtu; next_hop= u.Unreachable.destination; errored }
           in
@@ -99,7 +130,7 @@ let tick t ~now:_ = function
          Mark the destination as errored so that [next_hop] returns
          [`Packet_too_big] to the caller, allowing TCP to adjust. *)
       let new_pmtu = Int.max 1280 ptb.PTB.mtu in
-      let errored = Some `Packet_too_big in
+      let errored = Some (`Packet_too_big, max_int) in
       match Dsts.find ptb.PTB.destination t.cache with
       | Some { Dst.pmtu; next_hop; _ } ->
           let pmtu = Int.min pmtu new_pmtu in

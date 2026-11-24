@@ -33,3 +33,8 @@
  (name router_solicitation)
  (modules router_solicitation)
  (libraries test mnet.ipv6 ipaddr macaddr))
+
+(test
+ (name destinations)
+ (modules destinations)
+ (libraries test mnet.ipv6 ipaddr macaddr))
