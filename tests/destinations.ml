@@ -33,8 +33,20 @@ let test00 =
   let t = ticks t ~from:12 ~until:13 in
   check (not (is_unreachable t remote))
 
+let test01 =
+  let description = {text|Only some codes are about the destination|text} in
+  Test.test ~title:"test01" ~description @@ fun () ->
+  let after code =
+    let t, _ = NDP.tick (make ()) ~now:(2 * s) (unreachable ~code remote) in
+    is_unreachable t remote
+  in
+  (* no route, address unreachable, reject route *)
+  check (List.for_all after [ 0; 3; 6 ]);
+  (* prohibited, scope of the source, port, policy on the source *)
+  check (not (List.exists after [ 1; 2; 4; 5 ]))
+
 let () =
-  let tests = [ test00 ] in
+  let tests = [ test00; test01 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in

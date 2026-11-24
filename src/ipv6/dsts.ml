@@ -67,6 +67,14 @@ let clean_old_routers routers t =
    router lost its uplink for a moment), and nothing else would tell us. *)
 let _10s = 10_000_000_000
 
+(* RFC 4443 3.1: the codes which tell that the destination itself can not be
+   reached: no route (0), address unreachable (3), reject route (6). The others
+   are about one kind of packets only: a port without listener (4), a filter
+   (1, which firewalls also use to reject a single port), or our source
+   address (2, 5). They are for the upper layer, and must not stop everything
+   else we send to that destination. *)
+let about_the_destination = function 0 | 3 | 6 -> true | _ -> false
+
 (* An errored entry is removed, not only cleared: it may have been made for the
    error, without a real next hop. *)
 let expire t ~now =
@@ -99,6 +107,9 @@ let tick t ~now event =
           let cache = Dsts.add r.Redirect.destination value t.cache in
           { t with cache= Dsts.trim cache }
       end
+  | `Destination_unreachable { Unreachable.code; _ }
+    when not (about_the_destination code) ->
+      t
   | `Destination_unreachable u ->
       (* RFC 4443: Mark the destination as errored in the cache.
          This prevents further attempts to send to this destination
