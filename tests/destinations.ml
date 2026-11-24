@@ -45,8 +45,40 @@ let test01 =
   (* prohibited, scope of the source, port, policy on the source *)
   check (not (List.exists after [ 1; 2; 4; 5 ]))
 
+let router = Ipaddr.V6.of_string_exn "fe80::1"
+let other = Ipaddr.V6.of_string_exn "2001:db8::2"
+
+let packet_too_big ~mtu destination : NDP.event =
+  `Packet_too_big { mtu; destination }
+
+(* The next hop and the path MTU for [addr]. *)
+let path t addr =
+  match NDP.next_hop t addr with
+  | Ok (t, next_hop, pmtu) -> (t, Some (next_hop, pmtu))
+  | Error _ -> (t, None)
+
+let test02 =
+  let description = {text|A Packet Too Big only lowers the path MTU|text} in
+  Test.test ~title:"test02" ~description @@ fun () ->
+  let t, _ = NDP.make ~gateway:router ~now:0 ~lmtu:1500 ~mac NDP.EUI64 in
+  (* the first lookup makes the entry of the destination cache *)
+  let t, _ = path t remote in
+  let t, p = path t remote in
+  check (p = Some (router, Some 1500));
+  let t, _ = NDP.tick t ~now:s (packet_too_big ~mtu:1400 remote) in
+  let t, p = path t remote in
+  check (p = Some (router, Some 1400));
+  (* a larger one does not raise it, and 1280 is the minimum *)
+  let t, _ = NDP.tick t ~now:s (packet_too_big ~mtu:1450 remote) in
+  let t, p = path t remote in
+  check (p = Some (router, Some 1400));
+  (* for a destination we do not know, it does not invent a next hop *)
+  let t, _ = NDP.tick t ~now:s (packet_too_big ~mtu:1400 other) in
+  let _, p = path t other in
+  check (Option.map fst p = Some router)
+
 let () =
-  let tests = [ test00; test01 ] in
+  let tests = [ test00; test01; test02 ] in
   let ({ Test.directory } as runner) =
     Test.runner (Filename.concat (Sys.getcwd ()) "_tests")
   in
