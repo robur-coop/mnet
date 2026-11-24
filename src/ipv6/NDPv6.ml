@@ -517,7 +517,7 @@ let process t = function
    effect (we can write directly or keep the packets). This allows us to offer
    an [IPv6.write] function that does not reschedule (and can be used in a
    [Miou.Ownership] "finally" without any problems). *)
-let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
+let send t ~now ~dst:_ next_hop (user's_pkts : Packet.user's_packet list) =
   if Ipaddr.V6.is_multicast next_hop then
     let dst = Ipaddr.V6.multicast_to_mac next_hop in
     let fn { Packet.len; fn } = { Packet.dst; len; fn } in
@@ -536,7 +536,10 @@ let send t ~now ~dst next_hop (user's_pkts : Packet.user's_packet list) =
         let pkts = List.rev_append (List.map fn user's_pkts) pkts in
         (t, pkts)
     | None ->
-        let queues = push dst user's_pkts t.queues in
+        (* NOTE: the packets wait under [next_hop], not under their final
+           destination: [Release_with] and [Cancel] come from the neighbor
+           entry of [next_hop]. *)
+        let queues = push next_hop user's_pkts t.queues in
         ({ t with queues }, pkts)
 
 let tick t ~now (event : event) =
@@ -602,12 +605,20 @@ let tick t ~now (event : event) =
             let lladdr = Ipaddr.V6.multicast_to_mac dst in
             (lladdr, dst, false)
           else
+            (* RFC 4861 7.2.4: a solicited NA, unicast to the source of the NS.
+               A unicast NS (a probe of our entry) may come without a Source
+               Link-Layer Address option: the link-layer address is then the
+               one of our cache and, only if we have none, the NA goes to all
+               nodes. *)
             match slla with
-            | None ->
-                let dst = Ipaddr.V6.link_nodes in
-                let lladdr = Ipaddr.V6.multicast_to_mac dst in
-                (lladdr, dst, false)
             | Some lladdr -> (lladdr, src, true)
+            | None -> (
+                match Neighbors.lladdr t.neighbors src with
+                | Some lladdr -> (lladdr, src, true)
+                | None ->
+                    let dst = Ipaddr.V6.link_nodes in
+                    let lladdr = Ipaddr.V6.multicast_to_mac dst in
+                    (lladdr, dst, false))
         in
         let pkt =
           NA.encode_into ~mac:t.mac ~src:target ~dst:(lladdr, dst) ~solicited
