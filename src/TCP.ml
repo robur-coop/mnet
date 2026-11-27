@@ -370,12 +370,14 @@ let handler state ~eligible src dst payload =
   Log.debug (fun m -> m "New TCP packet (%a -> %a)" Ipaddr.pp src Ipaddr.pp dst);
   let cs = Cstruct.of_bigarray payload in
   let offloads = Ethernet.offloads state.eth in
-  let verify = not (eligible && Mkernel.Net.Offload.(mem rx_csum offloads)) in
+  let validate_checksum =
+    not (eligible && Mkernel.Net.Offload.(mem rx_csum offloads))
+  in
   Log.debug (fun m ->
       m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) (Cstruct.to_string cs));
   if admit state ~src cs then begin
     let tcp, evs, segs =
-      Utcp.handle_buf ~verify state.tcp (now ()) ~src ~dst cs
+      Utcp.handle_buf ~validate_checksum state.tcp (now ()) ~src ~dst cs
     in
     state.tcp <- tcp;
     let fn = function
