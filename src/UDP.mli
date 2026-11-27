@@ -36,12 +36,12 @@ val create : IPv4.t -> IPv6.t -> state
 (** [create ipv4 ipv6] creates a new UDP state backed by the given IPv4 and IPv6
     protocol handlers. Normally called internally by {!val:Mnet.stack}. *)
 
-val bind : ?capacity:int -> state -> port:int -> unit
+val bind : ?capacity:int -> ?src:Ipaddr.t -> state -> port:int -> unit
 (** [bind state ~port] keeps datagrams which arrive on [port]. It allows
     datagrams (up to [capacity] bytes, defaults to 65536 bytes) to be retained
     even if {!val:recvfrom} has not yet been called. *)
 
-val unbind : state -> port:int -> unit
+val unbind : ?src:Ipaddr.t -> state -> port:int -> unit
 (** [unbind state ~port] stops keeping datagrams on [port] and drops the pending
     ones. *)
 

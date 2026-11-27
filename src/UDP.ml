@@ -90,6 +90,7 @@ type waiter = {
     buf: bytes
   ; dst_off: int
   ; len: int
+  ; src: Ipaddr.t option
   ; waiter: out Miou.Computation.t
 }
 
@@ -122,11 +123,16 @@ module Pending = struct
     packet
 end
 
+type bound = {
+    mutable any: Pending.t option
+  ; mutable peers: (Ipaddr.t * Pending.t) list
+}
+
 type state = {
     readers: (int, waiter list) Hashtbl.t
+  ; pending: (int, bound) Hashtbl.t
   ; ipv4: IPv4.t
   ; ipv6: IPv6.t
-  ; pending: (int, Pending.t) Hashtbl.t
 }
 
 type error =
@@ -140,40 +146,102 @@ let pp_error ppf = function
 let create ipv4 ipv6 =
   { readers= Hashtbl.create 0x7ff; pending= Hashtbl.create 0x7ff; ipv4; ipv6 }
 
-let bind ?(capacity = 0x10000) state ~port =
-  if not (Hashtbl.mem state.pending port) then
-    Hashtbl.add state.pending port (Pending.create capacity)
+let bind ?(capacity = 0x10000) ?src state ~port =
+  let value =
+    match Hashtbl.find_opt state.pending port with
+    | Some value -> value
+    | None ->
+        let value = { any= None; peers= [] } in
+        Hashtbl.add state.pending port value;
+        value
+  in
+  match src with
+  | None when Option.is_none value.any ->
+      value.any <- Some (Pending.create capacity)
+  | None -> ()
+  | Some src ->
+      let fn (src', _) = Ipaddr.compare src src' = 0 in
+      if not (List.exists fn value.peers) then
+        value.peers <- (src, Pending.create capacity) :: value.peers
 
-let unbind state ~port = Hashtbl.remove state.pending port
+let unbind ?src state ~port =
+  match Hashtbl.find_opt state.pending port with
+  | None -> ()
+  | Some value ->
+      begin match src with
+      | None -> value.any <- None
+      | Some src ->
+          let fn (src', _) = Ipaddr.compare src src' <> 0 in
+          value.peers <- List.filter fn value.peers
+      end;
+      if Option.is_none value.any && value.peers = [] then
+        Hashtbl.remove state.pending port
+
+let matches peer waiter =
+  match waiter.src with
+  | Some src -> Ipaddr.compare src peer = 0
+  | None -> false
+
+let deliver ~peer ~src_port payload { buf; dst_off; len; waiter; _ } =
+  let length = Int.min len (SBstr.length payload) in
+  SBstr.blit_to_bytes payload ~src_off:0 buf ~dst_off ~len:length;
+  let out = { length; peer; port= src_port } in
+  Log.debug (fun m ->
+      m "<- %d byte(s) from %a:%d" length Ipaddr.pp peer src_port);
+  ignore (Miou.Computation.try_return waiter out)
+
+(* NOTE(dinosaure): find pending entries for a specific port and refine with
+   a specific peer (if [Option.is_some src]) or for any peers (if
+   [Option.is_none src]). *)
+let find state ~port src =
+  match Hashtbl.find_opt state.pending port with
+  | None -> None
+  | Some value ->
+      begin match src with
+      | None -> value.any
+      | Some src ->
+          let fn (src', _) = Ipaddr.compare src src' = 0 in
+          List.find_opt fn value.peers |> Option.map snd
+      end
 
 let fill state ~peer ~pkt payload =
-  match Hashtbl.find state.readers pkt.Packet.dst_port with
-  | exception Not_found ->
-      begin match Hashtbl.find_opt state.pending pkt.Packet.dst_port with
-      | Some pending ->
-          let data = SBstr.to_string payload in
-          Pending.add ~dst_port:pkt.Packet.dst_port
-            (peer, pkt.Packet.src_port, data)
-            pending
-      | None -> ()
-      end
-  | waiters ->
-      let fn { buf; dst_off; len; waiter } =
-        let length = Int.min len (SBstr.length payload) in
-        let out = { length; peer; port= pkt.Packet.src_port } in
-        Log.debug (fun m ->
-            m "<- %d byte(s) from %a:%d" length Ipaddr.pp peer
-              pkt.Packet.src_port);
-        SBstr.blit_to_bytes payload ~src_off:0 buf ~dst_off ~len:length;
-        assert (Miou.Computation.try_return waiter out)
+  let port = pkt.Packet.dst_port in
+  let queue_for_peer = find state ~port (Some peer) in
+  let waiters =
+    Option.value ~default:[] (Hashtbl.find_opt state.readers port)
+  in
+  let specific, rem = List.partition (matches peer) waiters in
+  let chosen, rem =
+    match (specific, queue_for_peer) with
+    | _ :: _, _ -> (specific, rem)
+    | [], Some _ -> ([], rem)
+    | [], None -> List.partition (fun waiter -> Option.is_none waiter.src) rem
+  in
+  (* NOTE(dinosaure): [fill] must be **uninterruptible** until we
+     [Hashtbl.{replace,remove}] in the sense that this function
+     should not be resumed and re-scheduled later by Miou before to set our
+     global [Hashtbl]. We must [deliver] packets only after such update. *)
+  begin match rem with
+  | [] -> Hashtbl.remove state.readers port
+  | rem -> Hashtbl.replace state.readers port rem
+  end;
+  match chosen with
+  | _ :: _ ->
+      List.iter (deliver ~peer ~src_port:pkt.Packet.src_port payload) chosen
+  | [] ->
+      (* NOTE(dinosaure): nobody did a [recvfrom], let's fill a pending entry
+         (for a specific peer [Some peer] or for any [None]) only if it exists
+         (otherwise, we ignore it). *)
+      let target =
+        match queue_for_peer with
+        | Some _ -> queue_for_peer
+        | None -> find state ~port None
       in
-      List.iter fn waiters;
-      Hashtbl.remove state.readers pkt.Packet.dst_port
-(* TODO(dinosaure): we need to check that [Miou.Computation.try_return] does not
-   re-schedule. If it's the case, it's safe to [Hashtbl.remove]. Otherwise, we must
-   aggregate everything into a list, remove and apply our [fn] to the list.
-
-   Deeply, [try_return] mostly fills the scheduler of tasks without interruption. *)
+      let fn pending =
+        let src_port = pkt.Packet.src_port and str = SBstr.to_string payload in
+        Pending.add ~dst_port:port (peer, src_port, str) pending
+      in
+      Option.iter fn target
 
 let handler_ipv4 state (pkt, payload) =
   let peer = Ipaddr.V4 pkt.IPv4.src in
@@ -196,27 +264,21 @@ let handler_ipv6 state src _dst (payload : Bstr.t) =
   | Ok (pkt, payload) -> fill state ~peer ~pkt payload
   | Error _ -> Log.err (fun m -> m "Invalid UDP packet, ignore it")
 
-let rec recvfrom state ?src ~port ?(off = 0) ?len ?trigger buf =
+let recvfrom state ?src ~port ?(off = 0) ?len ?trigger buf =
   let len = match len with Some len -> len | None -> Bytes.length buf - off in
   if off < 0 || len < 0 || off > Bytes.length buf - len then
     invalid_arg "UDP.recvfrom: out of bounds";
-  let ip_is_src peer =
-    Option.value ~default:true (Option.map (fun s -> Ipaddr.compare peer s = 0) src)
-  in
-  match Hashtbl.find_opt state.pending port with
+  match find state ~port src with
   | Some pending when not (Pending.is_empty pending) ->
       let peer, src_port, data = Pending.pop pending in
-      if ip_is_src peer then
-        let length = Int.min len (String.length data) in
-        Bytes.blit_string data 0 buf off length;
-        (length, (peer, src_port))
-      else
-        recvfrom state ?src ~port ~off ~len ?trigger buf
-  | _ -> begin
+      let length = Int.min len (String.length data) in
+      Bytes.blit_string data 0 buf off length;
+      (length, (peer, src_port))
+  | _ ->
       let waiter = Miou.Computation.create () in
       let attach t = ignore (Miou.Computation.try_attach waiter t) in
       Option.iter attach trigger;
-      let waiter = { buf; dst_off= off; len; waiter } in
+      let waiter = { buf; dst_off= off; len; src; waiter } in
       (* NOTE(dinosaure): [finally] is required if we would like to cancel the
          task which perform this function. In that case, we must clean-up our
          internal [state.readers] to be sure that we don't have a memory-leak. *)
@@ -227,28 +289,12 @@ let rec recvfrom state ?src ~port ?(off = 0) ?len ?trigger buf =
         | [] -> Hashtbl.remove state.readers port
         | waiters -> Hashtbl.replace state.readers port waiters
       in
-      match Hashtbl.find state.readers port with
-      | exception Not_found ->
-          Hashtbl.add state.readers port [ waiter ];
-          Fun.protect ~finally @@ fun () ->
-          let { length; peer; port } =
-            Miou.Computation.await_exn waiter.waiter
-          in
-          if ip_is_src peer then
-            (length, (peer, port))
-          else
-            recvfrom state ?src ~port ~off ~len ?trigger buf
-      | waiters ->
-          Hashtbl.replace state.readers port (waiter :: waiters);
-          Fun.protect ~finally @@ fun () ->
-          let { length; peer; port } =
-            Miou.Computation.await_exn waiter.waiter
-          in
-          if ip_is_src peer then
-            (length, (peer, port))
-          else
-            recvfrom state ?src ~port ~off ~len ?trigger buf
-    end
+      let waiters = Hashtbl.find_opt state.readers port in
+      let waiters = Option.value ~default:[] waiters in
+      Hashtbl.replace state.readers port (waiter :: waiters);
+      Fun.protect ~finally @@ fun () ->
+      let out = Miou.Computation.await_exn waiter.waiter in
+      (out.length, (out.peer, out.port))
 
 let sendto state ~dst ?src_port ~port:dst_port ?(off = 0) ?len payload =
   let len =
